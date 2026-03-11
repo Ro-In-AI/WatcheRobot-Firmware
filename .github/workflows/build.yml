@@ -1,0 +1,60 @@
+name: Build Firmware
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "firmware/**"
+
+jobs:
+  build:
+    name: Build (esp32s3)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build S3 firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.2.1
+          target: esp32s3
+          path: firmware/s3
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: firmware-esp32s3
+          path: |
+            firmware/s3/build/*.bin
+            firmware/s3/build/*.elf
+            firmware/s3/build/bootloader/bootloader.bin
+            firmware/s3/build/partition_table/partition-table.bin
+          retention-days: 30
+
+  format-check:
+    name: Code Format (clang-format)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format-18
+
+      - name: Check formatting
+        run: |
+          find firmware/s3/components firmware/s3/main \
+            -name "*.c" -o -name "*.h" | \
+          xargs clang-format-18 --dry-run --Werror
+        continue-on-error: false

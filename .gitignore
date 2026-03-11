@@ -1,0 +1,42 @@
+# ESP-IDF build artifacts
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# IDF Component Manager (managed components are downloaded, not stored)
+managed_components/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.vscode/c_cpp_properties.json
+.idea/
+*.swp
+*.swo
+
+# Secrets (never commit these)
+.env
+*.env.local
+secrets.h
+wifi_credentials.h
+
+# Generated docs
+docs/api/
+
+# Tools output
+tools/output/
+*.rgba
+*.bin.tmp

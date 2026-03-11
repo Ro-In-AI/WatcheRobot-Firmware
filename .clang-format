@@ -1,0 +1,38 @@
+---
+# WatcheRobot Firmware — clang-format configuration
+# Based on ESP-IDF official style (LLVM base with adjustments)
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+
+# Braces
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Alignment
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+AlignAfterOpenBracket: Align
+
+# Includes
+SortIncludes: true
+IncludeBlocks: Preserve
+
+# Spaces
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Pointers (ESP-IDF style: int *ptr, not int* ptr)
+PointerAlignment: Right
+
+# Comments
+ReflowComments: false
