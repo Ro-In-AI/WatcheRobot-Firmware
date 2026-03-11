@@ -1,0 +1,21 @@
+## IDF Component Manager Manifest File
+## This file manages external dependencies for the main component
+##
+## Documentation: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/tools/idf-component-manager.html
+
+dependencies:
+  # LVGL - Light and Versatile Graphics Library
+  # https://components.espressif.com/components/lvgl/lvgl
+  lvgl/lvgl:
+    version: ">=8.4.0 <9.0.0"
+
+  # ESP LVGL Port - Espressif's LVGL adaptation layer
+  # https://components.espressif.com/components/espressif/esp_lvgl_port
+  espressif/esp_lvgl_port:
+    version: "^2.6.0"
+
+  # ESP IO Expander - For PCA95xx support
+  # https://components.espressif.com/components/espressif/esp_io_expander
+  espressif/esp_io_expander:
+    version: "^1.0.1"
+    public: true
