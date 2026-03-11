@@ -123,11 +123,34 @@ WatcheRobot-Firmware/
 
 ## Documentation
 
+### Getting Started
+
 | Document | Description |
 |----------|-------------|
 | [docs/getting-started.md](docs/getting-started.md) | Full setup guide |
+| [docs/roadmap.md](docs/roadmap.md) | Development phases and milestones |
+
+### Architecture & Design
+
+| Document | Description |
+|----------|-------------|
 | [docs/architecture.md](docs/architecture.md) | System architecture & component design |
 | [docs/hardware/gpio-mapping.md](docs/hardware/gpio-mapping.md) | GPIO pin assignment |
+| [docs/hardware/bom.md](docs/hardware/bom.md) | Bill of materials |
+
+### Protocols
+
+| Document | Description |
+|----------|-------------|
+| [docs/protocol/websocket-protocol.md](docs/protocol/websocket-protocol.md) | WebSocket protocol v2.3 |
+| [docs/protocol/voice-stream.md](docs/protocol/voice-stream.md) | Audio streaming specification |
+
+### Development
+
+| Document | Description |
+|----------|-------------|
+| [docs/development/known-issues.md](docs/development/known-issues.md) | Known issues & workarounds |
+| [docs/development/testing.md](docs/development/testing.md) | Testing guide |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 
