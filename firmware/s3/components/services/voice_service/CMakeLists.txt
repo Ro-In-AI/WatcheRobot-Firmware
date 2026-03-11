@@ -8,5 +8,5 @@ idf_component_register(
         "sensecap-watcher"
         "esp-sr"
         "esp_timer"
-        "esp_log"
+        
 )

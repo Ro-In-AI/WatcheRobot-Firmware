@@ -11,5 +11,5 @@ idf_component_register(
         "hal_servo"
         "voice_service"
         "anim_service"
-        "esp_log"
+        
 )

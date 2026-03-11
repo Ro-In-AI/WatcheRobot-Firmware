@@ -6,5 +6,5 @@ idf_component_register(
         "sensecap-watcher"
         "esp_lvgl_port"
         "anim_storage"
-        "esp_log"
+        
 )
