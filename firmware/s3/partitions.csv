@@ -1,0 +1,9 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# ESP32-S3 16MB Flash with ESP-SR wake word model support
+# Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
+
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        0x400000,
+model,    data, spiffs,  ,        0x50000,
+storage,  data, spiffs,  ,        0xA80000,

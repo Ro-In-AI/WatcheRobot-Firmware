@@ -1,0 +1,16 @@
+menu "Watcher HAL Button"
+
+    config WATCHER_BUTTON_GPIO
+        int "Button GPIO number"
+        default 41
+        help
+            GPIO pin for the encoder button. Default 41 (encoder push-button).
+
+    config WATCHER_BUTTON_DEBOUNCE_MS
+        int "Button debounce time (ms)"
+        default 20
+        range 5 100
+        help
+            Debounce period in milliseconds to filter mechanical switch bounce.
+
+endmenu

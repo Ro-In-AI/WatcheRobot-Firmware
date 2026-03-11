@@ -1,0 +1,23 @@
+menu "Watcher HAL Audio"
+
+    config WATCHER_AUDIO_RECORD_SAMPLE_RATE
+        int "Microphone sample rate (Hz)"
+        default 16000
+        help
+            Sample rate for audio recording. ASR expects 16000 Hz.
+
+    config WATCHER_AUDIO_PLAY_SAMPLE_RATE
+        int "Speaker sample rate for TTS (Hz)"
+        default 24000
+        help
+            Default sample rate for TTS playback. Can be changed at runtime
+            via hal_audio_set_sample_rate().
+
+    config WATCHER_AUDIO_VOLUME
+        int "Default speaker volume (0-100)"
+        default 80
+        range 0 100
+        help
+            Initial speaker volume. Values above 80 may cause clipping.
+
+endmenu

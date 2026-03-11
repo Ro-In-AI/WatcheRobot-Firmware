@@ -1,0 +1,38 @@
+menu "Watcher HAL Servo"
+
+    config WATCHER_SERVO_X_GPIO
+        int "Servo X axis GPIO number"
+        default 19
+        help
+            GPIO pin for X-axis servo PWM output.
+            Default 19 (previously UART TX to MCU, repurposed in v2.0).
+
+    config WATCHER_SERVO_Y_GPIO
+        int "Servo Y axis GPIO number"
+        default 20
+        help
+            GPIO pin for Y-axis servo PWM output.
+            Default 20 (previously UART RX from MCU, repurposed in v2.0).
+
+    config WATCHER_SERVO_Y_MIN_DEG
+        int "Servo Y axis minimum angle (degrees)"
+        default 90
+        range 0 180
+        help
+            Mechanical protection lower limit for Y axis (prevents hardware damage).
+
+    config WATCHER_SERVO_Y_MAX_DEG
+        int "Servo Y axis maximum angle (degrees)"
+        default 150
+        range 0 180
+        help
+            Mechanical protection upper limit for Y axis.
+
+    config WATCHER_SERVO_SMOOTH_STEP_MS
+        int "Smooth move step interval (ms)"
+        default 10
+        range 5 50
+        help
+            Time between interpolation steps during smooth servo movement.
+
+endmenu

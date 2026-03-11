@@ -1,0 +1,17 @@
+menu "Watcher HAL Display"
+
+    config WATCHER_DISPLAY_BRIGHTNESS
+        int "LCD backlight brightness (0-100)"
+        default 50
+        range 0 100
+        help
+            Initial LCD backlight brightness percentage.
+
+    config WATCHER_DISPLAY_TEXT_MAX_CHARS
+        int "Maximum characters before text truncation"
+        default 30
+        range 10 100
+        help
+            Text longer than this value will be truncated with "..." suffix.
+
+endmenu
