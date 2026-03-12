@@ -286,3 +286,38 @@ storage,   data, spiffs,   0xA70000,  0x580000  5.5MB  Animation assets + OTA bu
 | Uplink | Raw PCM 16kHz 16-bit mono | Voice audio |
 | Downlink | Raw PCM 24kHz 16-bit mono | TTS audio |
 | Uplink | `WVID` frame (see above) | Video frame |
+
+---
+
+## Dependency Version Policy
+
+### SenseCAP Watcher SDK — Version Lock
+
+The `sensecap-watcher` SDK uses button component v3.x API (`BUTTON_TYPE_CUSTOM` with custom callbacks), which is incompatible with button v4.x. Upgrading would require rewriting SDK internals.
+
+**Locked Versions:**
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| `espressif/button` | `~3.2.3` | NOT v4.x — `BUTTON_TYPE_CUSTOM` removed |
+| `espressif/esp_lvgl_port` | `~1.4.0` | NOT v2.x — requires button v4 |
+| `lvgl/lvgl` | `~8.4.0` | Compatible with esp_lvgl_port v1.x |
+
+**Rationale:**
+
+1. **button v4 Breaking Changes:**
+   - Removed `BUTTON_TYPE_CUSTOM` enum
+   - New `button_driver_t` abstraction requires driver struct implementation
+   - Callback signature changed: `void (*)(void *, void *)` → `void (*)(void *handle, void *usr_data)`
+
+2. **sensecap-watcher SDK Constraints:**
+   - Third-party SDK — should not modify internal implementation
+   - Uses `BUTTON_TYPE_CUSTOM` with `button_custom_config_t` for rotary encoder button
+   - Bundled with `esp_lvgl_port` v1.x compatibility
+
+3. **Migration Risk:**
+   - Requires forking/patching sensecap-watcher SDK
+   - Future SDK updates would need re-patching
+   - No benefit outweighs maintenance burden
+
+**Decision:** Keep existing versions. Do NOT upgrade button or esp_lvgl_port.

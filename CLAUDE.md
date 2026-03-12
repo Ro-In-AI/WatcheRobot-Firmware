@@ -12,6 +12,10 @@ WatcheRobot is an ESP32-S3 based AI assistant robot firmware with voice interact
 
 ## Build Commands
 
+> **⚠️ IMPORTANT: Claude should NOT attempt to run `idf.py build` commands.**
+> The current shell environment (Git Bash/MSys) is not compatible with ESP-IDF.
+> Build commands are for reference only — user must run builds manually in a supported terminal.
+
 ```bash
 # Activate ESP-IDF environment first (Windows PowerShell)
 C:\Espressif\frameworks\esp-idf-v5.2.1\export.ps1
@@ -174,3 +178,17 @@ Types: `feat` `fix` `refactor` `docs` `test` `chore` `perf` `ci`
 - [docs/getting-started.md](docs/getting-started.md) — Setup guide
 - [docs/hardware/gpio-mapping.md](docs/hardware/gpio-mapping.md) — Pin reference
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Development guidelines
+
+---
+
+## Dependency Version Constraints
+
+> **DO NOT upgrade these components without explicit user approval.**
+
+| Component | Locked Version | Reason |
+|-----------|---------------|--------|
+| `espressif/button` | `~3.2.3` | sensecap-watcher SDK uses v3 API (`BUTTON_TYPE_CUSTOM`) |
+| `espressif/esp_lvgl_port` | `~1.4.0` | v2.x requires button v4.x |
+| `lvgl/lvgl` | `~8.4.0` | Compatible with esp_lvgl_port v1.x |
+
+The sensecap-watcher SDK is a third-party component that should not be modified. Upgrading button or esp_lvgl_port would require forking and patching the SDK.
