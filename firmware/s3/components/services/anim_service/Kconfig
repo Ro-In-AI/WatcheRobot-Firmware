@@ -1,0 +1,43 @@
+menu "Watcher Animation Service"
+
+    config WATCHER_ANIM_FPS
+        int "Animation frame rate (FPS)"
+        default 30
+        range 1 60
+        help
+            Target frame rate for emoji animations.
+            Higher values provide smoother animation but require faster frame decoding.
+            Default 30fps provides smooth playback with RGB565 cache.
+
+    config WATCHER_ANIM_MAX_FRAMES_PER_TYPE
+        int "Maximum frames per animation type"
+        default 18
+        range 1 30
+        help
+            Maximum number of frames per animation type.
+            Each frame uses approximately 332KB of PSRAM (412x412x2 bytes).
+
+    config WATCHER_ANIM_LAZY_LOAD
+        bool "Enable lazy loading of animation frames"
+        default y
+        help
+            Only load animation frames into PSRAM when needed.
+            Reduces memory usage by keeping only one animation type cached at a time.
+            Type switch latency is typically <500ms.
+
+    config WATCHER_ANIM_CACHE_RGB565
+        bool "Enable RGB565 cache for fast frame switching"
+        default y
+        help
+            Decode PNG images to RGB565 format and cache in PSRAM.
+            Enables <1ms frame switching for smooth 30fps playback.
+            Disable to decode PNG on each frame (slower, uses less PSRAM).
+
+    config WATCHER_ANIM_DEBUG_PERF
+        bool "Enable animation performance logging"
+        default n
+        help
+            Log actual FPS and frame switching latency every 30 frames.
+            Useful for debugging animation performance issues.
+
+endmenu

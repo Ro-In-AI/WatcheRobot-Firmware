@@ -1,12 +1,33 @@
 /**
- * @file emoji_anim.c
- * @brief Emoji animation timer system implementation
+ * @file anim_player.c
+ * @brief Animation player implementation with 30fps playback
  */
 
 #include "anim_player.h"
+#include "anim_meta.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 
-#define TAG "EMOJI_ANIM"
+#ifdef CONFIG_WATCHER_ANIM_FPS
+#define DEFAULT_FPS CONFIG_WATCHER_ANIM_FPS
+#else
+#define DEFAULT_FPS 30
+#endif
+
+#ifdef CONFIG_WATCHER_ANIM_CACHE_RGB565
+#define DEFAULT_USE_CACHE true
+#else
+#define DEFAULT_USE_CACHE false
+#endif
+
+#ifdef CONFIG_WATCHER_ANIM_DEBUG_PERF
+#define DEBUG_PERF_ENABLED true
+#else
+#define DEBUG_PERF_ENABLED false
+#endif
+
+#define TAG "ANIM_PLAYER"
 
 /* Animation state */
 static lv_obj_t *g_img_obj = NULL;
@@ -14,29 +35,74 @@ static lv_timer_t *g_timer = NULL;
 static emoji_anim_type_t g_current_type = EMOJI_ANIM_NONE;
 static int g_current_frame = 0;
 static uint32_t g_interval_ms = EMOJI_ANIM_INTERVAL_MS;
+static bool g_use_cache = DEFAULT_USE_CACHE;
+
+/* Performance tracking */
+static int64_t g_frame_start_us = 0;
+static int g_frames_displayed = 0;
 
 static void emoji_timer_callback(lv_timer_t *timer)
 {
     (void)timer;
+    int64_t start_us = esp_timer_get_time();
 
     if (g_current_type == EMOJI_ANIM_NONE || g_img_obj == NULL) {
         return;
     }
 
-    int frame_count = emoji_get_frame_count(g_current_type);
-    if (frame_count <= 0) {
-        ESP_LOGW(TAG, "No frames for type %d", g_current_type);
-        emoji_anim_stop();
-        return;
-    }
+    /* Try cached RGB565 frames first */
+    if (g_use_cache && anim_cache_is_type_loaded(g_current_type)) {
+        int frame_count = anim_cache_get_frame_count();
+        if (frame_count <= 0) {
+            ESP_LOGW(TAG, "No cached frames for type %d", g_current_type);
+            emoji_anim_stop();
+            return;
+        }
 
-    /* Advance to next frame */
-    g_current_frame = (g_current_frame + 1) % frame_count;
+        /* Advance to next frame */
+        g_current_frame = (g_current_frame + 1) % frame_count;
 
-    /* Get image descriptor */
-    lv_img_dsc_t *img = emoji_get_image(g_current_type, g_current_frame);
-    if (img != NULL) {
-        lv_img_set_src(g_img_obj, img);
+        /* Get cached RGB565 frame */
+        anim_cached_frame_t *cached = anim_cache_get_frame(g_current_type, g_current_frame);
+        if (cached != NULL && cached->rgb565_data != NULL) {
+            /* Create temporary descriptor for RGB565 data */
+            lv_img_dsc_t img_dsc = {
+                .header.always_zero = 0,
+                .header.w = cached->width,
+                .header.h = cached->height,
+                .header.cf = LV_IMG_CF_TRUE_COLOR,
+                .data_size = cached->data_size,
+                .data = cached->rgb565_data
+            };
+            lv_img_set_src(g_img_obj, &img_dsc);
+
+            g_frames_displayed++;
+
+            /* Log performance every 30 frames if debug enabled */
+            if (DEBUG_PERF_ENABLED && g_frames_displayed % 30 == 0) {
+                int64_t elapsed_us = esp_timer_get_time() - g_frame_start_us;
+                int actual_fps = (g_frames_displayed * 1000000) / elapsed_us;
+                int64_t frame_time_us = esp_timer_get_time() - start_us;
+                ESP_LOGI(TAG, "FPS: %d, frame switch: %lld us", actual_fps, frame_time_us);
+            }
+        }
+    } else {
+        /* Fallback to PNG decoding (slower) */
+        int frame_count = emoji_get_frame_count(g_current_type);
+        if (frame_count <= 0) {
+            ESP_LOGW(TAG, "No frames for type %d", g_current_type);
+            emoji_anim_stop();
+            return;
+        }
+
+        /* Advance to next frame */
+        g_current_frame = (g_current_frame + 1) % frame_count;
+
+        /* Get PNG image descriptor */
+        lv_img_dsc_t *img = emoji_get_image(g_current_type, g_current_frame);
+        if (img != NULL) {
+            lv_img_set_src(g_img_obj, img);
+        }
     }
 }
 
@@ -50,8 +116,26 @@ int emoji_anim_init(lv_obj_t *img_obj)
     g_img_obj = img_obj;
     g_current_type = EMOJI_ANIM_NONE;
     g_current_frame = 0;
+    g_frames_displayed = 0;
+    g_frame_start_us = esp_timer_get_time();
 
-    ESP_LOGI(TAG, "Animation system initialized");
+    /* Initialize metadata system */
+    if (anim_meta_init() != 0) {
+        ESP_LOGW(TAG, "Metadata init failed, using defaults");
+    }
+
+    /* Initialize RGB565 cache */
+    if (anim_cache_init() != 0) {
+        ESP_LOGW(TAG, "Cache init failed, falling back to PNG decode");
+        g_use_cache = false;
+    }
+
+    /* Get default FPS from metadata */
+    int fps = anim_meta_get_default_fps();
+    g_interval_ms = 1000 / fps;
+
+    ESP_LOGI(TAG, "Animation system initialized (FPS: %d, interval: %lums)",
+             fps, (unsigned long)g_interval_ms);
     return 0;
 }
 
@@ -67,37 +151,83 @@ int emoji_anim_start(emoji_anim_type_t type)
         return -1;
     }
 
-    int frame_count = emoji_get_frame_count(type);
-    if (frame_count <= 0) {
-        ESP_LOGW(TAG, "No frames available for type: %s", emoji_type_name(type));
-        return -1;
-    }
-
     /* If same type is already playing, no need to restart */
     if (g_current_type == type && g_timer != NULL) {
         ESP_LOGD(TAG, "Animation %s already playing", emoji_type_name(type));
         return 0;
     }
 
+    /* Load and cache RGB565 frames if cache is enabled */
+    if (g_use_cache) {
+        int64_t load_start = esp_timer_get_time();
+
+        if (anim_cache_load_type(type) != 0) {
+            ESP_LOGW(TAG, "Failed to cache type %s, using PNG decode", emoji_type_name(type));
+            /* Check if PNG images are available as fallback */
+            if (emoji_get_frame_count(type) <= 0) {
+                ESP_LOGE(TAG, "No frames available for type: %s", emoji_type_name(type));
+                return -1;
+            }
+        } else {
+            int64_t load_time_ms = (esp_timer_get_time() - load_start) / 1000;
+            ESP_LOGI(TAG, "Type %s loaded in %lld ms", emoji_type_name(type), load_time_ms);
+        }
+    } else {
+        /* Check if PNG images are available */
+        if (emoji_get_frame_count(type) <= 0) {
+            ESP_LOGW(TAG, "No frames available for type: %s", emoji_type_name(type));
+            return -1;
+        }
+    }
+
     /* Set new type and reset frame */
     g_current_type = type;
     g_current_frame = 0;
+    g_frames_displayed = 0;
+    g_frame_start_us = esp_timer_get_time();
+
+    /* Get FPS for this animation type */
+    int fps = anim_meta_get_fps(type);
+    g_interval_ms = 1000 / fps;
 
     /* Show first frame immediately */
-    lv_img_dsc_t *img = emoji_get_image(type, 0);
-    if (img != NULL) {
-        lv_img_set_src(g_img_obj, img);
+    if (g_use_cache && anim_cache_is_type_loaded(type)) {
+        anim_cached_frame_t *cached = anim_cache_get_frame(type, 0);
+        if (cached != NULL && cached->rgb565_data != NULL) {
+            lv_img_dsc_t img_dsc = {
+                .header.always_zero = 0,
+                .header.w = cached->width,
+                .header.h = cached->height,
+                .header.cf = LV_IMG_CF_TRUE_COLOR,
+                .data_size = cached->data_size,
+                .data = cached->rgb565_data
+            };
+            lv_img_set_src(g_img_obj, &img_dsc);
+        }
+    } else {
+        lv_img_dsc_t *img = emoji_get_image(type, 0);
+        if (img != NULL) {
+            lv_img_set_src(g_img_obj, img);
+        }
+    }
+
+    /* Get frame count */
+    int frame_count;
+    if (g_use_cache && anim_cache_is_type_loaded(type)) {
+        frame_count = anim_cache_get_frame_count();
+    } else {
+        frame_count = emoji_get_frame_count(type);
     }
 
     /* Reuse or create timer for animation */
     if (frame_count > 1) {
         if (g_timer != NULL) {
-            /* Reuse existing timer - just reset it */
+            /* Reuse existing timer */
             lv_timer_reset(g_timer);
             lv_timer_set_period(g_timer, g_interval_ms);
             lv_timer_resume(g_timer);
         } else {
-            /* Create new timer only if none exists */
+            /* Create new timer */
             g_timer = lv_timer_create(emoji_timer_callback, g_interval_ms, NULL);
             if (g_timer == NULL) {
                 ESP_LOGE(TAG, "Failed to create timer");
@@ -111,13 +241,14 @@ int emoji_anim_start(emoji_anim_type_t type)
         }
     }
 
-    ESP_LOGI(TAG, "Started animation: %s (%d frames)", emoji_type_name(type), frame_count);
+    ESP_LOGI(TAG, "Started animation: %s (%d frames @ %d fps)",
+             emoji_type_name(type), frame_count, fps);
     return 0;
 }
 
 void emoji_anim_stop(void)
 {
-    /* Pause timer instead of deleting - allows reuse */
+    /* Pause timer instead of deleting */
     if (g_timer != NULL) {
         lv_timer_pause(g_timer);
     }
@@ -158,9 +289,32 @@ int emoji_anim_show_static(emoji_anim_type_t type, int frame)
         return -1;
     }
 
+    /* Try cache first */
+    if (g_use_cache) {
+        if (!anim_cache_is_type_loaded(type)) {
+            anim_cache_load_type(type);
+        }
+
+        anim_cached_frame_t *cached = anim_cache_get_frame(type, frame);
+        if (cached != NULL && cached->rgb565_data != NULL) {
+            lv_img_dsc_t img_dsc = {
+                .header.always_zero = 0,
+                .header.w = cached->width,
+                .header.h = cached->height,
+                .header.cf = LV_IMG_CF_TRUE_COLOR,
+                .data_size = cached->data_size,
+                .data = cached->rgb565_data
+            };
+            lv_img_set_src(g_img_obj, &img_dsc);
+            g_current_type = type;
+            g_current_frame = frame;
+            return 0;
+        }
+    }
+
+    /* Fallback to PNG */
     lv_img_dsc_t *img = emoji_get_image(type, frame);
     if (img == NULL) {
-        /* Try first frame as fallback */
         img = emoji_get_image(type, 0);
         if (img == NULL) {
             ESP_LOGE(TAG, "No image available for type: %s", emoji_type_name(type));
@@ -174,4 +328,41 @@ int emoji_anim_show_static(emoji_anim_type_t type, int frame)
 
     ESP_LOGI(TAG, "Showing static: %s frame %d", emoji_type_name(type), frame);
     return 0;
+}
+
+int emoji_anim_prefetch_type(emoji_anim_type_t type)
+{
+    if (type < 0 || type >= EMOJI_ANIM_COUNT) {
+        return -1;
+    }
+
+    if (!g_use_cache) {
+        return 0;  /* No-op if cache disabled */
+    }
+
+    /* Don't prefetch if already cached */
+    if (anim_cache_is_type_loaded(type)) {
+        return 0;
+    }
+
+    ESP_LOGI(TAG, "Prefetching type: %s", emoji_type_name(type));
+    return anim_cache_load_type(type);
+}
+
+int emoji_anim_get_fps(void)
+{
+    return 1000 / g_interval_ms;
+}
+
+void emoji_anim_set_fps(int fps)
+{
+    if (fps < 1) fps = 1;
+    if (fps > 60) fps = 60;
+
+    g_interval_ms = 1000 / fps;
+    if (g_timer != NULL) {
+        lv_timer_set_period(g_timer, g_interval_ms);
+    }
+
+    ESP_LOGI(TAG, "FPS set to %d (interval: %lums)", fps, (unsigned long)g_interval_ms);
 }
