@@ -153,5 +153,10 @@ CONFIG_LV_FONT_SIMSUN_16_CJK=y
 # ESP-SR Wake Word Model (你好小智)
 CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=y
 
+# ESP-SR Disable offline speech recognition (use cloud via WebSocket)
+# This reduces srmodels.bin from 3.9MB to ~300KB
+# CONFIG_USE_MULTINET is not set
+CONFIG_SR_MN_CN_NONE=y
+
 # LCD debug
 CONFIG_LCD_ENABLE_DEBUG_LOG=n
