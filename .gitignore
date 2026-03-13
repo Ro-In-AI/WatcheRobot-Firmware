@@ -40,3 +40,6 @@ docs/api/
 tools/output/
 *.rgba
 *.bin.tmp
+
+# IDF Component Manager local config
+idf_component_manager.yml
