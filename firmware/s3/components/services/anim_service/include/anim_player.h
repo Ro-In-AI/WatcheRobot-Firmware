@@ -9,7 +9,7 @@
 #ifndef EMOJI_ANIM_H
 #define EMOJI_ANIM_H
 
-#include "emoji_png.h"
+#include "anim_storage.h"
 #include "lvgl.h"
 
 /* Animation frame intervals in milliseconds */

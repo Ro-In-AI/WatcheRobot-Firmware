@@ -4,17 +4,15 @@
  */
 
 #include "hal_display.h"
-#include "boot_animation.h"
+#include "boot_anim.h"
 #include "display_ui.h"
-#include "emoji_png.h"
-#include "emoji_anim.h"
+#include "anim_storage.h"
+#include "anim_player.h"
 #include "sensecap-watcher.h"
 #include "esp_log.h"
 #include "lvgl.h"
 
-#if LV_USE_PNG
-#include "lvgl/src/extra/libs/png/lv_png.h"
-#endif
+/* PNG support is included via lvgl.h when LV_USE_PNG is enabled */
 
 /* External CJK font for Chinese character support */
 #if LV_FONT_SIMSUN_16_CJK

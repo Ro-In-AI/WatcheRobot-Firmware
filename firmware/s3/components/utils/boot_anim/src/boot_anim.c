@@ -3,8 +3,8 @@
  * @brief Boot animation with arc progress bar and error handling
  */
 
-#include "boot_animation.h"
-#include "emoji_png.h"
+#include "boot_anim.h"
+#include "anim_storage.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"

@@ -7,7 +7,6 @@
 #include "ws_router.h"
 #include "display_ui.h"
 #include "hal_audio.h"
-#include "button_voice.h"
 #include "esp_websocket_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"

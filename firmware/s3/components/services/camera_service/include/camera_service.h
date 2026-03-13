@@ -10,6 +10,7 @@
 #define CAMERA_SERVICE_H
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 esp_err_t camera_service_init(void);
 esp_err_t camera_service_start_stream(int fps);

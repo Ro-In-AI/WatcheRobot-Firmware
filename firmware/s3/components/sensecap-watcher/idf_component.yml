@@ -25,15 +25,15 @@ dependencies:
     version: "1.0.1"
     public: true
 
-  led_strip:
+  espressif/led_strip:
     version: "2.5.4"
     public: true
 
-  button:
+  espressif/button:
     version: "3.2.3"
     public: true
 
-  knob:
+  espressif/knob:
     version: "0.1.4"
     public: true
 

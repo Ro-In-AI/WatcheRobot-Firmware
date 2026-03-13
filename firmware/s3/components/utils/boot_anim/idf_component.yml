@@ -6,3 +6,5 @@ targets:
   - esp32s3
 dependencies:
   idf: ">=5.2"
+  # LVGL dependencies are provided by main/idf_component.yml
+  # Local components (sensecap-watcher, anim_service) are resolved via CMakeLists.txt

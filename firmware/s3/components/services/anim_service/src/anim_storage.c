@@ -1,9 +1,9 @@
 /**
- * @file emoji_png.c
+ * @file anim_storage.c
  * @brief Emoji PNG image loader implementation
  */
 
-#include "emoji_png.h"
+#include "anim_storage.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_spiffs.h"
@@ -13,7 +13,7 @@
 #include <sys/stat.h>
 #include <inttypes.h>
 
-#define TAG "EMOJI_PNG"
+#define TAG "ANIM_STORAGE"
 
 /* Storage mount point */
 #define SPIFFS_MOUNT_POINT  "/spiffs"

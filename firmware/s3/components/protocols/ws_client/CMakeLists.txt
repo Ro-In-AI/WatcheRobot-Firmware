@@ -6,10 +6,9 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES "json" "esp_event"
     PRIV_REQUIRES
-        "esp_websocket_client"
         "hal_audio"
         "hal_servo"
         "voice_service"
         "anim_service"
-        
+
 )

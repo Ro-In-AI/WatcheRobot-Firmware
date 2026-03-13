@@ -5,6 +5,5 @@ idf_component_register(
     PRIV_REQUIRES
         "sensecap-watcher"
         "esp_lvgl_port"
-        "anim_storage"
-        
+        "anim_service"
 )

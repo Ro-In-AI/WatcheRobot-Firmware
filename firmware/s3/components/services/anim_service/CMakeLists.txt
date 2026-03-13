@@ -8,5 +8,6 @@ idf_component_register(
     PRIV_REQUIRES
         "sensecap-watcher"
         "esp_lvgl_port"
-        
+        "hal_display"
+
 )

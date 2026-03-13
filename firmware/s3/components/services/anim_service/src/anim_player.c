@@ -3,7 +3,7 @@
  * @brief Emoji animation timer system implementation
  */
 
-#include "emoji_anim.h"
+#include "anim_player.h"
 #include "esp_log.h"
 
 #define TAG "EMOJI_ANIM"

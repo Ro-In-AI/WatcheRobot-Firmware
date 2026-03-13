@@ -1,0 +1,13 @@
+dependencies:
+  idf:
+    version: '>=4.4'
+  lvgl/lvgl:
+    public: true
+    version: ^8
+  espressif/button:
+    version: '>=3.0'
+  espressif/knob:
+    version: '>=0.1'
+description: ESP LVGL port with custom encoder button event callback support
+url: https://github.com/espressif/esp-bsp/tree/master/components/esp_lvgl_port
+version: 1.4.0-custom.1

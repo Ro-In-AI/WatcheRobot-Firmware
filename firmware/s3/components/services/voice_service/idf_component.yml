@@ -6,3 +6,5 @@ targets:
   - esp32s3
 dependencies:
   idf: ">=5.2"
+  espressif/esp-sr:
+    version: "~1.9.0"

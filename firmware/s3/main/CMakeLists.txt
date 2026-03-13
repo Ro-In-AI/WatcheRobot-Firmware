@@ -20,5 +20,4 @@ idf_component_register(
         boot_anim
         # ESP-IDF
         sensecap-watcher
-        esp_task_wdt
 )

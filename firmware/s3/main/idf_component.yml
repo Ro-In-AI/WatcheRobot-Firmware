@@ -9,10 +9,10 @@ dependencies:
   lvgl/lvgl:
     version: "~8.4.0"
 
-  # ESP LVGL Port - Espressif's LVGL adaptation layer
-  # https://components.espressif.com/components/espressif/esp_lvgl_port
-  espressif/esp_lvgl_port:
-    version: "~2.4.0"
+  # ESP LVGL Port - LOCAL VERSION with custom encoder button event callbacks
+  # Located at: components/esp_lvgl_port
+  # Includes: lvgl_port_encoder_btn_register_event_cb
+  #           lvgl_port_encoder_btn_register_event_data_cb
 
   # ESP IO Expander - For PCA95xx support
   # https://components.espressif.com/components/espressif/esp_io_expander
