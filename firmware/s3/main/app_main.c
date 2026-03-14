@@ -93,31 +93,16 @@ void app_main(void)
     bsp_set_btn_long_release_cb(on_button_long_release);
     bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
 
-    /* 6. WiFi */
+    /* 6. WiFi (skip for animation testing) */
     boot_anim_set_progress(25);
-    boot_anim_set_text("WiFi...");
-    wifi_init();
-    if (wifi_connect() != 0) {
-        boot_anim_show_error("WiFi Error");
-        return;
-    }
+    boot_anim_set_text("WiFi (skipped)...");
+    ESP_LOGW(TAG, "WiFi skipped for animation testing");
     boot_anim_set_progress(35);
 
-    /* 7. Service discovery */
-    boot_anim_set_text("Discovering...");
-    discovery_init();
-    server_info_t server_info = {0};
-    if (discovery_start(&server_info) != 0) {
-        boot_anim_show_error("Server Not Found");
-        return;
-    }
-    ESP_LOGI(TAG, "Server: %s:%u", server_info.ip, server_info.port);
+    /* 7. Service discovery (skip for animation testing) */
+    boot_anim_set_text("Discovery (skipped)...");
+    ESP_LOGW(TAG, "Discovery skipped for animation testing");
     boot_anim_set_progress(40);
-    char *ws_url = discovery_get_ws_url(&server_info);
-    if (ws_url) {
-        ws_client_set_server_url(ws_url);
-        free(ws_url);
-    }
 
     /* 8. SPIFFS + emoji loading (45% -> 90%) */
     boot_anim_set_progress(45);
@@ -134,13 +119,10 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
     }
 
-    /* 10. WebSocket client */
+    /* 10. WebSocket client (skip for animation testing) */
     boot_anim_set_progress(92);
-    boot_anim_set_text("Connecting...");
-    ws_client_init();
-    ws_router_t router = ws_handlers_get_router();
-    ws_router_init(&router);
-    ws_client_start();
+    boot_anim_set_text("WS (skipped)...");
+    ESP_LOGW(TAG, "WebSocket skipped for animation testing");
 
     /* 11. Ready! */
     boot_anim_set_progress(100);
