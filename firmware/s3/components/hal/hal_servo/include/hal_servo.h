@@ -5,8 +5,11 @@
  * Replaces the UART-to-MCU servo bridge used in v1.x.
  * GPIO 19/20 are repurposed from UART TX/RX to LEDC PWM channels.
  *
- * Phase 2 implementation: LEDC timer + smooth-move FreeRTOS task.
- * Phase 1 (current): stub returning ESP_ERR_NOT_SUPPORTED.
+ * Features:
+ *   - 50Hz, 14-bit LEDC PWM
+ *   - Smooth movement with linear interpolation
+ *   - Synchronized dual-axis motion
+ *   - Y-axis mechanical limit protection
  */
 
 #ifndef HAL_SERVO_H
