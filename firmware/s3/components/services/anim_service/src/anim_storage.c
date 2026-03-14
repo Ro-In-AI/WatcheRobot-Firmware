@@ -23,7 +23,7 @@
 #define ANIM_DIR            "/spiffs/anim"
 
 /* Maximum file path length */
-#define MAX_PATH_LEN        256
+#define MAX_PATH_LEN        512
 
 /* Image dimensions */
 #define EMOJI_IMG_WIDTH     412
@@ -229,11 +229,14 @@ static int find_animation_files(const char *prefix, sorted_file_t *files, int ma
             if (strncmp(ent->d_name, prefix, prefix_len) == 0) {
                 size_t len = strlen(ent->d_name);
                 if (len > 4 && strcmp(ent->d_name + len - 4, ".png") == 0) {
-                    /* Store full path */
-                    snprintf(files[file_count].name, MAX_PATH_LEN, "%s/%s",
-                             dirs[d], ent->d_name);
-                    files[file_count].index = extract_index(ent->d_name);
-                    file_count++;
+                    /* Store full path with length check */
+                    size_t dir_len = strlen(dirs[d]);
+                    if (dir_len + 1 + len < MAX_PATH_LEN) {
+                        snprintf(files[file_count].name, MAX_PATH_LEN, "%s/%s",
+                                 dirs[d], ent->d_name);
+                        files[file_count].index = extract_index(ent->d_name);
+                        file_count++;
+                    }
                 }
             }
         }
@@ -431,9 +434,9 @@ static uint8_t* decode_png_to_rgb565(const char *filepath, int *width, int *heig
         .data = png_data
     };
 
-    /* Decode using LVGL's built-in decoder */
+    /* Decode using LVGL's built-in decoder (LVGL 8.x API) */
     lv_img_decoder_dsc_t decoder_dsc;
-    lv_res_t res = lv_img_decoder_open(&decoder_dsc, &img_dsc, LV_COLOR_FORMAT_RGB565);
+    lv_res_t res = lv_img_decoder_open(&decoder_dsc, &img_dsc, lv_color_white(), 0);
 
     if (res != LV_RES_OK || decoder_dsc.img_data == NULL) {
         ESP_LOGW(TAG, "LVGL decoder failed for %s", filepath);
