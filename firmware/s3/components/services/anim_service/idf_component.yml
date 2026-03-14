@@ -6,7 +6,5 @@ targets:
   - esp32s3
 dependencies:
   idf: ">=5.2"
-  espressif/lvgl:
+  lvgl/lvgl:
     version: "~8.4.0"
-  espressif/json:
-    version: "*"
