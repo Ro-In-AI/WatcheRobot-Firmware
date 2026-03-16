@@ -25,7 +25,8 @@
 
 /* Emoji animation types */
 typedef enum {
-    EMOJI_ANIM_GREETING = 0,
+    EMOJI_ANIM_BOOT = 0,       /* Boot animation (first play) */
+    EMOJI_ANIM_GREETING,
     EMOJI_ANIM_DETECTING,
     EMOJI_ANIM_DETECTED,
     EMOJI_ANIM_SPEAKING,

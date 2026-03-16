@@ -148,7 +148,8 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(500));
     boot_anim_finish();
     hal_display_ui_init();
-    display_update("Ready", "happy", 0, NULL);
+    /* Note: hal_display_ui_init() already sets "Ready" text and starts boot animation.
+     * Don't call display_update here as it would override the boot animation. */
     ESP_LOGI(TAG, "WatcheRobot ready");
 
     /* 12. Mark OTA partition valid (prevent rollback after successful boot) */

@@ -56,6 +56,7 @@ bool emoji_images_loaded(void)
 
 /* Emoji type prefixes */
 static const char *emoji_prefixes[] = {
+    "boot",
     "greeting",
     "detecting",
     "detected",
@@ -67,6 +68,7 @@ static const char *emoji_prefixes[] = {
 
 /* Emoji type names */
 static const char *emoji_names[] = {
+    "boot",
     "greeting",
     "detecting",
     "detected",

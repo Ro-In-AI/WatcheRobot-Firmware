@@ -163,27 +163,10 @@ int emoji_anim_start(emoji_anim_type_t type)
         return 0;
     }
 
-    /* Load and cache RGB565 frames if cache is enabled */
-    if (g_use_cache) {
-        int64_t load_start = esp_timer_get_time();
-
-        if (anim_cache_load_type(type) != 0) {
-            ESP_LOGW(TAG, "Failed to cache type %s, using PNG decode", emoji_type_name(type));
-            /* Check if PNG images are available as fallback */
-            if (emoji_get_frame_count(type) <= 0) {
-                ESP_LOGE(TAG, "No frames available for type: %s", emoji_type_name(type));
-                return -1;
-            }
-        } else {
-            int64_t load_time_ms = (esp_timer_get_time() - load_start) / 1000;
-            ESP_LOGI(TAG, "Type %s loaded in %lld ms", emoji_type_name(type), load_time_ms);
-        }
-    } else {
-        /* Check if PNG images are available */
-        if (emoji_get_frame_count(type) <= 0) {
-            ESP_LOGW(TAG, "No frames available for type: %s", emoji_type_name(type));
-            return -1;
-        }
+    /* Check if PNG images are available first */
+    if (emoji_get_frame_count(type) <= 0) {
+        ESP_LOGW(TAG, "No frames available for type: %s", emoji_type_name(type));
+        return -1;
     }
 
     /* Set new type and reset frame */
@@ -196,24 +179,22 @@ int emoji_anim_start(emoji_anim_type_t type)
     int fps = anim_meta_get_fps(type);
     g_interval_ms = 1000 / fps;
 
-    /* Show first frame immediately */
-    if (g_use_cache && anim_cache_is_type_loaded(type)) {
-        anim_cached_frame_t *cached = anim_cache_get_frame(type, 0);
-        if (cached != NULL && cached->rgb565_data != NULL) {
-            lv_img_dsc_t img_dsc = {
-                .header.always_zero = 0,
-                .header.w = cached->width,
-                .header.h = cached->height,
-                .header.cf = LV_IMG_CF_TRUE_COLOR,
-                .data_size = cached->data_size,
-                .data = cached->rgb565_data
-            };
-            lv_img_set_src(g_img_obj, &img_dsc);
-        }
-    } else {
-        lv_img_dsc_t *img = emoji_get_image(type, 0);
-        if (img != NULL) {
-            lv_img_set_src(g_img_obj, img);
+    /* Show first frame IMMEDIATELY from PNG (before cache load) */
+    lv_img_dsc_t *first_img = emoji_get_image(type, 0);
+    if (first_img != NULL) {
+        lv_img_set_src(g_img_obj, first_img);
+    }
+
+    /* Load and cache RGB565 frames if cache is enabled and not already cached */
+    if (g_use_cache && !anim_cache_is_type_loaded(type)) {
+        int64_t load_start = esp_timer_get_time();
+
+        if (anim_cache_load_type(type) != 0) {
+            ESP_LOGW(TAG, "Failed to cache type %s, using PNG decode", emoji_type_name(type));
+            g_use_cache = false;  /* Disable cache for this session */
+        } else {
+            int64_t load_time_ms = (esp_timer_get_time() - load_start) / 1000;
+            ESP_LOGI(TAG, "Type %s loaded in %lld ms", emoji_type_name(type), load_time_ms);
         }
     }
 
