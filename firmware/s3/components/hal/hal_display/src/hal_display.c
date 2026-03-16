@@ -228,7 +228,7 @@ int hal_display_ui_init(void)
     lv_obj_set_width(label_text, 380);
     lv_label_set_long_mode(label_text, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(label_text, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(label_text, "Loading...");
+    lv_label_set_text(label_text, "Ready");
     lv_obj_set_style_text_color(label_text, lv_color_white(), 0);
     lv_obj_align(label_text, LV_ALIGN_CENTER, 0, -140);
 
@@ -253,20 +253,13 @@ int hal_display_ui_init(void)
     /* Give LVGL time to refresh the screen before loading animation */
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    /* 6. Initialize animation system and start boot animation */
+    /* 6. Initialize animation system and start default greeting animation.
+     * Boot sequence is already handled by boot_anim during early startup. */
     ESP_LOGI(TAG, "Initializing animation system...");
     if (emoji_anim_init(img_emoji) == 0) {
-        ESP_LOGI(TAG, "Starting boot animation...");
-        /* emoji_anim_start needs LVGL lock for decoder, acquire it */
-        lvgl_port_lock(0);
-        emoji_anim_start(EMOJI_ANIM_BOOT);
-        lvgl_port_unlock();
-        ESP_LOGI(TAG, "Boot animation started");
-
-        /* Update label to show Ready after animation loads */
-        lvgl_port_lock(0);
-        lv_label_set_text(label_text, "Ready");
-        lvgl_port_unlock();
+        ESP_LOGI(TAG, "Starting greeting animation...");
+        emoji_anim_start(EMOJI_ANIM_GREETING);
+        ESP_LOGI(TAG, "Greeting animation started");
     } else {
         ESP_LOGW(TAG, "Failed to initialize animation system");
     }
