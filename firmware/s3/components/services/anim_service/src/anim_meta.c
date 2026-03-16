@@ -146,6 +146,12 @@ static int load_meta_from_file(void)
 
 int anim_meta_init(void)
 {
+    /* Don't re-initialize if already loaded */
+    if (g_meta_loaded) {
+        ESP_LOGD(TAG, "Metadata already loaded, skipping init");
+        return 0;
+    }
+
     /* Start with defaults */
     set_defaults();
 

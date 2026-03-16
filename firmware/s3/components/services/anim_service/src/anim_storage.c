@@ -368,9 +368,18 @@ const char* emoji_type_name(emoji_anim_type_t type)
 /* RGB565 Cache Implementation                                        */
 /* ------------------------------------------------------------------ */
 
+static bool g_cache_initialized = false;
+
 int anim_cache_init(void)
 {
+    /* Don't re-initialize and clear existing cache */
+    if (g_cache_initialized) {
+        ESP_LOGD(TAG, "RGB565 cache already initialized, skipping");
+        return 0;
+    }
+
     memset(&g_cache, 0, sizeof(g_cache));
+    g_cache_initialized = true;
     ESP_LOGI(TAG, "RGB565 cache initialized");
     return 0;
 }

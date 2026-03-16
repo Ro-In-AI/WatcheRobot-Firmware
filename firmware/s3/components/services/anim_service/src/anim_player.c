@@ -108,6 +108,8 @@ static void emoji_timer_callback(lv_timer_t *timer)
 
 int emoji_anim_init(lv_obj_t *img_obj)
 {
+    ESP_LOGI(TAG, "emoji_anim_init called");
+
     if (img_obj == NULL) {
         ESP_LOGE(TAG, "Invalid image object");
         return -1;
@@ -115,20 +117,24 @@ int emoji_anim_init(lv_obj_t *img_obj)
 
     g_img_obj = img_obj;
     g_current_type = EMOJI_ANIM_NONE;
-    g_current_frame = 0;
+    g_current_frame = 1;
     g_frames_displayed = 0;
     g_frame_start_us = esp_timer_get_time();
 
+    ESP_LOGI(TAG, "Calling anim_meta_init...");
     /* Initialize metadata system */
     if (anim_meta_init() != 0) {
         ESP_LOGW(TAG, "Metadata init failed, using defaults");
     }
+    ESP_LOGI(TAG, "anim_meta_init done");
 
+    ESP_LOGI(TAG, "Calling anim_cache_init...");
     /* Initialize RGB565 cache */
     if (anim_cache_init() != 0) {
         ESP_LOGW(TAG, "Cache init failed, falling back to PNG decode");
         g_use_cache = false;
     }
+    ESP_LOGI(TAG, "anim_cache_init done");
 
     /* Get default FPS from metadata */
     int fps = anim_meta_get_default_fps();

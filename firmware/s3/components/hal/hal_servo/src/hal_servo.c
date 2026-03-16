@@ -48,7 +48,7 @@
 /* Smooth move task configuration */
 #define SERVO_TASK_STACK_SIZE   2048
 #define SERVO_TASK_PRIORITY     5
-#define SERVO_CMD_QUEUE_SIZE    8
+#define SERVO_CMD_QUEUE_SIZE    100
 
 /** Synchronized dual-axis move command */
 typedef struct {
@@ -476,9 +476,16 @@ esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_m
         }
     };
 
-    if (xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
-        ESP_LOGW(TAG, "Command queue full, dropping smooth move");
-        return ESP_ERR_TIMEOUT;
+    /* Try to send, if queue full - drop oldest command and retry */
+    if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
+        servo_cmd_msg_t dropped;
+        if (xQueueReceive(s_cmd_queue, &dropped, 0) == pdTRUE) {
+            ESP_LOGD(TAG, "Dropped old command to make room");
+        }
+        if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "Command queue full even after drop");
+            return ESP_ERR_TIMEOUT;
+        }
     }
 
     ESP_LOGD(TAG, "Smooth move queued: axis=%s, angle=%d, duration=%dms",
@@ -516,9 +523,16 @@ esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms)
         }
     };
 
-    if (xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
-        ESP_LOGW(TAG, "Command queue full, dropping sync move");
-        return ESP_ERR_TIMEOUT;
+    /* Try to send, if queue full - drop oldest command and retry */
+    if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
+        servo_cmd_msg_t dropped;
+        if (xQueueReceive(s_cmd_queue, &dropped, 0) == pdTRUE) {
+            ESP_LOGD(TAG, "Dropped old command to make room for sync move");
+        }
+        if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "Command queue full even after drop");
+            return ESP_ERR_TIMEOUT;
+        }
     }
 
     ESP_LOGD(TAG, "Sync move queued: X=%d, Y=%d, duration=%dms", x_deg, y_deg, duration_ms);

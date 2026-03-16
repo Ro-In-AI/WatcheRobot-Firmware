@@ -241,8 +241,13 @@ int hal_display_ui_init(void)
 #endif
 
     /* 6. Initialize animation system */
+    ESP_LOGI(TAG, "Initializing animation system...");
     if (emoji_anim_init(img_emoji) == 0) {
+        ESP_LOGI(TAG, "Starting greeting animation...");
         emoji_anim_start(EMOJI_ANIM_GREETING);
+        ESP_LOGI(TAG, "Greeting animation started");
+    } else {
+        ESP_LOGW(TAG, "Failed to initialize animation system");
     }
 
     /* Load the new main screen - this makes scr the active screen */
