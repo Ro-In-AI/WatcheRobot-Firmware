@@ -166,7 +166,9 @@ int hal_display_init(void)
     /* 9. Initialize animation system */
     if (emoji_anim_init(img_emoji) == 0) {
         /* Start with greeting animation */
+        lvgl_port_lock(0);
         emoji_anim_start(EMOJI_ANIM_GREETING);
+        lvgl_port_unlock();
     }
 
     is_initialized = true;
@@ -258,7 +260,9 @@ int hal_display_ui_init(void)
     ESP_LOGI(TAG, "Initializing animation system...");
     if (emoji_anim_init(img_emoji) == 0) {
         ESP_LOGI(TAG, "Starting greeting animation...");
+        lvgl_port_lock(0);
         emoji_anim_start(EMOJI_ANIM_GREETING);
+        lvgl_port_unlock();
         ESP_LOGI(TAG, "Greeting animation started");
     } else {
         ESP_LOGW(TAG, "Failed to initialize animation system");
