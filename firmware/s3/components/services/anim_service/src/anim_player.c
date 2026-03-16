@@ -36,9 +36,6 @@ static emoji_anim_type_t g_current_type = EMOJI_ANIM_NONE;
 static int g_current_frame = 0;
 static uint32_t g_interval_ms = EMOJI_ANIM_INTERVAL_MS;
 static bool g_use_cache = DEFAULT_USE_CACHE;
-/* Keep a persistent descriptor for cached RGB565 frames.
- * lv_img_set_src() keeps the descriptor pointer, so stack descriptors are unsafe. */
-static lv_img_dsc_t g_cached_img_dsc = {0};
 
 /* Performance tracking */
 static int64_t g_frame_start_us = 0;
@@ -67,15 +64,8 @@ static void emoji_timer_callback(lv_timer_t *timer)
 
         /* Get cached RGB565 frame */
         anim_cached_frame_t *cached = anim_cache_get_frame(g_current_type, g_current_frame);
-        if (cached != NULL && cached->rgb565_data != NULL) {
-            /* Update persistent descriptor for RGB565 data */
-            g_cached_img_dsc.header.always_zero = 0;
-            g_cached_img_dsc.header.w = cached->width;
-            g_cached_img_dsc.header.h = cached->height;
-            g_cached_img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-            g_cached_img_dsc.data_size = cached->data_size;
-            g_cached_img_dsc.data = cached->rgb565_data;
-            lv_img_set_src(g_img_obj, &g_cached_img_dsc);
+        if (cached != NULL && cached->img_data != NULL) {
+            lv_img_set_src(g_img_obj, &cached->img_dsc);
 
             g_frames_displayed++;
 
@@ -284,14 +274,8 @@ int emoji_anim_show_static(emoji_anim_type_t type, int frame)
         }
 
         anim_cached_frame_t *cached = anim_cache_get_frame(type, frame);
-        if (cached != NULL && cached->rgb565_data != NULL) {
-            g_cached_img_dsc.header.always_zero = 0;
-            g_cached_img_dsc.header.w = cached->width;
-            g_cached_img_dsc.header.h = cached->height;
-            g_cached_img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-            g_cached_img_dsc.data_size = cached->data_size;
-            g_cached_img_dsc.data = cached->rgb565_data;
-            lv_img_set_src(g_img_obj, &g_cached_img_dsc);
+        if (cached != NULL && cached->img_data != NULL) {
+            lv_img_set_src(g_img_obj, &cached->img_dsc);
             g_current_type = type;
             g_current_frame = frame;
             return 0;

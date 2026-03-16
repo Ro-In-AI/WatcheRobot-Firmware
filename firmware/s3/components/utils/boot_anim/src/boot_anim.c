@@ -21,13 +21,20 @@ static lv_obj_t *percent_label = NULL;
 static lv_obj_t *status_label = NULL;
 static lv_obj_t *error_img = NULL;
 static lv_obj_t *countdown_label = NULL;
+static lv_obj_t *intro_img = NULL;
+static lv_timer_t *intro_timer = NULL;
 
 /* Countdown state */
 static int countdown_seconds = 10;
 static bool in_error_mode = false;
+static emoji_anim_type_t intro_type = EMOJI_ANIM_NONE;
+static int intro_frame = 0;
+static int intro_frame_count = 0;
 
 /* Forward declarations */
 static void boot_anim_countdown_task(void *param);
+static void boot_anim_intro_timer_cb(lv_timer_t *timer);
+static void boot_anim_stop_intro(void);
 
 /* ------------------------------------------------------------------ */
 /* Public: Initialize boot animation                                   */
@@ -62,6 +69,10 @@ void boot_anim_init(void)
     lv_obj_set_style_arc_width(progress_arc, 15, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(progress_arc, LV_OPA_TRANSP, LV_PART_KNOB);
 
+    /* Boot intro image (inside the arc) */
+    intro_img = lv_img_create(boot_screen);
+    lv_obj_align(intro_img, LV_ALIGN_CENTER, 0, 0);
+
     /* Status label (top center) */
     status_label = lv_label_create(boot_screen);
     lv_label_set_text(status_label, "Starting...");
@@ -95,6 +106,46 @@ void boot_anim_init(void)
     lvgl_port_unlock();
 
     ESP_LOGI(TAG, "Boot animation initialized");
+}
+
+void boot_anim_start_intro(emoji_anim_type_t type, int max_frames, uint32_t interval_ms)
+{
+    if (in_error_mode || intro_img == NULL) {
+        return;
+    }
+
+    int available_frames = emoji_get_frame_count(type);
+    if (available_frames <= 0) {
+        ESP_LOGW(TAG, "No intro frames available for type: %s", emoji_type_name(type));
+        return;
+    }
+
+    intro_type = type;
+    intro_frame_count = available_frames;
+    if (max_frames > 0 && max_frames < intro_frame_count) {
+        intro_frame_count = max_frames;
+    }
+    intro_frame = 0;
+
+    lv_img_dsc_t *img = emoji_get_image(intro_type, intro_frame);
+    if (img == NULL) {
+        ESP_LOGW(TAG, "Failed to get first intro frame for type: %s", emoji_type_name(type));
+        return;
+    }
+
+    lvgl_port_lock(0);
+    lv_img_set_src(intro_img, img);
+    lvgl_port_unlock();
+
+    if (intro_timer != NULL) {
+        lv_timer_set_period(intro_timer, interval_ms);
+        lv_timer_resume(intro_timer);
+    } else {
+        intro_timer = lv_timer_create(boot_anim_intro_timer_cb, interval_ms, NULL);
+    }
+
+    ESP_LOGI(TAG, "Boot intro started: %s (%d frames @ %lums)",
+             emoji_type_name(type), intro_frame_count, (unsigned long)interval_ms);
 }
 
 /* ------------------------------------------------------------------ */
@@ -143,6 +194,7 @@ void boot_anim_show_error(const char *error_msg)
     in_error_mode = true;
 
     ESP_LOGE(TAG, "Boot error: %s", error_msg);
+    boot_anim_stop_intro();
 
     /* Hide progress elements */
     lv_obj_add_flag(progress_arc, LV_OBJ_FLAG_HIDDEN);
@@ -210,6 +262,33 @@ static void boot_anim_countdown_task(void *param)
     /* Should not reach here */
 }
 
+static void boot_anim_intro_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+
+    if (in_error_mode || intro_img == NULL || intro_type == EMOJI_ANIM_NONE || intro_frame_count <= 0) {
+        return;
+    }
+
+    intro_frame = (intro_frame + 1) % intro_frame_count;
+    lv_img_dsc_t *img = emoji_get_image(intro_type, intro_frame);
+    if (img != NULL) {
+        lv_img_set_src(intro_img, img);
+    }
+}
+
+static void boot_anim_stop_intro(void)
+{
+    if (intro_timer != NULL) {
+        lv_timer_del(intro_timer);
+        intro_timer = NULL;
+    }
+
+    intro_type = EMOJI_ANIM_NONE;
+    intro_frame = 0;
+    intro_frame_count = 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Public: Finish boot animation                                       */
 /* ------------------------------------------------------------------ */
@@ -220,10 +299,12 @@ void boot_anim_finish(void)
 
     /* Brief delay to show 100% */
     vTaskDelay(pdMS_TO_TICKS(300));
+    boot_anim_stop_intro();
 
     /* Clear child pointers - do NOT delete the screen here.
      * The caller must load a new screen first, then call
      * lv_obj_del(boot_anim_get_screen()) to safely free it. */
+    intro_img       = NULL;
     progress_arc   = NULL;
     percent_label  = NULL;
     status_label   = NULL;

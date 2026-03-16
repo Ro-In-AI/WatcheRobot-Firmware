@@ -28,8 +28,6 @@
 /* Image dimensions */
 #define EMOJI_IMG_WIDTH     412
 #define EMOJI_IMG_HEIGHT    412
-#define EMOJI_RGB565_SIZE   (EMOJI_IMG_WIDTH * EMOJI_IMG_HEIGHT * 2)
-
 /* PNG header bytes */
 static const uint8_t PNG_HEADER[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
 
@@ -297,16 +295,37 @@ int emoji_load_all_images(void)
     return emoji_load_all_images_with_cb(NULL);
 }
 
+int emoji_load_type(emoji_anim_type_t type)
+{
+    if (type < 0 || type >= EMOJI_ANIM_COUNT) {
+        return -1;
+    }
+
+    if (g_emoji_counts[type] > 0 && g_emoji_images[type][0] != NULL) {
+        return g_emoji_counts[type];
+    }
+
+    int count = load_emoji_type(type);
+    if (count > 0) {
+        g_images_loaded = true;
+    }
+    return count;
+}
+
 int emoji_load_all_images_with_cb(emoji_progress_cb_t cb)
 {
     ESP_LOGI(TAG, "Loading all emoji images from SPIFFS...");
 
-    memset(g_emoji_images, 0, sizeof(g_emoji_images));
-    memset(g_emoji_counts, 0, sizeof(g_emoji_counts));
-
     int total = 0;
     for (int i = 0; i < EMOJI_ANIM_COUNT; i++) {
-        int count = load_emoji_type((emoji_anim_type_t)i);
+        int count = g_emoji_counts[i];
+        if (count <= 0 || g_emoji_images[i][0] == NULL) {
+            count = load_emoji_type((emoji_anim_type_t)i);
+        } else {
+            ESP_LOGI(TAG, "Images already loaded for type: %s (%d)",
+                     emoji_type_name((emoji_anim_type_t)i), count);
+        }
+
         if (count < 0) {
             ESP_LOGW(TAG, "Failed to load type %d", i);
         } else {
@@ -390,10 +409,11 @@ static void free_cached_type(void)
 {
     if (g_cache.frames != NULL) {
         for (int i = 0; i < g_cache.frame_count; i++) {
-            if (g_cache.frames[i].rgb565_data != NULL) {
-                heap_caps_free(g_cache.frames[i].rgb565_data);
-                g_cache.frames[i].rgb565_data = NULL;
+            if (g_cache.frames[i].img_data != NULL) {
+                heap_caps_free(g_cache.frames[i].img_data);
+                g_cache.frames[i].img_data = NULL;
             }
+            memset(&g_cache.frames[i].img_dsc, 0, sizeof(g_cache.frames[i].img_dsc));
         }
         heap_caps_free(g_cache.frames);
         g_cache.frames = NULL;
@@ -403,7 +423,8 @@ static void free_cached_type(void)
     g_cache.type = EMOJI_ANIM_NONE;
 }
 
-static uint8_t* decode_png_to_rgb565(const char *filepath, int *width, int *height, size_t *out_size)
+static uint8_t* decode_png_to_native_image(const char *filepath, int *width, int *height,
+                                           size_t *data_size, lv_img_cf_t *color_format)
 {
     FILE *f = fopen(filepath, "rb");
     if (f == NULL) {
@@ -437,13 +458,9 @@ static uint8_t* decode_png_to_rgb565(const char *filepath, int *width, int *heig
     fclose(f);
 
     /* Use LVGL's PNG decoder to get image info */
-    lv_img_dsc_t img_dsc = {
-        .header.cf = LV_IMG_CF_RAW_ALPHA,
-        .header.w = 0,
-        .header.h = 0,
-        .data_size = file_size,
-        .data = png_data
-    };
+    lv_img_dsc_t img_dsc = {0};
+    img_dsc.data_size = file_size;
+    img_dsc.data = png_data;
 
     /* Decode using LVGL's built-in decoder (LVGL 8.x API) */
     lv_img_decoder_dsc_t decoder_dsc;
@@ -455,52 +472,38 @@ static uint8_t* decode_png_to_rgb565(const char *filepath, int *width, int *heig
         return NULL;
     }
 
-    int out_w = decoder_dsc.header.w;
-    int out_h = decoder_dsc.header.h;
-    size_t pixel_count = (size_t)out_w * (size_t)out_h;
-    size_t dst_size = pixel_count * sizeof(lv_color_t);
-
-    /* Allocate TRUE_COLOR buffer (matches LV_COLOR_DEPTH) */
-    uint8_t *rgb565_data = (uint8_t*)heap_caps_malloc(dst_size, MALLOC_CAP_SPIRAM);
-    if (rgb565_data == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate color buffer (%u bytes)", (unsigned)dst_size);
+    size_t bytes_per_pixel = lv_img_cf_get_px_size(decoder_dsc.header.cf) >> 3;
+    size_t decoded_size = (size_t)decoder_dsc.header.w * decoder_dsc.header.h * bytes_per_pixel;
+    if (bytes_per_pixel == 0 || decoded_size == 0) {
+        ESP_LOGW(TAG, "Skip cache for unsupported decoded color format: %d (%s)",
+                 decoder_dsc.header.cf, filepath);
         lv_img_decoder_close(&decoder_dsc);
         heap_caps_free(png_data);
         return NULL;
     }
 
-    /* Convert decoded output to TRUE_COLOR buffer expected by LV_IMG_CF_TRUE_COLOR. */
-    if (decoder_dsc.header.cf == LV_IMG_CF_TRUE_COLOR ||
-        decoder_dsc.header.cf == LV_IMG_CF_TRUE_COLOR_CHROMA_KEYED) {
-        memcpy(rgb565_data, decoder_dsc.img_data, dst_size);
-    } else if (decoder_dsc.header.cf == LV_IMG_CF_TRUE_COLOR_ALPHA) {
-        /* Strip alpha byte: [lv_color_t][lv_opa_t] -> [lv_color_t]. */
-        size_t src_px_size = sizeof(lv_color_t) + sizeof(lv_opa_t);
-        const uint8_t *src = (const uint8_t *)decoder_dsc.img_data;
-        uint8_t *dst = rgb565_data;
-        for (size_t i = 0; i < pixel_count; i++) {
-            memcpy(dst, src, sizeof(lv_color_t));
-            dst += sizeof(lv_color_t);
-            src += src_px_size;
-        }
-    } else {
-        ESP_LOGE(TAG, "Unsupported decoded color format: %d", decoder_dsc.header.cf);
+    /* Allocate native decoded image buffer */
+    uint8_t *decoded_data = (uint8_t*)heap_caps_malloc(decoded_size, MALLOC_CAP_SPIRAM);
+    if (decoded_data == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate decoded image buffer (%u bytes)",
+                 (unsigned)decoded_size);
         lv_img_decoder_close(&decoder_dsc);
         heap_caps_free(png_data);
-        heap_caps_free(rgb565_data);
         return NULL;
     }
 
-    *width = out_w;
-    *height = out_h;
-    if (out_size) {
-        *out_size = dst_size;
-    }
+    /* Copy decoded data in LVGL's native color format */
+    memcpy(decoded_data, decoder_dsc.img_data, decoded_size);
+
+    *width = decoder_dsc.header.w;
+    *height = decoder_dsc.header.h;
+    *data_size = decoded_size;
+    *color_format = decoder_dsc.header.cf;
 
     lv_img_decoder_close(&decoder_dsc);
     heap_caps_free(png_data);
 
-    return rgb565_data;
+    return decoded_data;
 }
 
 int anim_cache_load_type(emoji_anim_type_t type)
@@ -553,14 +556,22 @@ int anim_cache_load_type(emoji_anim_type_t type)
     size_t total_bytes = 0;
     for (int i = 0; i < file_count; i++) {
         int w, h;
-        size_t frame_size = 0;
-        uint8_t *rgb565 = decode_png_to_rgb565(files[i].name, &w, &h, &frame_size);
-        if (rgb565 != NULL) {
-            g_cache.frames[loaded].rgb565_data = rgb565;
-            g_cache.frames[loaded].data_size = frame_size;
+        size_t data_size = 0;
+        lv_img_cf_t color_format = LV_IMG_CF_UNKNOWN;
+        uint8_t *decoded = decode_png_to_native_image(files[i].name, &w, &h,
+                                                      &data_size, &color_format);
+        if (decoded != NULL) {
+            g_cache.frames[loaded].img_data = decoded;
+            g_cache.frames[loaded].data_size = data_size;
             g_cache.frames[loaded].width = w;
             g_cache.frames[loaded].height = h;
-            total_bytes += frame_size;
+            g_cache.frames[loaded].img_dsc.header.always_zero = 0;
+            g_cache.frames[loaded].img_dsc.header.w = w;
+            g_cache.frames[loaded].img_dsc.header.h = h;
+            g_cache.frames[loaded].img_dsc.header.cf = color_format;
+            g_cache.frames[loaded].img_dsc.data_size = data_size;
+            g_cache.frames[loaded].img_dsc.data = decoded;
+            total_bytes += data_size;
             loaded++;
             ESP_LOGD(TAG, "Cached frame %d: %s", loaded, files[i].name);
         }
@@ -579,7 +590,7 @@ int anim_cache_load_type(emoji_anim_type_t type)
     g_cache.is_loaded = true;
     g_cache.type = type;
 
-    ESP_LOGI(TAG, "Cached %d RGB565 frames for type: %s (~%u KB)",
+    ESP_LOGI(TAG, "Cached %d frames for type: %s (~%u KB)",
              loaded, emoji_type_name(type), (unsigned)(total_bytes / 1024));
 
     return 0;

@@ -68,6 +68,16 @@ int emoji_spiffs_init(void);
 int emoji_load_all_images(void);
 
 /**
+ * @brief Load PNG frames for a single emoji animation type
+ *
+ * If the type is already loaded, returns the current frame count.
+ *
+ * @param type Emoji animation type
+ * @return Number of loaded frames, or -1 on error
+ */
+int emoji_load_type(emoji_anim_type_t type);
+
+/**
  * @brief Get PNG image descriptor for specific emoji type and frame
  * @param type Emoji animation type
  * @param frame Frame index (0 to count-1)
@@ -123,10 +133,11 @@ const char* emoji_type_name(emoji_anim_type_t type);
  * @brief Cached RGB565 frame data
  */
 typedef struct {
-    uint8_t *rgb565_data;       /**< Decoded RGB565 pixel data (PSRAM) */
-    size_t data_size;           /**< Size in bytes (width * height * 2) */
+    uint8_t *img_data;          /**< Decoded image data in LVGL native format (PSRAM) */
+    size_t data_size;           /**< Size in bytes for the decoded image buffer */
     int width;                  /**< Image width */
     int height;                 /**< Image height */
+    lv_img_dsc_t img_dsc;       /**< Persistent LVGL descriptor for this frame */
 } anim_cached_frame_t;
 
 /**

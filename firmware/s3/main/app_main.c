@@ -55,7 +55,7 @@ static void on_button_multi_click_restart(void)
 
 static void on_emoji_type_loaded(emoji_anim_type_t type, int types_done, int types_total)
 {
-    int progress = 45 + (types_done * 45) / types_total;
+    int progress = 5 + (types_done * 15) / types_total;
     boot_anim_set_progress(progress);
     boot_anim_set_text(emoji_type_name(type));
 }
@@ -77,33 +77,47 @@ void app_main(void)
     /* 2. Show boot animation */
     boot_anim_init();
     boot_anim_set_text("Initializing...");
+    boot_anim_set_progress(0);
 
-    /* 3. Servo HAL init (GPIO 19/20 LEDC PWM, Phase 2 implementation) */
-    boot_anim_set_progress(10);
+    /* 3. Load animation assets first so boot intro can play immediately */
+    boot_anim_set_text("Boot...");
+    if (emoji_spiffs_init() == 0) {
+        if (emoji_load_type(EMOJI_ANIM_BOOT) > 0) {
+            /* Dedicated startup sequence: boot1.png ~ boot4.png */
+            boot_anim_start_intro(EMOJI_ANIM_BOOT, 4, 120);
+        }
+        boot_anim_set_text("Loading...");
+        emoji_load_all_images_with_cb(on_emoji_type_loaded);
+    } else {
+        ESP_LOGW(TAG, "SPIFFS init failed (emoji disabled)");
+    }
+
+    /* 4. Servo HAL init (GPIO 19/20 LEDC PWM, Phase 2 implementation) */
+    boot_anim_set_progress(25);
     boot_anim_set_text("Servo...");
     hal_servo_init();
 
-    /* 4. Voice recorder: init only (do NOT start yet) */
-    boot_anim_set_progress(20);
+    /* 5. Voice recorder: init only (do NOT start yet) */
+    boot_anim_set_progress(30);
     boot_anim_set_text("Voice...");
     voice_recorder_init();
 
-    /* 5. Register button callbacks */
+    /* 6. Register button callbacks */
     bsp_set_btn_long_press_cb(on_button_long_press);
     bsp_set_btn_long_release_cb(on_button_long_release);
     bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
 
-    /* 6. WiFi */
-    boot_anim_set_progress(25);
+    /* 7. WiFi */
+    boot_anim_set_progress(40);
     boot_anim_set_text("WiFi...");
     wifi_init();
     if (wifi_connect() != 0) {
         boot_anim_show_error("WiFi Error");
         return;
     }
-    boot_anim_set_progress(35);
+    boot_anim_set_progress(55);
 
-    /* 7. Service discovery */
+    /* 8. Service discovery */
     boot_anim_set_text("Discovering...");
     discovery_init();
     server_info_t server_info = {0};
@@ -112,21 +126,11 @@ void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "Server: %s:%u", server_info.ip, server_info.port);
-    boot_anim_set_progress(40);
+    boot_anim_set_progress(65);
     char *ws_url = discovery_get_ws_url(&server_info);
     if (ws_url) {
         ws_client_set_server_url(ws_url);
         free(ws_url);
-    }
-
-    /* 8. SPIFFS + emoji loading (45% -> 90%) */
-    boot_anim_set_progress(45);
-    boot_anim_set_text("Loading...");
-    if (emoji_spiffs_init() == 0) {
-        emoji_load_all_images_with_cb(on_emoji_type_loaded);
-    } else {
-        ESP_LOGW(TAG, "SPIFFS init failed (emoji disabled)");
-        boot_anim_set_progress(90);
     }
 
     /* 9. Start voice recorder */
@@ -140,7 +144,6 @@ void app_main(void)
     ws_client_init();
     ws_router_t router = ws_handlers_get_router();
     ws_router_init(&router);
-    ws_client_start();
 
     /* 11. Ready! */
     boot_anim_set_progress(100);
@@ -148,6 +151,7 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(500));
     boot_anim_finish();
     hal_display_ui_init();
+    ws_client_start();
     /* Note: hal_display_ui_init() already sets "Ready" text and starts default animation.
      * Don't call display_update here as it would override the startup UI state. */
     ESP_LOGI(TAG, "WatcheRobot ready");

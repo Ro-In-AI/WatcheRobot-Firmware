@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include "lvgl.h"
+#include "anim_storage.h"
 
 /**
  * @brief Initialize and show boot animation screen
@@ -35,6 +36,18 @@ void boot_anim_set_progress(int percent);
  * @param text Status message (e.g., "WiFi...", "Cloud...")
  */
 void boot_anim_set_text(const char *text);
+
+/**
+ * @brief Start boot intro frame playback on the boot screen
+ *
+ * Plays the first N frames of the given animation type in a loop until
+ * boot_anim_finish() or boot_anim_show_error() stops it.
+ *
+ * @param type Animation type containing the boot intro frames
+ * @param max_frames Maximum number of frames to play from the sequence
+ * @param interval_ms Frame interval in milliseconds
+ */
+void boot_anim_start_intro(emoji_anim_type_t type, int max_frames, uint32_t interval_ms);
 
 /**
  * @brief Show error screen and countdown to reboot
