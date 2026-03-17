@@ -1,3 +1,4 @@
+#include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -8,6 +9,7 @@
 #include "ble_service.h"
 #include "boot_anim.h"
 #include "bsp_watcher.h"
+#include "camera_service.h"
 #include "discovery_client.h"
 #include "display_ui.h"
 #include "hal_display.h"
@@ -56,6 +58,27 @@ static void on_emoji_type_loaded(emoji_anim_type_t type, int types_done, int typ
     int progress = 5 + (types_done * 15) / types_total;
     boot_anim_set_progress(progress);
     boot_anim_set_text(emoji_type_name(type));
+}
+
+static void run_camera_boot_diag(void) {
+#if CONFIG_WATCHER_CAMERA_BOOT_DIAG
+    esp_err_t ret;
+
+    ESP_LOGI(TAG, "Camera boot diagnostic: begin");
+    ret = camera_service_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Camera boot diagnostic init failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = camera_service_capture_once();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Camera boot diagnostic capture failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ESP_LOGI(TAG, "Camera boot diagnostic: capture succeeded");
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -165,6 +188,8 @@ void app_main(void) {
     /* Note: hal_display_ui_init() already sets "Ready" text and starts default animation.
      * Don't call display_update here as it would override the startup UI state. */
     ESP_LOGI(TAG, "WatcheRobot ready");
+
+    run_camera_boot_diag();
 
     /* 12. Mark OTA partition valid (prevent rollback after successful boot) */
     ota_service_mark_valid();

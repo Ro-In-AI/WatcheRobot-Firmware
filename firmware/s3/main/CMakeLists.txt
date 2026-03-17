@@ -15,6 +15,7 @@ idf_component_register(
         # Services
         voice_service
         anim_service
+        camera_service
         ota_service
         # Utils
         wifi_manager

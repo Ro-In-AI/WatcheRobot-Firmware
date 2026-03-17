@@ -1,0 +1,10 @@
+menu "Watcher Camera Service"
+
+    config WATCHER_CAMERA_BOOT_DIAG
+        bool "Enable boot-time camera diagnostic capture"
+        default n
+        help
+            Run a non-fatal one-shot camera capture after boot completes.
+            Useful for validating the HX6538 communication path on hardware.
+
+endmenu

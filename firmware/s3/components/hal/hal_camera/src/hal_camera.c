@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sdkconfig.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -14,8 +15,8 @@
 #include "sscma_client.h"
 
 #define TAG "HAL_CAMERA"
-#define HAL_CAMERA_CONNECT_TIMEOUT_MS 5000
-#define HAL_CAMERA_CAPTURE_TIMEOUT_MS 5000
+#define HAL_CAMERA_CONNECT_TIMEOUT_MS CONFIG_WATCHER_CAMERA_CONNECT_TIMEOUT_MS
+#define HAL_CAMERA_CAPTURE_TIMEOUT_MS CONFIG_WATCHER_CAMERA_CAPTURE_TIMEOUT_MS
 
 typedef struct {
     sscma_client_handle_t client;

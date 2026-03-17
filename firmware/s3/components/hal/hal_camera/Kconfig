@@ -1,0 +1,19 @@
+menu "Watcher HAL Camera"
+
+    config WATCHER_CAMERA_CONNECT_TIMEOUT_MS
+        int "Camera coprocessor connect timeout (ms)"
+        default 5000
+        range 1000 30000
+        help
+            Maximum time to wait for the HX6538 INIT@STAT connect event
+            after SSCMA client initialization.
+
+    config WATCHER_CAMERA_CAPTURE_TIMEOUT_MS
+        int "One-shot camera capture timeout (ms)"
+        default 5000
+        range 1000 30000
+        help
+            Maximum time to wait for a one-shot camera INVOKE result
+            containing an image payload.
+
+endmenu

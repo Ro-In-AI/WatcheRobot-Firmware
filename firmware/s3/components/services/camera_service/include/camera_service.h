@@ -1,9 +1,9 @@
 /**
  * @file camera_service.h
- * @brief Camera video streaming service (Phase 7)
+ * @brief Camera service over HAL camera
  *
- * Schedules JPEG frame streaming over WebSocket.
- * Handles bandwidth priority (TTS > audio > video).
+ * Current implementation supports HAL initialization and one-shot capture.
+ * Streaming remains deferred until the HAL stream path is implemented.
  */
 
 #ifndef CAMERA_SERVICE_H
