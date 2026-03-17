@@ -44,12 +44,6 @@
 #define DUTY_RESOLUTION     16384
 #define DUTY_MIN            (SERVO_MIN_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US)  /* ~819 */
 #define DUTY_MAX            (SERVO_MAX_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US)  /* ~1638 */
-/* Y-axis remap baseline: keep protocol/animation angle unchanged, remap physical motion in HAL.
- * logical 90 -> physical 90
- * logical 150 -> physical 30
- * formula: physical = 180 - logical
- */
-#define SERVO_Y_REMAP_BASE_DEG 90
 
 /* Smooth move task configuration */
 #define SERVO_TASK_STACK_SIZE   2048
@@ -118,16 +112,13 @@ static int angle_to_duty(int angle_deg)
 /**
  * @brief Map logical control angle to physical servo angle.
  *
- * Keep external protocol/animation data unchanged. Only Y-axis is remapped
- * for reverse-direction servos.
+ * Current hardware wiring expects direct mapping:
+ * logical angle == physical angle for both X and Y axis.
  */
 static int servo_map_physical_angle(servo_axis_t axis, int logical_angle_deg)
 {
+    (void)axis;
     int physical = logical_angle_deg;
-
-    if (axis == SERVO_AXIS_Y) {
-        physical = (SERVO_Y_REMAP_BASE_DEG * 2) - logical_angle_deg;
-    }
 
     if (physical < 0) physical = 0;
     if (physical > SERVO_RANGE_DEG) physical = SERVO_RANGE_DEG;
@@ -441,8 +432,6 @@ esp_err_t hal_servo_init(void)
     ESP_LOGI(TAG, "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, Y limits=[%d,%d]deg",
              CONFIG_WATCHER_SERVO_X_GPIO, CONFIG_WATCHER_SERVO_Y_GPIO,
              CONFIG_WATCHER_SERVO_Y_MIN_DEG, CONFIG_WATCHER_SERVO_Y_MAX_DEG);
-    ESP_LOGI(TAG, "Servo Y remap enabled (logical->physical): physical = %d - logical",
-             SERVO_Y_REMAP_BASE_DEG * 2);
 
     return ESP_OK;
 }
