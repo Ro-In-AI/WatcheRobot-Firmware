@@ -44,6 +44,12 @@
 #define DUTY_RESOLUTION     16384
 #define DUTY_MIN            (SERVO_MIN_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US)  /* ~819 */
 #define DUTY_MAX            (SERVO_MAX_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US)  /* ~1638 */
+/* Y-axis remap baseline: keep protocol/animation angle unchanged, remap physical motion in HAL.
+ * logical 90 -> physical 90
+ * logical 150 -> physical 30
+ * formula: physical = 180 - logical
+ */
+#define SERVO_Y_REMAP_BASE_DEG 90
 
 /* Smooth move task configuration */
 #define SERVO_TASK_STACK_SIZE   2048
@@ -88,6 +94,8 @@ static SemaphoreHandle_t s_angle_mutex = NULL;
 /* Forward declarations */
 static void servo_task(void *arg);
 static int angle_to_duty(int angle_deg);
+static int servo_map_physical_angle(servo_axis_t axis, int logical_angle_deg);
+static int angle_to_duty_mapped(servo_axis_t axis, int logical_angle_deg);
 static esp_err_t set_duty(servo_axis_t axis, int duty);
 static esp_err_t configure_ledc(void);
 static void move_to_angle_immediate(servo_axis_t axis, int angle_deg);
@@ -105,6 +113,30 @@ static int angle_to_duty(int angle_deg)
 
     /* Linear interpolation: duty = DUTY_MIN + (angle * (DUTY_MAX - DUTY_MIN) / 180) */
     return DUTY_MIN + (angle_deg * (DUTY_MAX - DUTY_MIN) / SERVO_RANGE_DEG);
+}
+
+/**
+ * @brief Map logical control angle to physical servo angle.
+ *
+ * Keep external protocol/animation data unchanged. Only Y-axis is remapped
+ * for reverse-direction servos.
+ */
+static int servo_map_physical_angle(servo_axis_t axis, int logical_angle_deg)
+{
+    int physical = logical_angle_deg;
+
+    if (axis == SERVO_AXIS_Y) {
+        physical = (SERVO_Y_REMAP_BASE_DEG * 2) - logical_angle_deg;
+    }
+
+    if (physical < 0) physical = 0;
+    if (physical > SERVO_RANGE_DEG) physical = SERVO_RANGE_DEG;
+    return physical;
+}
+
+static int angle_to_duty_mapped(servo_axis_t axis, int logical_angle_deg)
+{
+    return angle_to_duty(servo_map_physical_angle(axis, logical_angle_deg));
 }
 
 /**
@@ -161,7 +193,7 @@ static esp_err_t configure_ledc(void)
         .speed_mode = LEDC_SPEED_MODE,
         .channel = LEDC_CHANNEL_X,
         .timer_sel = LEDC_TIMER_NUM,
-        .duty = angle_to_duty(s_angle[SERVO_AXIS_X]),
+        .duty = angle_to_duty_mapped(SERVO_AXIS_X, s_angle[SERVO_AXIS_X]),
         .hpoint = 0
     };
 
@@ -177,7 +209,7 @@ static esp_err_t configure_ledc(void)
         .speed_mode = LEDC_SPEED_MODE,
         .channel = LEDC_CHANNEL_Y,
         .timer_sel = LEDC_TIMER_NUM,
-        .duty = angle_to_duty(s_angle[SERVO_AXIS_Y]),
+        .duty = angle_to_duty_mapped(SERVO_AXIS_Y, s_angle[SERVO_AXIS_Y]),
         .hpoint = 0
     };
 
@@ -201,7 +233,7 @@ static esp_err_t configure_ledc(void)
  */
 static void move_to_angle_immediate(servo_axis_t axis, int angle_deg)
 {
-    int duty = angle_to_duty(angle_deg);
+    int duty = angle_to_duty_mapped(axis, angle_deg);
     set_duty(axis, duty);
 
     if (xSemaphoreTake(s_angle_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -279,7 +311,7 @@ static void servo_task(void *arg)
                     current_deg = start_deg + (int)(step_size * i);
                 }
 
-                int duty = angle_to_duty(current_deg);
+                int duty = angle_to_duty_mapped(axis, current_deg);
                 set_duty(axis, duty);
 
                 /* Update stored angle */
@@ -337,8 +369,8 @@ static void servo_task(void *arg)
                     current_y = start_y + (int)(step_y * i);
                 }
 
-                int duty_x = angle_to_duty(current_x);
-                int duty_y = angle_to_duty(current_y);
+                int duty_x = angle_to_duty_mapped(SERVO_AXIS_X, current_x);
+                int duty_y = angle_to_duty_mapped(SERVO_AXIS_Y, current_y);
 
                 set_duty(SERVO_AXIS_X, duty_x);
                 set_duty(SERVO_AXIS_Y, duty_y);
@@ -409,6 +441,8 @@ esp_err_t hal_servo_init(void)
     ESP_LOGI(TAG, "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, Y limits=[%d,%d]deg",
              CONFIG_WATCHER_SERVO_X_GPIO, CONFIG_WATCHER_SERVO_Y_GPIO,
              CONFIG_WATCHER_SERVO_Y_MIN_DEG, CONFIG_WATCHER_SERVO_Y_MAX_DEG);
+    ESP_LOGI(TAG, "Servo Y remap enabled (logical->physical): physical = %d - logical",
+             SERVO_Y_REMAP_BASE_DEG * 2);
 
     return ESP_OK;
 }
