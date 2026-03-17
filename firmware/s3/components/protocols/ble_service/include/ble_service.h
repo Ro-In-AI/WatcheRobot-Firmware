@@ -1,6 +1,13 @@
 /**
  * @file ble_service.h
- * @brief BLE GATT service + WiFi Provisioning (Phase 6)
+ * @brief BLE GATT motion-control service
+ *
+ * Current scope:
+ * - Receive servo motion commands over BLE GATT write
+ * - Forward commands to hal_servo
+ *
+ * Not included in current scope:
+ * - Wi-Fi provisioning over BLE
  */
 
 #ifndef BLE_SERVICE_H

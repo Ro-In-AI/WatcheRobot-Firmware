@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_err.h"
 #include "esp_task_wdt.h"
 
 #include "bsp_watcher.h"
@@ -11,6 +12,7 @@
 #include "ws_handlers.h"
 #include "ws_router.h"
 #include "discovery_client.h"
+#include "ble_service.h"
 #include "hal_display.h"
 #include "hal_servo.h"
 #include "boot_anim.h"
@@ -101,6 +103,19 @@ void app_main(void)
     boot_anim_set_progress(30);
     boot_anim_set_text("Voice...");
     voice_recorder_init();
+
+    /* 5.5 BLE motion control (optional, no provisioning in this iteration) */
+    boot_anim_set_progress(35);
+    boot_anim_set_text("BLE...");
+    esp_err_t ble_ret = ble_service_init();
+    if (ble_ret == ESP_OK) {
+        ble_ret = ble_service_start_advertising();
+        if (ble_ret != ESP_OK) {
+            ESP_LOGW(TAG, "BLE advertising start failed: %s", esp_err_to_name(ble_ret));
+        }
+    } else if (ble_ret != ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGW(TAG, "BLE init failed: %s", esp_err_to_name(ble_ret));
+    }
 
     /* 6. Register button callbacks */
     bsp_set_btn_long_press_cb(on_button_long_press);

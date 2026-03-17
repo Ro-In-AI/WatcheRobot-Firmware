@@ -11,6 +11,7 @@ idf_component_register(
         # Protocols
         ws_client
         discovery
+        ble_service
         # Services
         voice_service
         anim_service
