@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [0.0.4] - 2026-03-17
+
 ### Added
 - Initial repository structure (migrated from MVP-W prototype)
 - Four-layer ESP-IDF component architecture (`drivers/hal/protocols/services/utils`)
@@ -23,12 +27,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - GitHub Actions CI (`esp32s3` build on push/PR)
 - `.clang-format` code style configuration
 - Documentation structure (`docs/`, `CONTRIBUTING.md`, issue templates)
+- Frozen S3 communication protocol baseline document for integration/regression handoff
+- Firmware release version `0.0.4`
 
 ### Changed
 - Architecture: single-chip (ESP32-S3 only), secondary MCU removed
 - Servo control: UART bridge → GPIO direct PWM (`hal_servo`)
 - Animation: PNG runtime decode → load-time decode to RGB565 PSRAM buffer
 - `cJSON`: removed local copy, use ESP-IDF built-in `json` component
+- Default Wi-Fi credentials updated to `Erroright / erroright`
+- OTA firmware version reporting now follows the ESP-IDF project version
 
 ### Removed
 - `uart_bridge` module (UART to MCU communication)

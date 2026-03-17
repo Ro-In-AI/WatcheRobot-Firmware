@@ -7,6 +7,7 @@
  */
 
 #include "ota_service.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 
@@ -36,5 +37,6 @@ void ota_service_mark_valid(void)
 
 const char* ota_service_get_fw_version(void)
 {
-    return "2.0.0-phase1";
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    return app_desc ? app_desc->version : "0.0.0";
 }
