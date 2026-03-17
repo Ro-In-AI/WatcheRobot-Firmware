@@ -5,8 +5,11 @@
  * Provides JPEG frame callback interface via SSCMA protocol.
  * Himax chip communicates with ESP32-S3 via UART/SPI SSCMA protocol.
  *
- * Phase 7 implementation: requires hardware verification of SSCMA frame rate.
- * Phase 1 (current): stub API.
+ * Current implementation supports:
+ * - SSCMA client initialization and connect wait
+ * - one-shot frame capture via hal_camera_capture_once()
+ *
+ * Continuous streaming APIs remain deferred until hardware verification is complete.
  */
 
 #ifndef HAL_CAMERA_H
