@@ -1,50 +1,47 @@
+#include "esp_err.h"
+#include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
-#include "esp_err.h"
-#include "esp_task_wdt.h"
 
+#include "anim_storage.h"
+#include "ble_service.h"
+#include "boot_anim.h"
 #include "bsp_watcher.h"
-#include "voice_service.h"
+#include "discovery_client.h"
 #include "display_ui.h"
+#include "hal_display.h"
+#include "hal_servo.h"
+#include "ota_service.h"
+#include "sensecap-watcher.h"
+#include "voice_service.h"
 #include "wifi_manager.h"
 #include "ws_client.h"
 #include "ws_handlers.h"
 #include "ws_router.h"
-#include "discovery_client.h"
-#include "ble_service.h"
-#include "hal_display.h"
-#include "hal_servo.h"
-#include "boot_anim.h"
-#include "anim_storage.h"
-#include "ota_service.h"
-#include "sensecap-watcher.h"
 
 #define TAG "MAIN"
 
 /* Physical restart: click count to trigger reboot */
-#define RESTART_CLICK_COUNT  5
+#define RESTART_CLICK_COUNT 5
 
 /* ------------------------------------------------------------------ */
 /* Button Callbacks (using SDK's bsp_set_btn_* interface)             */
 /* ------------------------------------------------------------------ */
 
-static void on_button_long_press(void)
-{
+static void on_button_long_press(void) {
     ESP_LOGI(TAG, "Button LONG PRESS - start recording");
     voice_recorder_process_event(VOICE_EVENT_BUTTON_PRESS);
     display_update("Listening...", "listening", 0, NULL);
 }
 
-static void on_button_long_release(void)
-{
+static void on_button_long_release(void) {
     ESP_LOGI(TAG, "Button LONG RELEASE - stop recording");
     voice_recorder_process_event(VOICE_EVENT_BUTTON_RELEASE);
     display_update("Processing...", "analyzing", 0, NULL);
 }
 
-static void on_button_multi_click_restart(void)
-{
+static void on_button_multi_click_restart(void) {
     ESP_LOGW(TAG, "Button %d-click - REBOOTING!", RESTART_CLICK_COUNT);
     display_update("Rebooting...", "sad", 0, NULL);
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -55,8 +52,7 @@ static void on_button_multi_click_restart(void)
 /* Emoji loading progress callback                                    */
 /* ------------------------------------------------------------------ */
 
-static void on_emoji_type_loaded(emoji_anim_type_t type, int types_done, int types_total)
-{
+static void on_emoji_type_loaded(emoji_anim_type_t type, int types_done, int types_total) {
     int progress = 5 + (types_done * 15) / types_total;
     boot_anim_set_progress(progress);
     boot_anim_set_text(emoji_type_name(type));
@@ -66,8 +62,7 @@ static void on_emoji_type_loaded(emoji_anim_type_t type, int types_done, int typ
 /* Main Application                                                   */
 /* ------------------------------------------------------------------ */
 
-void app_main(void)
-{
+void app_main(void) {
     ESP_LOGI(TAG, "WatcheRobot S3 v2.0 starting");
 
     /* 1. Minimal display init for boot animation */

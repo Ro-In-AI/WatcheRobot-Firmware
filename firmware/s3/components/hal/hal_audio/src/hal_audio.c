@@ -1,24 +1,23 @@
 #include "hal_audio.h"
-#include "sensecap-watcher.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sensecap-watcher.h"
 
 #define TAG "HAL_AUDIO"
 
 /* Default sample rates */
-#define SAMPLE_RATE_RECORD  16000   /* ASR expects 16kHz */
-#define SAMPLE_RATE_PLAY    24000   /* 火山引擎 TTS uses 24kHz */
+#define SAMPLE_RATE_RECORD 16000 /* ASR expects 16kHz */
+#define SAMPLE_RATE_PLAY 24000   /* 火山引擎 TTS uses 24kHz */
 
-static bool codec_initialized = false;  /* codec init is global, only once */
-static bool is_running = false;         /* current running state */
-static uint32_t current_sample_rate = SAMPLE_RATE_RECORD;  /* current sample rate */
+static bool codec_initialized = false;                    /* codec init is global, only once */
+static bool is_running = false;                           /* current running state */
+static uint32_t current_sample_rate = SAMPLE_RATE_RECORD; /* current sample rate */
 static esp_codec_dev_handle_t mic_handle = NULL;
 static esp_codec_dev_handle_t speaker_handle = NULL;
 
 /* Initialize codec once at system startup */
-int hal_audio_init(void)
-{
+int hal_audio_init(void) {
     if (codec_initialized) {
         return 0;
     }
@@ -46,7 +45,7 @@ int hal_audio_init(void)
     }
 
     codec_initialized = true;
-    is_running = true;  /* Keep codec running always */
+    is_running = true; /* Keep codec running always */
 
     /* Set default sample rate for recording (16kHz) */
     bsp_codec_set_fs(SAMPLE_RATE_RECORD, 16, 1);
@@ -65,18 +64,17 @@ int hal_audio_init(void)
 static bool is_playback_mode = false;
 
 /* Set sample rate for playback (call before TTS playback) */
-void hal_audio_set_sample_rate(uint32_t sample_rate)
-{
+void hal_audio_set_sample_rate(uint32_t sample_rate) {
     if (!codec_initialized) {
         return;
     }
 
     if (current_sample_rate == sample_rate) {
-        return;  /* No change needed */
+        return; /* No change needed */
     }
 
-    ESP_LOGI(TAG, "Switching sample rate: %lu -> %lu (playback_mode=%d)",
-             current_sample_rate, sample_rate, is_playback_mode);
+    ESP_LOGI(TAG, "Switching sample rate: %lu -> %lu (playback_mode=%d)", current_sample_rate, sample_rate,
+             is_playback_mode);
 
     /* For playback mode, we don't need to stop input channel (which may not be enabled).
      * Just set the new sample rate directly. */
@@ -97,14 +95,12 @@ void hal_audio_set_sample_rate(uint32_t sample_rate)
 }
 
 /* Mark audio as being used for playback (not just recording) */
-void hal_audio_set_playback_mode(bool enable)
-{
+void hal_audio_set_playback_mode(bool enable) {
     is_playback_mode = enable;
     ESP_LOGI(TAG, "Audio mode: %s", enable ? "playback" : "recording");
 }
 
-int hal_audio_start(void)
-{
+int hal_audio_start(void) {
     if (is_running) {
         return 0;
     }
@@ -127,8 +123,7 @@ int hal_audio_start(void)
     return 0;
 }
 
-int hal_audio_read(uint8_t *out_buf, int max_len)
-{
+int hal_audio_read(uint8_t *out_buf, int max_len) {
     if (!mic_handle) {
         return -1;
     }
@@ -137,7 +132,7 @@ int hal_audio_read(uint8_t *out_buf, int max_len)
     /* If is_running is false, return 0 (no data) instead of -1 (error) to avoid error spam */
     if (!is_running) {
 #ifdef CONFIG_ENABLE_WAKE_WORD
-        return 0;  /* In wake word mode, gracefully handle temporary unavailability */
+        return 0; /* In wake word mode, gracefully handle temporary unavailability */
 #else
         return -1;
 #endif
@@ -160,8 +155,7 @@ int hal_audio_read(uint8_t *out_buf, int max_len)
     return (int)bytes_read;
 }
 
-int hal_audio_write(const uint8_t *data, int len)
-{
+int hal_audio_write(const uint8_t *data, int len) {
     if (!is_running || !speaker_handle) {
         ESP_LOGW(TAG, "Write blocked: is_running=%d, speaker_handle=%p", is_running, speaker_handle);
         return -1;
@@ -181,8 +175,7 @@ int hal_audio_write(const uint8_t *data, int len)
     return (int)bytes_written;
 }
 
-int hal_audio_stop(void)
-{
+int hal_audio_stop(void) {
     if (!is_running) {
         return 0;
     }

@@ -3,19 +3,19 @@
 #include "sdkconfig.h"
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
 #include "freertos/event_groups.h"
+#include "freertos/queue.h"
 
 #include "cJSON.h"
 
 #include "esp_assert.h"
 
-#include "sscma_client_io_interface.h"
 #include "sscma_client_flasher_interface.h"
+#include "sscma_client_io_interface.h"
 
 #include "esp_io_expander.h"
 
-#define SSCMA_CLIENT_MODEL_MAX_CLASSES   80
+#define SSCMA_CLIENT_MODEL_MAX_CLASSES 80
 #define SSCMA_CLIENT_MODEL_KEYPOINTS_MAX 80
 
 #ifdef __cplusplus
@@ -29,8 +29,7 @@ typedef struct sscma_client_flasher_t *sscma_client_flasher_handle_t; /*!< Type 
 /**
  * @brief Reply message
  */
-typedef struct
-{
+typedef struct {
     cJSON *payload;
     char *data;
     size_t len;
@@ -39,8 +38,7 @@ typedef struct
 /**
  * @brief Request message
  */
-typedef struct
-{
+typedef struct {
     char cmd[32];
     QueueHandle_t reply;
     ListItem_t item;
@@ -49,8 +47,7 @@ typedef struct
 /**
  *
  */
-typedef struct
-{
+typedef struct {
     char *id;     /* !< ID */
     char *name;   /* !< Name */
     char *hw_ver; /* !< Hardware version */
@@ -58,8 +55,7 @@ typedef struct
     char *fw_ver; /* !< Firmware version */
 } sscma_client_info_t;
 
-typedef struct
-{
+typedef struct {
     int id;                                        /* !< ID */
     char *uuid;                                    /* !< UUID */
     char *name;                                    /*!< Name */
@@ -69,8 +65,7 @@ typedef struct
     char *classes[SSCMA_CLIENT_MODEL_MAX_CLASSES]; /*!< Classes */
 } sscma_client_model_t;
 
-typedef struct
-{
+typedef struct {
     int id;
     int type;
     int state;
@@ -78,8 +73,7 @@ typedef struct
     char *opt_detail;
 } sscma_client_sensor_t;
 
-typedef struct
-{
+typedef struct {
     uint16_t x;
     uint16_t y;
     uint16_t w;
@@ -88,14 +82,12 @@ typedef struct
     uint8_t target;
 } sscma_client_box_t;
 
-typedef struct
-{
+typedef struct {
     uint8_t target;
     uint8_t score;
 } sscma_client_class_t;
 
-typedef struct
-{
+typedef struct {
     uint16_t x;
     uint16_t y;
     uint16_t z;
@@ -103,8 +95,7 @@ typedef struct
     uint8_t target;
 } sscma_client_point_t;
 
-typedef struct
-{
+typedef struct {
     sscma_client_box_t box;
     uint8_t points_num;
     sscma_client_point_t points[SSCMA_CLIENT_MODEL_KEYPOINTS_MAX];
@@ -117,13 +108,13 @@ typedef struct
  * @param[in] user_ctx User context
  * @return None
  */
-typedef void (*sscma_client_reply_cb_t)(sscma_client_handle_t client, const sscma_client_reply_t *reply, void *user_ctx);
+typedef void (*sscma_client_reply_cb_t)(sscma_client_handle_t client, const sscma_client_reply_t *reply,
+                                        void *user_ctx);
 
 /**
  * @brief Type of SCCMA client callback
  */
-typedef struct
-{
+typedef struct {
     sscma_client_reply_cb_t on_connect;
     sscma_client_reply_cb_t on_disconnect; // TODO
     sscma_client_reply_cb_t on_response;
@@ -131,8 +122,7 @@ typedef struct
     sscma_client_reply_cb_t on_log;
 } sscma_client_callback_t;
 
-struct sscma_client_t
-{
+struct sscma_client_t {
     sscma_client_io_handle_t io;           /* !< IO handle */
     sscma_client_flasher_handle_t flasher; /* !< flasher */
     int reset_gpio_num;                    /* !< GPIO number of reset pin */
@@ -147,24 +137,21 @@ struct sscma_client_t
     sscma_client_reply_cb_t on_log;        /* !< Callback function */
     void *user_ctx;                        /* !< User context */
     esp_io_expander_handle_t io_expander;  /* !< IO expander handle */
-    struct
-    {
+    struct {
         TaskHandle_t handle;
 #ifdef CONFIG_SSCMA_PROCESS_TASK_STACK_ALLOC_EXTERNAL
         StaticTask_t *task;
         StackType_t *stack;
 #endif
     } monitor_task;
-    struct
-    {
+    struct {
         TaskHandle_t handle;
 #ifdef CONFIG_SSCMA_MONITOR_TASK_STACK_ALLOC_EXTERNAL
         StaticTask_t *task;
         StackType_t *stack;
 #endif
     } process_task;
-    struct
-    {
+    struct {
         char *data;            /* !< Data buffer */
         size_t len;            /* !< Data length */
         size_t pos;            /* !< Data position */

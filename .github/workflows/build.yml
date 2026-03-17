@@ -18,9 +18,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+        uses: actions/checkout@v5
 
       - name: Build S3 firmware
         uses: espressif/esp-idf-ci-action@v1
@@ -30,7 +28,7 @@ jobs:
           path: firmware/s3
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: success()
         with:
           name: firmware-esp32s3
@@ -47,7 +45,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install clang-format
         run: sudo apt-get install -y clang-format-18

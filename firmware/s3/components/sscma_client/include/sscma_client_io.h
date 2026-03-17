@@ -1,9 +1,9 @@
 #pragma once
 
-#include <stdbool.h>
-#include "soc/soc_caps.h"
 #include "esp_err.h"
 #include "esp_io_expander.h"
+#include "soc/soc_caps.h"
+#include <stdbool.h>
 
 #include "sscma_client_types.h"
 
@@ -18,8 +18,7 @@ typedef void *sscma_client_uart_bus_handle_t; /*!< Type of SSCMA UART bus handle
 /**
  * @brief Client IO configuration structure, for SPI interface
  */
-typedef struct
-{
+typedef struct {
     int cs_gpio_num;   /*!< GPIO used for CS line */
     int sync_gpio_num; /*!< GPIO used for SYNC line */
     int spi_mode;
@@ -28,9 +27,9 @@ typedef struct
     size_t trans_queue_depth;             /*!< Size of internal transaction queue */
     void *user_ctx;                       /*!< User private data, passed directly to on_color_trans_done's user_ctx */
     esp_io_expander_handle_t io_expander; /*!< IO expander handle */
-    struct
-    {
-        unsigned int octal_mode : 1;        /*!< transmit with octal mode (8 data lines), this mode is used to simulate Intel 8080 timing */
+    struct {
+        unsigned int
+            octal_mode : 1; /*!< transmit with octal mode (8 data lines), this mode is used to simulate Intel 8080 timing */
         unsigned int sio_mode : 1;          /*!< Read and write through a single data line (MOSI) */
         unsigned int lsb_first : 1;         /*!< transmit LSB bit first */
         unsigned int cs_high_active : 1;    /*!< CS line is high active */
@@ -51,14 +50,14 @@ typedef struct
  *          - ESP_OK                on success
  */
 
-esp_err_t sscma_client_new_io_spi_bus(sscma_client_spi_bus_handle_t bus, const sscma_client_io_spi_config_t *io_config, sscma_client_io_handle_t *ret_io);
+esp_err_t sscma_client_new_io_spi_bus(sscma_client_spi_bus_handle_t bus, const sscma_client_io_spi_config_t *io_config,
+                                      sscma_client_io_handle_t *ret_io);
 
 /**
  * @brief Client IO configuration structure, for I2C interface
  *
  */
-typedef struct
-{
+typedef struct {
     uint32_t dev_addr; /*!< I2C device address */
     int wait_delay;
     void *user_ctx; /*!< User private data, passed directly to user_ctx */
@@ -75,14 +74,14 @@ typedef struct
  *          - ESP_ERR_NO_MEM        if out of memory
  *          - ESP_OK                on success
  */
-esp_err_t sscma_client_new_io_i2c_bus(sscma_client_i2c_bus_handle_t bus, const sscma_client_io_i2c_config_t *io_config, sscma_client_io_handle_t *ret_io);
+esp_err_t sscma_client_new_io_i2c_bus(sscma_client_i2c_bus_handle_t bus, const sscma_client_io_i2c_config_t *io_config,
+                                      sscma_client_io_handle_t *ret_io);
 
 /**
  * @brief Client IO configuration structure, for uart interface
  *
  */
-typedef struct
-{
+typedef struct {
     void *user_ctx; /*!< User private data, passed directly to user_ctx */
 } sscma_client_io_uart_config_t;
 
@@ -97,7 +96,9 @@ typedef struct
  *          - ESP_ERR_NO_MEM        if out of memory
  *          - ESP_OK                on success
  */
-esp_err_t sscma_client_new_io_uart_bus(sscma_client_uart_bus_handle_t bus, const sscma_client_io_uart_config_t *io_config, sscma_client_io_handle_t *ret_io);
+esp_err_t sscma_client_new_io_uart_bus(sscma_client_uart_bus_handle_t bus,
+                                       const sscma_client_io_uart_config_t *io_config,
+                                       sscma_client_io_handle_t *ret_io);
 
 /**
  * @brief Destory SSCMA client IO handle

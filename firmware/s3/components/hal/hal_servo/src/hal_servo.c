@@ -15,40 +15,40 @@
  */
 
 #include "hal_servo.h"
-#include "esp_log.h"
 #include "driver/ledc.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
-#include <string.h>
+#include "freertos/task.h"
 #include <ctype.h>
+#include <string.h>
 
 #define TAG "HAL_SERVO"
 
 /* LEDC Configuration */
-#define LEDC_TIMER_NUM      LEDC_TIMER_0
-#define LEDC_SPEED_MODE     LEDC_LOW_SPEED_MODE
-#define LEDC_DUTY_RES       LEDC_TIMER_14_BIT
-#define LEDC_FREQ_HZ        50
-#define LEDC_CHANNEL_X      LEDC_CHANNEL_0
-#define LEDC_CHANNEL_Y      LEDC_CHANNEL_1
+#define LEDC_TIMER_NUM LEDC_TIMER_0
+#define LEDC_SPEED_MODE LEDC_LOW_SPEED_MODE
+#define LEDC_DUTY_RES LEDC_TIMER_14_BIT
+#define LEDC_FREQ_HZ 50
+#define LEDC_CHANNEL_X LEDC_CHANNEL_0
+#define LEDC_CHANNEL_Y LEDC_CHANNEL_1
 
 /* Servo PWM timing (typical hobby servo) */
-#define SERVO_PERIOD_US     20000   /* 20ms for 50Hz */
-#define SERVO_MIN_PULSE_US  1000    /* 1ms = 0 degrees */
-#define SERVO_MAX_PULSE_US  2000    /* 2ms = 180 degrees */
-#define SERVO_RANGE_DEG     180
+#define SERVO_PERIOD_US 20000   /* 20ms for 50Hz */
+#define SERVO_MIN_PULSE_US 1000 /* 1ms = 0 degrees */
+#define SERVO_MAX_PULSE_US 2000 /* 2ms = 180 degrees */
+#define SERVO_RANGE_DEG 180
 
 /* Duty cycle values for 14-bit resolution */
-#define DUTY_RESOLUTION     16384
-#define DUTY_MIN            (SERVO_MIN_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US)  /* ~819 */
-#define DUTY_MAX            (SERVO_MAX_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US)  /* ~1638 */
+#define DUTY_RESOLUTION 16384
+#define DUTY_MIN (SERVO_MIN_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US) /* ~819 */
+#define DUTY_MAX (SERVO_MAX_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US) /* ~1638 */
 
 /* Smooth move task configuration */
-#define SERVO_TASK_STACK_SIZE   2048
-#define SERVO_TASK_PRIORITY     5
-#define SERVO_CMD_QUEUE_SIZE    100
+#define SERVO_TASK_STACK_SIZE 2048
+#define SERVO_TASK_PRIORITY 5
+#define SERVO_CMD_QUEUE_SIZE 100
 
 /** Synchronized dual-axis move command */
 typedef struct {
@@ -65,10 +65,7 @@ typedef struct {
 } servo_move_cmd_t;
 
 /** Combined command type for queue */
-typedef enum {
-    CMD_TYPE_SINGLE,
-    CMD_TYPE_SYNC
-} cmd_type_t;
+typedef enum { CMD_TYPE_SINGLE, CMD_TYPE_SYNC } cmd_type_t;
 
 typedef struct {
     cmd_type_t type;
@@ -79,7 +76,7 @@ typedef struct {
 } servo_cmd_msg_t;
 
 /* State variables */
-static int s_angle[2] = {90, 120};  /* X default center, Y default 120° */
+static int s_angle[2] = {90, 120}; /* X default center, Y default 120° */
 static bool s_initialized = false;
 static QueueHandle_t s_cmd_queue = NULL;
 static TaskHandle_t s_servo_task = NULL;
@@ -100,10 +97,11 @@ static void move_to_angle_immediate(servo_axis_t axis, int angle_deg);
  * @param angle_deg Angle 0-180 degrees
  * @return Duty cycle value for 14-bit resolution
  */
-static int angle_to_duty(int angle_deg)
-{
-    if (angle_deg < 0) angle_deg = 0;
-    if (angle_deg > SERVO_RANGE_DEG) angle_deg = SERVO_RANGE_DEG;
+static int angle_to_duty(int angle_deg) {
+    if (angle_deg < 0)
+        angle_deg = 0;
+    if (angle_deg > SERVO_RANGE_DEG)
+        angle_deg = SERVO_RANGE_DEG;
 
     /* Linear interpolation: duty = DUTY_MIN + (angle * (DUTY_MAX - DUTY_MIN) / 180) */
     return DUTY_MIN + (angle_deg * (DUTY_MAX - DUTY_MIN) / SERVO_RANGE_DEG);
@@ -115,18 +113,18 @@ static int angle_to_duty(int angle_deg)
  * Current hardware wiring expects direct mapping:
  * logical angle == physical angle for both X and Y axis.
  */
-static int servo_map_physical_angle(servo_axis_t axis, int logical_angle_deg)
-{
+static int servo_map_physical_angle(servo_axis_t axis, int logical_angle_deg) {
     (void)axis;
     int physical = logical_angle_deg;
 
-    if (physical < 0) physical = 0;
-    if (physical > SERVO_RANGE_DEG) physical = SERVO_RANGE_DEG;
+    if (physical < 0)
+        physical = 0;
+    if (physical > SERVO_RANGE_DEG)
+        physical = SERVO_RANGE_DEG;
     return physical;
 }
 
-static int angle_to_duty_mapped(servo_axis_t axis, int logical_angle_deg)
-{
+static int angle_to_duty_mapped(servo_axis_t axis, int logical_angle_deg) {
     return angle_to_duty(servo_map_physical_angle(axis, logical_angle_deg));
 }
 
@@ -137,8 +135,7 @@ static int angle_to_duty_mapped(servo_axis_t axis, int logical_angle_deg)
  * @param duty Duty cycle value
  * @return ESP_OK on success
  */
-static esp_err_t set_duty(servo_axis_t axis, int duty)
-{
+static esp_err_t set_duty(servo_axis_t axis, int duty) {
     ledc_channel_t channel = (axis == SERVO_AXIS_X) ? LEDC_CHANNEL_X : LEDC_CHANNEL_Y;
 
     esp_err_t ret = ledc_set_duty(LEDC_SPEED_MODE, channel, duty);
@@ -161,16 +158,13 @@ static esp_err_t set_duty(servo_axis_t axis, int duty)
  *
  * @return ESP_OK on success, ESP_FAIL on configuration error
  */
-static esp_err_t configure_ledc(void)
-{
+static esp_err_t configure_ledc(void) {
     /* Timer configuration */
-    ledc_timer_config_t timer_cfg = {
-        .speed_mode = LEDC_SPEED_MODE,
-        .duty_resolution = LEDC_DUTY_RES,
-        .timer_num = LEDC_TIMER_NUM,
-        .freq_hz = LEDC_FREQ_HZ,
-        .clk_cfg = LEDC_AUTO_CLK
-    };
+    ledc_timer_config_t timer_cfg = {.speed_mode = LEDC_SPEED_MODE,
+                                     .duty_resolution = LEDC_DUTY_RES,
+                                     .timer_num = LEDC_TIMER_NUM,
+                                     .freq_hz = LEDC_FREQ_HZ,
+                                     .clk_cfg = LEDC_AUTO_CLK};
 
     esp_err_t ret = ledc_timer_config(&timer_cfg);
     if (ret != ESP_OK) {
@@ -179,14 +173,12 @@ static esp_err_t configure_ledc(void)
     }
 
     /* X-axis channel (GPIO 19) */
-    ledc_channel_config_t ch_x = {
-        .gpio_num = CONFIG_WATCHER_SERVO_X_GPIO,
-        .speed_mode = LEDC_SPEED_MODE,
-        .channel = LEDC_CHANNEL_X,
-        .timer_sel = LEDC_TIMER_NUM,
-        .duty = angle_to_duty_mapped(SERVO_AXIS_X, s_angle[SERVO_AXIS_X]),
-        .hpoint = 0
-    };
+    ledc_channel_config_t ch_x = {.gpio_num = CONFIG_WATCHER_SERVO_X_GPIO,
+                                  .speed_mode = LEDC_SPEED_MODE,
+                                  .channel = LEDC_CHANNEL_X,
+                                  .timer_sel = LEDC_TIMER_NUM,
+                                  .duty = angle_to_duty_mapped(SERVO_AXIS_X, s_angle[SERVO_AXIS_X]),
+                                  .hpoint = 0};
 
     ret = ledc_channel_config(&ch_x);
     if (ret != ESP_OK) {
@@ -195,14 +187,12 @@ static esp_err_t configure_ledc(void)
     }
 
     /* Y-axis channel (GPIO 20) */
-    ledc_channel_config_t ch_y = {
-        .gpio_num = CONFIG_WATCHER_SERVO_Y_GPIO,
-        .speed_mode = LEDC_SPEED_MODE,
-        .channel = LEDC_CHANNEL_Y,
-        .timer_sel = LEDC_TIMER_NUM,
-        .duty = angle_to_duty_mapped(SERVO_AXIS_Y, s_angle[SERVO_AXIS_Y]),
-        .hpoint = 0
-    };
+    ledc_channel_config_t ch_y = {.gpio_num = CONFIG_WATCHER_SERVO_Y_GPIO,
+                                  .speed_mode = LEDC_SPEED_MODE,
+                                  .channel = LEDC_CHANNEL_Y,
+                                  .timer_sel = LEDC_TIMER_NUM,
+                                  .duty = angle_to_duty_mapped(SERVO_AXIS_Y, s_angle[SERVO_AXIS_Y]),
+                                  .hpoint = 0};
 
     ret = ledc_channel_config(&ch_y);
     if (ret != ESP_OK) {
@@ -210,8 +200,8 @@ static esp_err_t configure_ledc(void)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "LEDC configured: %dHz, %d-bit, GPIO %d (X), GPIO %d (Y)",
-             LEDC_FREQ_HZ, LEDC_DUTY_RES, CONFIG_WATCHER_SERVO_X_GPIO, CONFIG_WATCHER_SERVO_Y_GPIO);
+    ESP_LOGI(TAG, "LEDC configured: %dHz, %d-bit, GPIO %d (X), GPIO %d (Y)", LEDC_FREQ_HZ, LEDC_DUTY_RES,
+             CONFIG_WATCHER_SERVO_X_GPIO, CONFIG_WATCHER_SERVO_Y_GPIO);
 
     return ESP_OK;
 }
@@ -222,8 +212,7 @@ static esp_err_t configure_ledc(void)
  * @param axis Servo axis
  * @param angle_deg Target angle
  */
-static void move_to_angle_immediate(servo_axis_t axis, int angle_deg)
-{
+static void move_to_angle_immediate(servo_axis_t axis, int angle_deg) {
     int duty = angle_to_duty_mapped(axis, angle_deg);
     set_duty(axis, duty);
 
@@ -240,8 +229,7 @@ static void move_to_angle_immediate(servo_axis_t axis, int angle_deg)
  *
  * @param arg Unused
  */
-static void servo_task(void *arg)
-{
+static void servo_task(void *arg) {
     (void)arg;
     servo_cmd_msg_t cmd;
     const TickType_t step_interval = pdMS_TO_TICKS(CONFIG_WATCHER_SERVO_SMOOTH_STEP_MS);
@@ -286,12 +274,13 @@ static void servo_task(void *arg)
 
             /* Calculate steps */
             int num_steps = duration_ms / CONFIG_WATCHER_SERVO_SMOOTH_STEP_MS;
-            if (num_steps < 1) num_steps = 1;
+            if (num_steps < 1)
+                num_steps = 1;
 
             float step_size = (float)(target_deg - start_deg) / num_steps;
 
-            ESP_LOGD(TAG, "Smooth move: axis=%s, start=%d, target=%d, steps=%d",
-                     axis == SERVO_AXIS_X ? "X" : "Y", start_deg, target_deg, num_steps);
+            ESP_LOGD(TAG, "Smooth move: axis=%s, start=%d, target=%d, steps=%d", axis == SERVO_AXIS_X ? "X" : "Y",
+                     start_deg, target_deg, num_steps);
 
             /* Interpolate */
             for (int i = 1; i <= num_steps; i++) {
@@ -340,13 +329,13 @@ static void servo_task(void *arg)
 
             /* Calculate steps */
             int num_steps = duration_ms / CONFIG_WATCHER_SERVO_SMOOTH_STEP_MS;
-            if (num_steps < 1) num_steps = 1;
+            if (num_steps < 1)
+                num_steps = 1;
 
             float step_x = (float)(target_x - start_x) / num_steps;
             float step_y = (float)(target_y - start_y) / num_steps;
 
-            ESP_LOGD(TAG, "Sync move: X %d->%d, Y %d->%d, steps=%d",
-                     start_x, target_x, start_y, target_y, num_steps);
+            ESP_LOGD(TAG, "Sync move: X %d->%d, Y %d->%d, steps=%d", start_x, target_x, start_y, target_y, num_steps);
 
             /* Interpolate both axes */
             for (int i = 1; i <= num_steps; i++) {
@@ -379,8 +368,7 @@ static void servo_task(void *arg)
     }
 }
 
-esp_err_t hal_servo_init(void)
-{
+esp_err_t hal_servo_init(void) {
     if (s_initialized) {
         return ESP_OK;
     }
@@ -410,14 +398,8 @@ esp_err_t hal_servo_init(void)
     }
 
     /* Create servo task */
-    BaseType_t task_ret = xTaskCreate(
-        servo_task,
-        "servo_task",
-        SERVO_TASK_STACK_SIZE,
-        NULL,
-        SERVO_TASK_PRIORITY,
-        &s_servo_task
-    );
+    BaseType_t task_ret =
+        xTaskCreate(servo_task, "servo_task", SERVO_TASK_STACK_SIZE, NULL, SERVO_TASK_PRIORITY, &s_servo_task);
 
     if (task_ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create servo task");
@@ -429,15 +411,13 @@ esp_err_t hal_servo_init(void)
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG, "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, Y limits=[%d,%d]deg",
-             CONFIG_WATCHER_SERVO_X_GPIO, CONFIG_WATCHER_SERVO_Y_GPIO,
-             CONFIG_WATCHER_SERVO_Y_MIN_DEG, CONFIG_WATCHER_SERVO_Y_MAX_DEG);
+    ESP_LOGI(TAG, "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, Y limits=[%d,%d]deg", CONFIG_WATCHER_SERVO_X_GPIO,
+             CONFIG_WATCHER_SERVO_Y_GPIO, CONFIG_WATCHER_SERVO_Y_MIN_DEG, CONFIG_WATCHER_SERVO_Y_MAX_DEG);
 
     return ESP_OK;
 }
 
-esp_err_t hal_servo_set_angle(servo_axis_t axis, int angle_deg)
-{
+esp_err_t hal_servo_set_angle(servo_axis_t axis, int angle_deg) {
     if (!s_initialized) {
         ESP_LOGW(TAG, "Servo not initialized");
         return ESP_ERR_INVALID_STATE;
@@ -468,8 +448,7 @@ esp_err_t hal_servo_set_angle(servo_axis_t axis, int angle_deg)
     return ESP_OK;
 }
 
-esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_ms)
-{
+esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_ms) {
     if (!s_initialized) {
         ESP_LOGW(TAG, "Servo not initialized");
         return ESP_ERR_INVALID_STATE;
@@ -490,14 +469,8 @@ esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_m
     }
 
     /* Enqueue smooth move command */
-    servo_cmd_msg_t cmd = {
-        .type = CMD_TYPE_SINGLE,
-        .single = {
-            .axis = axis,
-            .angle_deg = angle_deg,
-            .duration_ms = duration_ms
-        }
-    };
+    servo_cmd_msg_t cmd = {.type = CMD_TYPE_SINGLE,
+                           .single = {.axis = axis, .angle_deg = angle_deg, .duration_ms = duration_ms}};
 
     /* Try to send, if queue full - drop oldest command and retry */
     if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
@@ -511,14 +484,13 @@ esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_m
         }
     }
 
-    ESP_LOGD(TAG, "Smooth move queued: axis=%s, angle=%d, duration=%dms",
-             axis == SERVO_AXIS_X ? "X" : "Y", angle_deg, duration_ms);
+    ESP_LOGD(TAG, "Smooth move queued: axis=%s, angle=%d, duration=%dms", axis == SERVO_AXIS_X ? "X" : "Y", angle_deg,
+             duration_ms);
 
     return ESP_OK;
 }
 
-esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms)
-{
+esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms) {
     if (!s_initialized) {
         ESP_LOGW(TAG, "Servo not initialized");
         return ESP_ERR_INVALID_STATE;
@@ -537,14 +509,7 @@ esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms)
     }
 
     /* Enqueue synchronized move command */
-    servo_cmd_msg_t cmd = {
-        .type = CMD_TYPE_SYNC,
-        .sync = {
-            .x_deg = x_deg,
-            .y_deg = y_deg,
-            .duration_ms = duration_ms
-        }
-    };
+    servo_cmd_msg_t cmd = {.type = CMD_TYPE_SYNC, .sync = {.x_deg = x_deg, .y_deg = y_deg, .duration_ms = duration_ms}};
 
     /* Try to send, if queue full - drop oldest command and retry */
     if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
@@ -563,8 +528,7 @@ esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms)
     return ESP_OK;
 }
 
-esp_err_t hal_servo_send_cmd(const char *id, int angle_deg, int duration_ms)
-{
+esp_err_t hal_servo_send_cmd(const char *id, int angle_deg, int duration_ms) {
     if (!id) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -584,8 +548,7 @@ esp_err_t hal_servo_send_cmd(const char *id, int angle_deg, int duration_ms)
     return hal_servo_move_smooth(axis, angle_deg, duration_ms);
 }
 
-int hal_servo_get_angle(servo_axis_t axis)
-{
+int hal_servo_get_angle(servo_axis_t axis) {
     if (!s_initialized) {
         return -1;
     }

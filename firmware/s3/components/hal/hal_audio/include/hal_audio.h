@@ -1,8 +1,8 @@
 #ifndef HAL_AUDIO_H
 #define HAL_AUDIO_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /**
  * Initialize audio codec (call once at startup)

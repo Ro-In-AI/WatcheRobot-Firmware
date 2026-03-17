@@ -6,11 +6,11 @@
 #include "boot_anim.h"
 #include "anim_storage.h"
 #include "esp_log.h"
+#include "esp_lvgl_port.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
-#include "esp_lvgl_port.h"
 
 #define TAG "BOOT_ANIM"
 
@@ -40,8 +40,7 @@ static void boot_anim_stop_intro(void);
 /* Public: Initialize boot animation                                   */
 /* ------------------------------------------------------------------ */
 
-void boot_anim_init(void)
-{
+void boot_anim_init(void) {
     lvgl_port_lock(0);
 
     /* Create full-screen black boot screen */
@@ -57,7 +56,7 @@ void boot_anim_init(void)
     lv_obj_set_size(progress_arc, 412, 412);
     lv_obj_align(progress_arc, LV_ALIGN_CENTER, 0, 0);
     lv_arc_set_bg_angles(progress_arc, 0, 360);
-    lv_arc_set_rotation(progress_arc, 270);  /* Start from top */
+    lv_arc_set_rotation(progress_arc, 270); /* Start from top */
     lv_arc_set_range(progress_arc, 0, 100);
     lv_arc_set_value(progress_arc, 0);
     lv_arc_set_mode(progress_arc, LV_ARC_MODE_SYMMETRICAL);
@@ -108,8 +107,7 @@ void boot_anim_init(void)
     ESP_LOGI(TAG, "Boot animation initialized");
 }
 
-void boot_anim_start_intro(emoji_anim_type_t type, int max_frames, uint32_t interval_ms)
-{
+void boot_anim_start_intro(emoji_anim_type_t type, int max_frames, uint32_t interval_ms) {
     if (in_error_mode || intro_img == NULL) {
         return;
     }
@@ -144,21 +142,24 @@ void boot_anim_start_intro(emoji_anim_type_t type, int max_frames, uint32_t inte
         intro_timer = lv_timer_create(boot_anim_intro_timer_cb, interval_ms, NULL);
     }
 
-    ESP_LOGI(TAG, "Boot intro started: %s (%d frames @ %lums)",
-             emoji_type_name(type), intro_frame_count, (unsigned long)interval_ms);
+    ESP_LOGI(TAG, "Boot intro started: %s (%d frames @ %lums)", emoji_type_name(type), intro_frame_count,
+             (unsigned long)interval_ms);
 }
 
 /* ------------------------------------------------------------------ */
 /* Public: Set progress                                                */
 /* ------------------------------------------------------------------ */
 
-void boot_anim_set_progress(int percent)
-{
-    if (in_error_mode) return;
-    if (!progress_arc || !percent_label) return;
+void boot_anim_set_progress(int percent) {
+    if (in_error_mode)
+        return;
+    if (!progress_arc || !percent_label)
+        return;
 
-    if (percent < 0) percent = 0;
-    if (percent > 100) percent = 100;
+    if (percent < 0)
+        percent = 0;
+    if (percent > 100)
+        percent = 100;
 
     ESP_LOGI(TAG, "Progress: %d%%", percent);
 
@@ -174,9 +175,9 @@ void boot_anim_set_progress(int percent)
 /* Public: Set status text                                             */
 /* ------------------------------------------------------------------ */
 
-void boot_anim_set_text(const char *text)
-{
-    if (in_error_mode) return;
+void boot_anim_set_text(const char *text) {
+    if (in_error_mode)
+        return;
     if (status_label && text) {
         lvgl_port_lock(0);
         lv_label_set_text(status_label, text);
@@ -188,9 +189,9 @@ void boot_anim_set_text(const char *text)
 /* Public: Show error and countdown to reboot                          */
 /* ------------------------------------------------------------------ */
 
-void boot_anim_show_error(const char *error_msg)
-{
-    if (in_error_mode) return;
+void boot_anim_show_error(const char *error_msg) {
+    if (in_error_mode)
+        return;
     in_error_mode = true;
 
     ESP_LOGE(TAG, "Boot error: %s", error_msg);
@@ -208,7 +209,7 @@ void boot_anim_show_error(const char *error_msg)
 
     /* Load sad emoji image */
     if (error_img) {
-        lv_img_dsc_t *sad_img = emoji_get_image(EMOJI_ANIM_DETECTED, 0);  /* sad/error face */
+        lv_img_dsc_t *sad_img = emoji_get_image(EMOJI_ANIM_DETECTED, 0); /* sad/error face */
         if (sad_img) {
             lv_img_set_src(error_img, sad_img);
             lv_obj_clear_flag(error_img, LV_OBJ_FLAG_HIDDEN);
@@ -230,8 +231,7 @@ void boot_anim_show_error(const char *error_msg)
 /* Private: Countdown task                                             */
 /* ------------------------------------------------------------------ */
 
-static void boot_anim_countdown_task(void *param)
-{
+static void boot_anim_countdown_task(void *param) {
     (void)param;
 
     while (countdown_seconds > 0) {
@@ -262,8 +262,7 @@ static void boot_anim_countdown_task(void *param)
     /* Should not reach here */
 }
 
-static void boot_anim_intro_timer_cb(lv_timer_t *timer)
-{
+static void boot_anim_intro_timer_cb(lv_timer_t *timer) {
     (void)timer;
 
     if (in_error_mode || intro_img == NULL || intro_type == EMOJI_ANIM_NONE || intro_frame_count <= 0) {
@@ -277,8 +276,7 @@ static void boot_anim_intro_timer_cb(lv_timer_t *timer)
     }
 }
 
-static void boot_anim_stop_intro(void)
-{
+static void boot_anim_stop_intro(void) {
     if (intro_timer != NULL) {
         lv_timer_del(intro_timer);
         intro_timer = NULL;
@@ -293,9 +291,9 @@ static void boot_anim_stop_intro(void)
 /* Public: Finish boot animation                                       */
 /* ------------------------------------------------------------------ */
 
-void boot_anim_finish(void)
-{
-    if (in_error_mode) return;
+void boot_anim_finish(void) {
+    if (in_error_mode)
+        return;
 
     /* Brief delay to show 100% */
     vTaskDelay(pdMS_TO_TICKS(300));
@@ -304,17 +302,16 @@ void boot_anim_finish(void)
     /* Clear child pointers - do NOT delete the screen here.
      * The caller must load a new screen first, then call
      * lv_obj_del(boot_anim_get_screen()) to safely free it. */
-    intro_img       = NULL;
-    progress_arc   = NULL;
-    percent_label  = NULL;
-    status_label   = NULL;
-    error_img      = NULL;
+    intro_img = NULL;
+    progress_arc = NULL;
+    percent_label = NULL;
+    status_label = NULL;
+    error_img = NULL;
     countdown_label = NULL;
 
     ESP_LOGI(TAG, "Boot animation finished");
 }
 
-lv_obj_t *boot_anim_get_screen(void)
-{
+lv_obj_t *boot_anim_get_screen(void) {
     return boot_screen;
 }

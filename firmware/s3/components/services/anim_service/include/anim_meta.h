@@ -16,17 +16,17 @@
  * @brief Per-animation-type configuration
  */
 typedef struct {
-    int frame_count;    /**< Number of frames (0 = auto-detect from files) */
-    bool loop;          /**< Whether animation should loop */
-    int fps;            /**< Frames per second for this type (0 = use default) */
+    int frame_count; /**< Number of frames (0 = auto-detect from files) */
+    bool loop;       /**< Whether animation should loop */
+    int fps;         /**< Frames per second for this type (0 = use default) */
 } anim_config_t;
 
 /**
  * @brief Global animation metadata
  */
 typedef struct {
-    char version[16];       /**< Metadata format version */
-    int default_fps;        /**< Default FPS for all animations */
+    char version[16];                           /**< Metadata format version */
+    int default_fps;                            /**< Default FPS for all animations */
     anim_config_t animations[EMOJI_ANIM_COUNT]; /**< Per-type config */
 } anim_meta_t;
 
@@ -46,7 +46,7 @@ int anim_meta_init(void);
  * @param type Animation type
  * @return Pointer to config (never NULL, returns defaults if not initialized)
  */
-anim_config_t* anim_meta_get_config(emoji_anim_type_t type);
+anim_config_t *anim_meta_get_config(emoji_anim_type_t type);
 
 /**
  * @brief Get effective FPS for animation type

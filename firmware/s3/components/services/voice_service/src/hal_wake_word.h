@@ -20,9 +20,9 @@
 #ifndef HAL_WAKE_WORD_H
 #define HAL_WAKE_WORD_H
 
-#include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /* ------------------------------------------------------------------ */
 /* Opaque Types                                                       */
@@ -53,11 +53,11 @@ typedef void (*wake_word_callback_t)(const char *wake_word, void *user_data);
  * Wake word detector configuration
  */
 typedef struct {
-    const char *model_path;           /*!< SPIFFS path to model directory (e.g., "/spiffs/model") */
-    const char *wake_word_phrase;     /*!< Custom wake word phrase (pinyin, for multinet mode) */
-    float detection_threshold;        /*!< Detection threshold (0.0-1.0), lower = more sensitive */
-    wake_word_callback_t callback;    /*!< Callback when wake word is detected */
-    void *user_data;                  /*!< User data passed to callback */
+    const char *model_path;        /*!< SPIFFS path to model directory (e.g., "/spiffs/model") */
+    const char *wake_word_phrase;  /*!< Custom wake word phrase (pinyin, for multinet mode) */
+    float detection_threshold;     /*!< Detection threshold (0.0-1.0), lower = more sensitive */
+    wake_word_callback_t callback; /*!< Callback when wake word is detected */
+    void *user_data;               /*!< User data passed to callback */
 } wake_word_config_t;
 
 /* ------------------------------------------------------------------ */

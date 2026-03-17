@@ -4,11 +4,11 @@
  */
 
 #include "ws_handlers.h"
-#include "ws_client.h"
-#include "hal_servo.h"
 #include "display_ui.h"
-#include "esp_system.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "hal_servo.h"
+#include "ws_client.h"
 #include <string.h>
 
 #define TAG "WS_HANDLERS"
@@ -20,10 +20,9 @@
 /* Helper: Parse status data to determine emoji                       */
 /* ------------------------------------------------------------------ */
 
-const char* ws_status_data_to_emoji(const char *data)
-{
+const char *ws_status_data_to_emoji(const char *data) {
     if (!data || data[0] == '\0') {
-        return NULL;  /* No change */
+        return NULL; /* No change */
     }
 
     /* Check for status indicators in data string */
@@ -70,15 +69,13 @@ const char* ws_status_data_to_emoji(const char *data)
 /* Handler: Servo Command (v2.1 format)                               */
 /* ------------------------------------------------------------------ */
 
-void on_servo_handler(const ws_servo_cmd_t *cmd)
-{
+void on_servo_handler(const ws_servo_cmd_t *cmd) {
     if (!cmd) {
         return;
     }
 
     /* Use ESP_LOGD to avoid flooding logs with high-frequency servo commands */
-    ESP_LOGI(TAG, "Servo command: id=%s, angle=%d, time=%d",
-             cmd->id, cmd->angle, cmd->time_ms);
+    ESP_LOGI(TAG, "Servo command: id=%s, angle=%d, time=%d", cmd->id, cmd->angle, cmd->time_ms);
 
     /* Send single servo command via HAL */
     hal_servo_send_cmd(cmd->id, cmd->angle, cmd->time_ms);
@@ -88,8 +85,7 @@ void on_servo_handler(const ws_servo_cmd_t *cmd)
 /* Handler: Display Command                                           */
 /* ------------------------------------------------------------------ */
 
-void on_display_handler(const ws_display_cmd_t *cmd)
-{
+void on_display_handler(const ws_display_cmd_t *cmd) {
     if (!cmd) {
         return;
     }
@@ -108,8 +104,7 @@ void on_display_handler(const ws_display_cmd_t *cmd)
 /* Handler: Status Command (v2.0)                                     */
 /* ------------------------------------------------------------------ */
 
-void on_status_handler(const ws_status_cmd_t *cmd)
-{
+void on_status_handler(const ws_status_cmd_t *cmd) {
     if (!cmd) {
         return;
     }
@@ -129,8 +124,7 @@ void on_status_handler(const ws_status_cmd_t *cmd)
 /* Handler: Capture Command (MVP: Not Implemented)                    */
 /* ------------------------------------------------------------------ */
 
-void on_capture_handler(const ws_capture_cmd_t *cmd)
-{
+void on_capture_handler(const ws_capture_cmd_t *cmd) {
     /* MVP: Camera capture not implemented */
     (void)cmd;
 }
@@ -139,8 +133,7 @@ void on_capture_handler(const ws_capture_cmd_t *cmd)
 /* Handler: Reboot Command                                            */
 /* ------------------------------------------------------------------ */
 
-void on_reboot_handler(void)
-{
+void on_reboot_handler(void) {
     ESP_LOGI(TAG, "Reboot command received");
     esp_restart();
 }
@@ -149,8 +142,7 @@ void on_reboot_handler(void)
 /* Handler: ASR Result (v2.0)                                         */
 /* ------------------------------------------------------------------ */
 
-void on_asr_result_handler(const ws_asr_result_cmd_t *cmd)
-{
+void on_asr_result_handler(const ws_asr_result_cmd_t *cmd) {
     if (!cmd) {
         return;
     }
@@ -170,8 +162,7 @@ void on_asr_result_handler(const ws_asr_result_cmd_t *cmd)
 /* Handler: Bot Reply (v2.0)                                          */
 /* ------------------------------------------------------------------ */
 
-void on_bot_reply_handler(const ws_bot_reply_cmd_t *cmd)
-{
+void on_bot_reply_handler(const ws_bot_reply_cmd_t *cmd) {
     if (!cmd) {
         return;
     }
@@ -186,8 +177,7 @@ void on_bot_reply_handler(const ws_bot_reply_cmd_t *cmd)
 /* Handler: TTS End (v2.0)                                           */
 /* ------------------------------------------------------------------ */
 
-void on_tts_end_handler(void)
-{
+void on_tts_end_handler(void) {
     ESP_LOGI(TAG, "TTS end received");
 
     /* Complete TTS playback and switch to happy */
@@ -198,8 +188,7 @@ void on_tts_end_handler(void)
 /* Handler: Error Message (v2.0)                                      */
 /* ------------------------------------------------------------------ */
 
-void on_error_handler(const ws_error_cmd_t *cmd)
-{
+void on_error_handler(const ws_error_cmd_t *cmd) {
     if (!cmd) {
         return;
     }
@@ -214,20 +203,19 @@ void on_error_handler(const ws_error_cmd_t *cmd)
 /* Convenience: Get Router with All Handlers                          */
 /* ------------------------------------------------------------------ */
 
-ws_router_t ws_handlers_get_router(void)
-{
+ws_router_t ws_handlers_get_router(void) {
     ws_router_t router = {
-        .on_servo   = on_servo_handler,
+        .on_servo = on_servo_handler,
         .on_display = on_display_handler,
-        .on_status  = on_status_handler,
+        .on_status = on_status_handler,
         .on_capture = on_capture_handler,
-        .on_reboot  = on_reboot_handler,
+        .on_reboot = on_reboot_handler,
 
         /* New handlers - v2.0 */
         .on_asr_result = on_asr_result_handler,
-        .on_bot_reply  = on_bot_reply_handler,
-        .on_tts_end    = on_tts_end_handler,
-        .on_error      = on_error_handler,
+        .on_bot_reply = on_bot_reply_handler,
+        .on_tts_end = on_tts_end_handler,
+        .on_error = on_error_handler,
     };
     return router;
 }

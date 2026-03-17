@@ -5,8 +5,8 @@
 
 #include "anim_player.h"
 #include "anim_meta.h"
-#include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 
 #ifdef CONFIG_WATCHER_ANIM_FPS
@@ -41,8 +41,7 @@ static bool g_use_cache = DEFAULT_USE_CACHE;
 static int64_t g_frame_start_us = 0;
 static int g_frames_displayed = 0;
 
-static void emoji_timer_callback(lv_timer_t *timer)
-{
+static void emoji_timer_callback(lv_timer_t *timer) {
     (void)timer;
     int64_t start_us = esp_timer_get_time();
 
@@ -97,8 +96,7 @@ static void emoji_timer_callback(lv_timer_t *timer)
     }
 }
 
-int emoji_anim_init(lv_obj_t *img_obj)
-{
+int emoji_anim_init(lv_obj_t *img_obj) {
     ESP_LOGI(TAG, "emoji_anim_init called");
 
     if (img_obj == NULL) {
@@ -131,13 +129,11 @@ int emoji_anim_init(lv_obj_t *img_obj)
     int fps = anim_meta_get_default_fps();
     g_interval_ms = 1000 / fps;
 
-    ESP_LOGI(TAG, "Animation system initialized (FPS: %d, interval: %lums)",
-             fps, (unsigned long)g_interval_ms);
+    ESP_LOGI(TAG, "Animation system initialized (FPS: %d, interval: %lums)", fps, (unsigned long)g_interval_ms);
     return 0;
 }
 
-int emoji_anim_start(emoji_anim_type_t type)
-{
+int emoji_anim_start(emoji_anim_type_t type) {
     if (g_img_obj == NULL) {
         ESP_LOGE(TAG, "Animation not initialized");
         return -1;
@@ -182,7 +178,7 @@ int emoji_anim_start(emoji_anim_type_t type)
 
         if (anim_cache_load_type(type) != 0) {
             ESP_LOGW(TAG, "Failed to cache type %s, using PNG decode", emoji_type_name(type));
-            g_use_cache = false;  /* Disable cache for this session */
+            g_use_cache = false; /* Disable cache for this session */
         } else {
             int64_t load_time_ms = (esp_timer_get_time() - load_start) / 1000;
             ESP_LOGI(TAG, "Type %s loaded in %lld ms", emoji_type_name(type), load_time_ms);
@@ -219,13 +215,11 @@ int emoji_anim_start(emoji_anim_type_t type)
         }
     }
 
-    ESP_LOGI(TAG, "Started animation: %s (%d frames @ %d fps)",
-             emoji_type_name(type), frame_count, fps);
+    ESP_LOGI(TAG, "Started animation: %s (%d frames @ %d fps)", emoji_type_name(type), frame_count, fps);
     return 0;
 }
 
-void emoji_anim_stop(void)
-{
+void emoji_anim_stop(void) {
     /* Pause timer instead of deleting */
     if (g_timer != NULL) {
         lv_timer_pause(g_timer);
@@ -234,26 +228,22 @@ void emoji_anim_stop(void)
     g_current_frame = 0;
 }
 
-bool emoji_anim_is_running(void)
-{
+bool emoji_anim_is_running(void) {
     return g_timer != NULL && g_current_type != EMOJI_ANIM_NONE;
 }
 
-emoji_anim_type_t emoji_anim_get_type(void)
-{
+emoji_anim_type_t emoji_anim_get_type(void) {
     return g_current_type;
 }
 
-void emoji_anim_set_interval(uint32_t interval_ms)
-{
+void emoji_anim_set_interval(uint32_t interval_ms) {
     g_interval_ms = interval_ms;
     if (g_timer != NULL) {
         lv_timer_set_period(g_timer, interval_ms);
     }
 }
 
-int emoji_anim_show_static(emoji_anim_type_t type, int frame)
-{
+int emoji_anim_show_static(emoji_anim_type_t type, int frame) {
     if (g_img_obj == NULL) {
         ESP_LOGE(TAG, "Animation not initialized");
         return -1;
@@ -300,14 +290,13 @@ int emoji_anim_show_static(emoji_anim_type_t type, int frame)
     return 0;
 }
 
-int emoji_anim_prefetch_type(emoji_anim_type_t type)
-{
+int emoji_anim_prefetch_type(emoji_anim_type_t type) {
     if (type < 0 || type >= EMOJI_ANIM_COUNT) {
         return -1;
     }
 
     if (!g_use_cache) {
-        return 0;  /* No-op if cache disabled */
+        return 0; /* No-op if cache disabled */
     }
 
     /* Don't prefetch if already cached */
@@ -319,15 +308,15 @@ int emoji_anim_prefetch_type(emoji_anim_type_t type)
     return anim_cache_load_type(type);
 }
 
-int emoji_anim_get_fps(void)
-{
+int emoji_anim_get_fps(void) {
     return 1000 / g_interval_ms;
 }
 
-void emoji_anim_set_fps(int fps)
-{
-    if (fps < 1) fps = 1;
-    if (fps > 60) fps = 60;
+void emoji_anim_set_fps(int fps) {
+    if (fps < 1)
+        fps = 1;
+    if (fps > 60)
+        fps = 60;
 
     g_interval_ms = 1000 / fps;
     if (g_timer != NULL) {

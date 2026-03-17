@@ -16,23 +16,23 @@
 #include "esp_lcd_panel_ops.h"
 #include "lvgl.h"
 
-#if __has_include ("esp_lcd_touch.h")
+#if __has_include("esp_lcd_touch.h")
 #include "esp_lcd_touch.h"
 #define ESP_LVGL_PORT_TOUCH_COMPONENT 1
 #endif
 
-#if __has_include ("iot_knob.h")
-#include "iot_knob.h"
+#if __has_include("iot_knob.h")
 #include "iot_button.h"
+#include "iot_knob.h"
 #define ESP_LVGL_PORT_KNOB_COMPONENT 1
 #endif
 
-#if __has_include ("iot_button.h")
+#if __has_include("iot_button.h")
 #include "iot_button.h"
 #define ESP_LVGL_PORT_BUTTON_COMPONENT 1
 #endif
 
-#if __has_include ("usb/hid_host.h")
+#if __has_include("usb/hid_host.h")
 #define ESP_LVGL_PORT_USB_HOST_HID_COMPONENT 1
 #endif
 
@@ -44,11 +44,11 @@ extern "C" {
  * @brief Init configuration structure
  */
 typedef struct {
-    int task_priority;      /*!< LVGL task priority */
-    int task_stack;         /*!< LVGL task stack size */
-    int task_affinity;      /*!< LVGL task pinned to core (-1 is no affinity) */
-    int task_max_sleep_ms;  /*!< Maximum sleep in LVGL task */
-    int timer_period_ms;    /*!< LVGL timer tick period in ms */
+    int task_priority;     /*!< LVGL task priority */
+    int task_stack;        /*!< LVGL task stack size */
+    int task_affinity;     /*!< LVGL task pinned to core (-1 is no affinity) */
+    int task_max_sleep_ms; /*!< Maximum sleep in LVGL task */
+    int timer_period_ms;   /*!< LVGL timer tick period in ms */
 } lvgl_port_cfg_t;
 
 /**
@@ -64,18 +64,18 @@ typedef struct {
  * @brief Configuration display structure
  */
 typedef struct {
-    esp_lcd_panel_io_handle_t io_handle;    /*!< LCD panel IO handle */
-    esp_lcd_panel_handle_t panel_handle;    /*!< LCD panel handle */
-    uint32_t    buffer_size;    /*!< Size of the buffer for the screen in pixels */
-    bool        double_buffer;  /*!< True, if should be allocated two buffers */
-    uint32_t    hres;           /*!< LCD display horizontal resolution */
-    uint32_t    vres;           /*!< LCD display vertical resolution */
-    bool        monochrome;     /*!< True, if display is monochrome and using 1bit for 1px */
-    lvgl_port_rotation_cfg_t rotation;    /*!< Default values of the screen rotation */
+    esp_lcd_panel_io_handle_t io_handle; /*!< LCD panel IO handle */
+    esp_lcd_panel_handle_t panel_handle; /*!< LCD panel handle */
+    uint32_t buffer_size;                /*!< Size of the buffer for the screen in pixels */
+    bool double_buffer;                  /*!< True, if should be allocated two buffers */
+    uint32_t hres;                       /*!< LCD display horizontal resolution */
+    uint32_t vres;                       /*!< LCD display vertical resolution */
+    bool monochrome;                     /*!< True, if display is monochrome and using 1bit for 1px */
+    lvgl_port_rotation_cfg_t rotation;   /*!< Default values of the screen rotation */
 
     struct {
-        unsigned int buff_dma: 1;    /*!< Allocated LVGL buffer will be DMA capable */
-        unsigned int buff_spiram: 1; /*!< Allocated LVGL buffer will be in PSRAM */
+        unsigned int buff_dma : 1;    /*!< Allocated LVGL buffer will be DMA capable */
+        unsigned int buff_spiram : 1; /*!< Allocated LVGL buffer will be in PSRAM */
     } flags;
 } lvgl_port_display_cfg_t;
 
@@ -84,8 +84,8 @@ typedef struct {
  * @brief Configuration touch structure
  */
 typedef struct {
-    lv_disp_t *disp;    /*!< LVGL display handle (returned from lvgl_port_add_disp) */
-    esp_lcd_touch_handle_t   handle;   /*!< LCD touch IO handle */
+    lv_disp_t *disp;               /*!< LVGL display handle (returned from lvgl_port_add_disp) */
+    esp_lcd_touch_handle_t handle; /*!< LCD touch IO handle */
     int16_t sensitivity;           /*!< Touch sensitivity (0 - 255, for filtering weak signals) */
 } lvgl_port_touch_cfg_t;
 #endif
@@ -95,9 +95,9 @@ typedef struct {
  * @brief Configuration of the encoder structure
  */
 typedef struct {
-    lv_disp_t *disp;    /*!< LVGL display handle (returned from lvgl_port_add_disp) */
+    lv_disp_t *disp; /*!< LVGL display handle (returned from lvgl_port_add_disp) */
     const knob_config_t *encoder_a_b;
-    const button_config_t *encoder_enter;  /*!< Navigation button for enter */
+    const button_config_t *encoder_enter; /*!< Navigation button for enter */
 } lvgl_port_encoder_cfg_t;
 #endif
 
@@ -106,10 +106,10 @@ typedef struct {
  * @brief Configuration of the navigation buttons structure
  */
 typedef struct {
-    lv_disp_t *disp;                /*!< LVGL display handle (returned from lvgl_port_add_disp) */
-    const button_config_t *button_prev;   /*!< Navigation button for previous */
-    const button_config_t *button_next;   /*!< Navigation button for next */
-    const button_config_t *button_enter;  /*!< Navigation button for enter */
+    lv_disp_t *disp;                     /*!< LVGL display handle (returned from lvgl_port_add_disp) */
+    const button_config_t *button_prev;  /*!< Navigation button for previous */
+    const button_config_t *button_next;  /*!< Navigation button for next */
+    const button_config_t *button_enter; /*!< Navigation button for enter */
 } lvgl_port_nav_btns_cfg_t;
 #endif
 
@@ -118,16 +118,16 @@ typedef struct {
  * @brief Configuration of the mouse input
  */
 typedef struct {
-    lv_disp_t *disp;        /*!< LVGL display handle (returned from lvgl_port_add_disp) */
-    uint8_t sensitivity;    /*!< Mouse sensitivity (cannot be zero) */
-    lv_obj_t *cursor_img;   /*!< Mouse cursor image, if NULL then used default */
+    lv_disp_t *disp;      /*!< LVGL display handle (returned from lvgl_port_add_disp) */
+    uint8_t sensitivity;  /*!< Mouse sensitivity (cannot be zero) */
+    lv_obj_t *cursor_img; /*!< Mouse cursor image, if NULL then used default */
 } lvgl_port_hid_mouse_cfg_t;
 
 /**
  * @brief Configuration of the keyboard input
  */
 typedef struct {
-    lv_disp_t *disp;        /*!< LVGL display handle (returned from lvgl_port_add_disp) */
+    lv_disp_t *disp; /*!< LVGL display handle (returned from lvgl_port_add_disp) */
 } lvgl_port_hid_keyboard_cfg_t;
 #endif
 
@@ -135,14 +135,8 @@ typedef struct {
  * @brief LVGL port configuration structure
  *
  */
-#define ESP_LVGL_PORT_INIT_CONFIG() \
-    {                               \
-        .task_priority = 4,       \
-        .task_stack = 4096,       \
-        .task_affinity = -1,      \
-        .task_max_sleep_ms = 500, \
-        .timer_period_ms = 5,     \
-    }
+#define ESP_LVGL_PORT_INIT_CONFIG()                                                                                    \
+    { .task_priority = 4, .task_stack = 4096, .task_affinity = -1, .task_max_sleep_ms = 500, .timer_period_ms = 5, }
 
 /**
  * @brief Initialize LVGL portation
@@ -232,7 +226,8 @@ lv_indev_t *lvgl_port_add_encoder(const lvgl_port_encoder_cfg_t *encoder_cfg);
  *      - ESP_OK                    on success
  *      - ESP_ERR_NOT_SUPPORTED     if event is BUTTON_PRESS_DOWN or BUTTON_PRESS_UP (reserved for LVGL)
  */
-esp_err_t lvgl_port_encoder_btn_register_event_cb(lv_indev_t *encoder, button_event_t event, button_cb_t cb, void *user_data);
+esp_err_t lvgl_port_encoder_btn_register_event_cb(lv_indev_t *encoder, button_event_t event, button_cb_t cb,
+                                                  void *user_data);
 
 /**
  * @brief Register event callback with event data for encoder button
@@ -246,7 +241,8 @@ esp_err_t lvgl_port_encoder_btn_register_event_cb(lv_indev_t *encoder, button_ev
  *      - ESP_OK                    on success
  *      - ESP_ERR_NOT_SUPPORTED     if event is BUTTON_PRESS_DOWN or BUTTON_PRESS_UP (reserved for LVGL)
  */
-esp_err_t lvgl_port_encoder_btn_register_event_data_cb(lv_indev_t *encoder, button_event_config_t event_cfg, button_cb_t cb, void *user_data);
+esp_err_t lvgl_port_encoder_btn_register_event_data_cb(lv_indev_t *encoder, button_event_config_t event_cfg,
+                                                       button_cb_t cb, void *user_data);
 
 /**
  * @brief Remove encoder from input devices

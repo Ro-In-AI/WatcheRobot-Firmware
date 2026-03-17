@@ -4,34 +4,33 @@
  * Reuses SDK's IO Expander handle to avoid I2C re-initialization conflict
  */
 #include "hal_button.h"
-#include "sensecap-watcher.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sensecap-watcher.h"
 
 #define TAG "HAL_BUTTON"
 
 /* Use SDK's button pin definition (already a mask: 1ULL << 3) */
-#define BUTTON_PIN_MASK         BSP_KNOB_BTN
+#define BUTTON_PIN_MASK BSP_KNOB_BTN
 
 /* Debounce time in ms */
-#define DEBOUNCE_MS             50
+#define DEBOUNCE_MS 50
 
 static button_callback_t g_callback = NULL;
 static bool g_is_pressed = false;
 static int64_t g_last_change_time = 0;
 
 /* Poll button state (called from task context) */
-void hal_button_poll(void)
-{
+void hal_button_poll(void) {
     /* Use SDK's IO expander level reader */
     uint8_t level = bsp_exp_io_get_level(BUTTON_PIN_MASK);
 
     /* Button is active low (0 = pressed) */
     bool current_pressed = (level == 0);
 
-    int64_t now = esp_timer_get_time() / 1000;  /* ms */
+    int64_t now = esp_timer_get_time() / 1000; /* ms */
 
     /* Check for state change with debounce */
     if (current_pressed != g_is_pressed) {
@@ -49,8 +48,7 @@ void hal_button_poll(void)
     }
 }
 
-int hal_button_init(button_callback_t callback)
-{
+int hal_button_init(button_callback_t callback) {
     ESP_LOGI(TAG, "Initializing button via IO Expander...");
 
     g_callback = callback;
@@ -74,19 +72,16 @@ int hal_button_init(button_callback_t callback)
     uint8_t level = bsp_exp_io_get_level(BUTTON_PIN_MASK);
     g_is_pressed = (level == 0);
 
-    ESP_LOGI(TAG, "Button initialized, initial state: %s",
-             g_is_pressed ? "pressed" : "released");
+    ESP_LOGI(TAG, "Button initialized, initial state: %s", g_is_pressed ? "pressed" : "released");
 
     return 0;
 }
 
-bool hal_button_is_pressed(void)
-{
+bool hal_button_is_pressed(void) {
     return g_is_pressed;
 }
 
-void hal_button_deinit(void)
-{
+void hal_button_deinit(void) {
     /* Don't delete IO expander handle - it's managed by SDK */
     g_callback = NULL;
 }

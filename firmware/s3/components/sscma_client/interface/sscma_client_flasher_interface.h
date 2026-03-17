@@ -1,16 +1,16 @@
 #pragma once
 
-#include <stdint.h>
 #include "esp_err.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct sscma_client_flasher_t sscma_client_flasher_t; /*!< Type of SSCMA flasher handle */
+typedef struct sscma_client_io_t sscma_client_io_t;           /*!< Type of SSCMA IO handle */
 
-struct sscma_client_flasher_t
-{
+struct sscma_client_flasher_t {
     /**
      * @brief Start flasher transmitter
      * @param[in] handle transmitter handle

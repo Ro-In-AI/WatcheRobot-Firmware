@@ -9,9 +9,9 @@
 #ifndef BOOT_ANIMATION_H
 #define BOOT_ANIMATION_H
 
-#include <stdint.h>
-#include "lvgl.h"
 #include "anim_storage.h"
+#include "lvgl.h"
+#include <stdint.h>
 
 /**
  * @brief Initialize and show boot animation screen

@@ -20,15 +20,12 @@
  * Bandwidth: ~256 kbps (vs ~24 kbps with Opus)
  */
 
-int hal_opus_init(void)
-{
+int hal_opus_init(void) {
     ESP_LOGI(TAG, "Audio codec initialized (PCM passthrough mode)");
     return 0;
 }
 
-int hal_opus_encode(const uint8_t *pcm_in, int pcm_len,
-                    uint8_t *out_buf, int out_max_len)
-{
+int hal_opus_encode(const uint8_t *pcm_in, int pcm_len, uint8_t *out_buf, int out_max_len) {
     if (!pcm_in || !out_buf || pcm_len <= 0 || out_max_len <= 0) {
         return -1;
     }
@@ -41,9 +38,7 @@ int hal_opus_encode(const uint8_t *pcm_in, int pcm_len,
     return out_len;
 }
 
-int hal_opus_decode(const uint8_t *in_data, int in_len,
-                    uint8_t *pcm_out, int pcm_max_len)
-{
+int hal_opus_decode(const uint8_t *in_data, int in_len, uint8_t *pcm_out, int pcm_max_len) {
     if (!in_data || !pcm_out || in_len <= 0 || pcm_max_len <= 0) {
         return -1;
     }

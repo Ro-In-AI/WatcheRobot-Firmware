@@ -20,8 +20,8 @@
 
 /** Servo axis selector */
 typedef enum {
-    SERVO_AXIS_X = 0,   /*!< X axis (GPIO 19, left/right pan) */
-    SERVO_AXIS_Y = 1,   /*!< Y axis (GPIO 20, up/down tilt) */
+    SERVO_AXIS_X = 0, /*!< X axis (GPIO 19, left/right pan) */
+    SERVO_AXIS_Y = 1, /*!< Y axis (GPIO 20, up/down tilt) */
 } servo_axis_t;
 
 /**

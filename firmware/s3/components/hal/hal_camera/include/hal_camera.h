@@ -13,9 +13,9 @@
 #define HAL_CAMERA_H
 
 #include "esp_err.h"
-#include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /**
  * @brief JPEG frame callback type
@@ -27,8 +27,7 @@
  * @param timestamp_ms Capture timestamp in milliseconds
  * @param ctx          User context pointer
  */
-typedef void (*hal_camera_frame_cb_t)(const uint8_t *jpeg, size_t size,
-                                       uint32_t timestamp_ms, void *ctx);
+typedef void (*hal_camera_frame_cb_t)(const uint8_t *jpeg, size_t size, uint32_t timestamp_ms, void *ctx);
 
 /**
  * @brief Initialize camera HAL (SSCMA client setup).

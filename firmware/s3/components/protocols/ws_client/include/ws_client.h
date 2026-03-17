@@ -24,7 +24,7 @@ int ws_client_set_server_url(const char *url);
  * Get current server URL
  * @return Server URL string (static buffer, do not free)
  */
-const char* ws_client_get_server_url(void);
+const char *ws_client_get_server_url(void);
 
 /**
  * Start WebSocket connection

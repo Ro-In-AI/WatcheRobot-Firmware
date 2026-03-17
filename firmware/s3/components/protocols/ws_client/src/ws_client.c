@@ -4,97 +4,94 @@
  */
 
 #include "ws_client.h"
-#include "ws_router.h"
 #include "display_ui.h"
-#include "hal_audio.h"
-#include "esp_websocket_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hal_audio.h"
+#include "ws_router.h"
 #include <stdlib.h>
 #include <string.h>
 
 #define TAG "WS_CLIENT"
 
 /* WebSocket configuration */
-#define WS_DEFAULT_URL  "ws://[IP_ADDRESS]"  /* Fallback if discovery fails */
-#define WS_TIMEOUT_MS  10000
+#define WS_DEFAULT_URL "ws://[IP_ADDRESS]" /* Fallback if discovery fails */
+#define WS_TIMEOUT_MS 10000
 #define WS_URL_MAX_LEN 128
-#define RESPONSE_TIMEOUT_MS  30000  /* 30 seconds timeout for server response */
+#define RESPONSE_TIMEOUT_MS 30000 /* 30 seconds timeout for server response */
 
 static esp_websocket_client_handle_t ws_client = NULL;
 static bool is_connected = false;
-static bool tts_playing = false;  /* TTS playback state */
+static bool tts_playing = false; /* TTS playback state */
 static bool waiting_for_response = false;
-static int timeout_display_count = 0;  /* Limit timeout display to 1 time */
-static int64_t response_wait_start_time = 0;  /* Timestamp when response wait started */
-static char ws_server_url[WS_URL_MAX_LEN] = WS_DEFAULT_URL;  /* Dynamic server URL */
+static int timeout_display_count = 0;                       /* Limit timeout display to 1 time */
+static int64_t response_wait_start_time = 0;                /* Timestamp when response wait started */
+static char ws_server_url[WS_URL_MAX_LEN] = WS_DEFAULT_URL; /* Dynamic server URL */
 
 /* ------------------------------------------------------------------ */
 /* WebSocket Event Handler                                            */
 /* ------------------------------------------------------------------ */
 
-static void ws_event_handler(void *handler_args, esp_event_base_t base,
-                             int32_t event_id, void *event_data)
-{
+static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_websocket_event_data_t *data = (esp_websocket_event_data_t *)event_data;
 
     switch (event_id) {
-        case WEBSOCKET_EVENT_CONNECTED:
-            ESP_LOGI(TAG, "WebSocket connected");
-            is_connected = true;
-            /* Show happy greeting when connected */
-            display_update(NULL, "happy", 0, NULL);
-            break;
+    case WEBSOCKET_EVENT_CONNECTED:
+        ESP_LOGI(TAG, "WebSocket connected");
+        is_connected = true;
+        /* Show happy greeting when connected */
+        display_update(NULL, "happy", 0, NULL);
+        break;
 
-        case WEBSOCKET_EVENT_DISCONNECTED:
-            ESP_LOGW(TAG, "WebSocket disconnected");
-            is_connected = false;
-            /* Show standby when disconnected */
-            display_update("Disconnected", "standby", 0, NULL);
-            break;
+    case WEBSOCKET_EVENT_DISCONNECTED:
+        ESP_LOGW(TAG, "WebSocket disconnected");
+        is_connected = false;
+        /* Show standby when disconnected */
+        display_update("Disconnected", "standby", 0, NULL);
+        break;
 
-        case WEBSOCKET_EVENT_DATA:
-            if (data->op_code == WS_TRANSPORT_OPCODES_TEXT) {
-                /* Handle server text messages */
-                char *msg = strndup((char *)data->data_ptr, data->data_len);
-                if (msg) {
-                    /* Use ESP_LOGD to avoid flooding logs with high-frequency messages */
-                    ESP_LOGI(TAG, "WS received: %s", msg);
+    case WEBSOCKET_EVENT_DATA:
+        if (data->op_code == WS_TRANSPORT_OPCODES_TEXT) {
+            /* Handle server text messages */
+            char *msg = strndup((char *)data->data_ptr, data->data_len);
+            if (msg) {
+                /* Use ESP_LOGD to avoid flooding logs with high-frequency messages */
+                ESP_LOGI(TAG, "WS received: %s", msg);
 
-                    /* End TTS playback when receiving tts_end or non-TTS message */
-                    if (tts_playing) {
-                        /* Check if this is tts_end message */
-                        if (strstr(msg, "\"tts_end\"") != NULL) {
-                            /* tts_end will be handled by router */
-                        } else if (strstr(msg, "\"type\"") == NULL) {
-                            /* Not a JSON message, end TTS */
-                            ws_tts_complete();
-                        }
+                /* End TTS playback when receiving tts_end or non-TTS message */
+                if (tts_playing) {
+                    /* Check if this is tts_end message */
+                    if (strstr(msg, "\"tts_end\"") != NULL) {
+                        /* tts_end will be handled by router */
+                    } else if (strstr(msg, "\"type\"") == NULL) {
+                        /* Not a JSON message, end TTS */
+                        ws_tts_complete();
                     }
-
-                    /* Route JSON messages */
-                    if (msg[0] == '{') {
-                        ws_route_message(msg);
-                    }
-
-                    free(msg);
                 }
-            }
-            else if (data->op_code == WS_TRANSPORT_OPCODES_BINARY) {
-                /* Handle binary message (TTS audio - raw PCM) */
-                ESP_LOGI(TAG, "WS received binary: %d bytes", data->data_len);
-                ws_handle_tts_binary((const uint8_t *)data->data_ptr, data->data_len);
-            }
-            break;
 
-        case WEBSOCKET_EVENT_ERROR:
-            ESP_LOGE(TAG, "WebSocket error");
-            break;
+                /* Route JSON messages */
+                if (msg[0] == '{') {
+                    ws_route_message(msg);
+                }
 
-        default:
-            break;
+                free(msg);
+            }
+        } else if (data->op_code == WS_TRANSPORT_OPCODES_BINARY) {
+            /* Handle binary message (TTS audio - raw PCM) */
+            ESP_LOGI(TAG, "WS received binary: %d bytes", data->data_len);
+            ws_handle_tts_binary((const uint8_t *)data->data_ptr, data->data_len);
+        }
+        break;
+
+    case WEBSOCKET_EVENT_ERROR:
+        ESP_LOGE(TAG, "WebSocket error");
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -102,13 +99,12 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base,
 /* Public: Initialize WebSocket Client                                */
 /* ------------------------------------------------------------------ */
 
-int ws_client_init(void)
-{
+int ws_client_init(void) {
     esp_websocket_client_config_t cfg = {
         .uri = ws_server_url,
         .network_timeout_ms = WS_TIMEOUT_MS,
-        .buffer_size = 16384,  /* Increased for audio streaming (16KB) */
-        .task_stack = 16384,   /* Increased stack size (16KB) */
+        .buffer_size = 16384, /* Increased for audio streaming (16KB) */
+        .task_stack = 16384,  /* Increased stack size (16KB) */
     };
 
     ws_client = esp_websocket_client_init(&cfg);
@@ -127,8 +123,7 @@ int ws_client_init(void)
 /* Public: Set/Get Server URL                                         */
 /* ------------------------------------------------------------------ */
 
-int ws_client_set_server_url(const char *url)
-{
+int ws_client_set_server_url(const char *url) {
     if (!url || strlen(url) >= WS_URL_MAX_LEN) {
         ESP_LOGE(TAG, "Invalid URL or URL too long");
         return -1;
@@ -146,8 +141,7 @@ int ws_client_set_server_url(const char *url)
     return 0;
 }
 
-const char* ws_client_get_server_url(void)
-{
+const char *ws_client_get_server_url(void) {
     return ws_server_url;
 }
 
@@ -155,8 +149,7 @@ const char* ws_client_get_server_url(void)
 /* Public: Start/Stop Connection                                      */
 /* ------------------------------------------------------------------ */
 
-int ws_client_start(void)
-{
+int ws_client_start(void) {
     if (!ws_client) {
         ESP_LOGE(TAG, "WebSocket not initialized");
         return -1;
@@ -171,8 +164,7 @@ int ws_client_start(void)
     return 0;
 }
 
-void ws_client_stop(void)
-{
+void ws_client_stop(void) {
     if (ws_client) {
         esp_websocket_client_stop(ws_client);
         esp_websocket_client_destroy(ws_client);
@@ -185,8 +177,7 @@ void ws_client_stop(void)
 /* Public: Send Functions                                             */
 /* ------------------------------------------------------------------ */
 
-int ws_client_send_binary(const uint8_t *data, int len)
-{
+int ws_client_send_binary(const uint8_t *data, int len) {
     if (!ws_client || !is_connected) {
         return -1;
     }
@@ -195,8 +186,7 @@ int ws_client_send_binary(const uint8_t *data, int len)
     return sent;
 }
 
-int ws_client_send_text(const char *text)
-{
+int ws_client_send_text(const char *text) {
     if (!ws_client || !is_connected) {
         return -1;
     }
@@ -205,8 +195,7 @@ int ws_client_send_text(const char *text)
     return sent;
 }
 
-int ws_client_is_connected(void)
-{
+int ws_client_is_connected(void) {
     return is_connected ? 1 : 0;
 }
 
@@ -223,8 +212,7 @@ int ws_client_is_connected(void)
  * Simpler and more efficient for MVP.
  */
 
-int ws_send_audio(const uint8_t *data, int len)
-{
+int ws_send_audio(const uint8_t *data, int len) {
     if (!ws_client || !is_connected || len <= 0) {
         ESP_LOGW(TAG, "ws_send_audio: not ready (conn=%d, len=%d)", is_connected, len);
         return -1;
@@ -242,11 +230,10 @@ int ws_send_audio(const uint8_t *data, int len)
     return 0;
 }
 
-int ws_send_audio_end(void)
-{
+int ws_send_audio_end(void) {
     /* Start response timeout timer */
     waiting_for_response = true;
-    timeout_display_count = 0;  /* Reset timeout display counter */
+    timeout_display_count = 0; /* Reset timeout display counter */
     response_wait_start_time = esp_timer_get_time();
     ESP_LOGI(TAG, "Audio end sent, waiting for response (timeout %dms)", RESPONSE_TIMEOUT_MS);
 
@@ -267,8 +254,7 @@ int ws_send_audio_end(void)
  * @param data Binary frame data
  * @param len Frame length
  */
-void ws_handle_tts_binary(const uint8_t *data, int len)
-{
+void ws_handle_tts_binary(const uint8_t *data, int len) {
     if (!data || len <= 0) {
         ESP_LOGW(TAG, "TTS frame empty: %d bytes", len);
         return;
@@ -307,8 +293,7 @@ void ws_handle_tts_binary(const uint8_t *data, int len)
  * Signal TTS playback complete (called by application or tts_end handler)
  * Waits for I2S DMA buffer to finish playing before switching state
  */
-void ws_tts_complete(void)
-{
+void ws_tts_complete(void) {
     /* Clear response wait flag regardless of tts_playing state */
     waiting_for_response = false;
 
@@ -349,8 +334,7 @@ void ws_tts_complete(void)
  * Note: In v2.0 protocol, server should send tts_end message.
  * This is kept as a fallback.
  */
-void ws_tts_timeout_check(void)
-{
+void ws_tts_timeout_check(void) {
 #ifdef CONFIG_ENABLE_WAKE_WORD
     /* Check if we've been waiting too long for a response */
     if (waiting_for_response) {

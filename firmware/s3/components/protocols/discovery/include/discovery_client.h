@@ -10,21 +10,21 @@
 #ifndef DISCOVERY_CLIENT_H
 #define DISCOVERY_CLIENT_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Discovery configuration */
-#define DISCOVERY_PORT          37020
-#define DISCOVERY_INTERVAL_MS   5000
-#define DISCOVERY_RETRY_COUNT   3
-#define DISCOVERY_TIMEOUT_MS    30000
+#define DISCOVERY_PORT 37020
+#define DISCOVERY_INTERVAL_MS 5000
+#define DISCOVERY_RETRY_COUNT 3
+#define DISCOVERY_TIMEOUT_MS 30000
 
 /* Server info structure */
 typedef struct {
-    char ip[16];          /* Server IP address */
-    uint16_t port;        /* WebSocket port */
-    char version[16];     /* Server version */
-    bool discovered;      /* Discovery successful flag */
+    char ip[16];      /* Server IP address */
+    uint16_t port;    /* WebSocket port */
+    char version[16]; /* Server version */
+    bool discovered;  /* Discovery successful flag */
 } server_info_t;
 
 /**
@@ -54,7 +54,7 @@ int discovery_start(server_info_t *info);
  * @param info Server info structure
  * @return Allocated string "ws://x.x.x.x:port" or NULL on error
  */
-char* discovery_get_ws_url(const server_info_t *info);
+char *discovery_get_ws_url(const server_info_t *info);
 
 /**
  * @brief Check if server has been discovered

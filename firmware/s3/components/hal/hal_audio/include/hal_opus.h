@@ -29,8 +29,7 @@ int hal_opus_init(void);
  *
  * Note: In PCM mode, this is a simple memcpy passthrough.
  */
-int hal_opus_encode(const uint8_t *pcm_in, int pcm_len,
-                    uint8_t *out_buf, int out_max_len);
+int hal_opus_encode(const uint8_t *pcm_in, int pcm_len, uint8_t *out_buf, int out_max_len);
 
 /**
  * Process received audio for playback (passthrough - no decoding)
@@ -42,7 +41,6 @@ int hal_opus_encode(const uint8_t *pcm_in, int pcm_len,
  *
  * Note: In PCM mode, this is a simple memcpy passthrough.
  */
-int hal_opus_decode(const uint8_t *in_data, int in_len,
-                    uint8_t *pcm_out, int pcm_max_len);
+int hal_opus_decode(const uint8_t *in_data, int in_len, uint8_t *pcm_out, int pcm_max_len);
 
 #endif /* HAL_OPUS_H */

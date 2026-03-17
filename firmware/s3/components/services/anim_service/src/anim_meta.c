@@ -4,51 +4,42 @@
  */
 
 #include "anim_meta.h"
-#include "esp_log.h"
-#include "esp_heap_caps.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
 
 #define TAG "ANIM_META"
 
 /* Metadata file path */
-#define ANIM_META_PATH  "/spiffs/anim/anim_meta.json"
+#define ANIM_META_PATH "/spiffs/anim/anim_meta.json"
 
 /* Default values */
-#define DEFAULT_FPS     30
-#define DEFAULT_LOOP    true
+#define DEFAULT_FPS 30
+#define DEFAULT_LOOP true
 
 /* Metadata state */
 static anim_meta_t g_meta;
 static bool g_meta_loaded = false;
 
 /* Animation type names for JSON parsing */
-static const char *anim_type_names[] = {
-    "greeting",
-    "detecting",
-    "detected",
-    "speaking",
-    "listening",
-    "analyzing",
-    "standby"
-};
+static const char *anim_type_names[] = {"greeting",  "detecting", "detected", "speaking",
+                                        "listening", "analyzing", "standby"};
 
-static void set_defaults(void)
-{
+static void set_defaults(void) {
     memset(&g_meta, 0, sizeof(g_meta));
     strncpy(g_meta.version, "1.0", sizeof(g_meta.version) - 1);
     g_meta.default_fps = DEFAULT_FPS;
 
     for (int i = 0; i < EMOJI_ANIM_COUNT; i++) {
-        g_meta.animations[i].frame_count = 0;  /* 0 = auto-detect */
+        g_meta.animations[i].frame_count = 0; /* 0 = auto-detect */
         g_meta.animations[i].loop = DEFAULT_LOOP;
-        g_meta.animations[i].fps = 0;  /* 0 = use default */
+        g_meta.animations[i].fps = 0; /* 0 = use default */
     }
 }
 
-static int parse_anim_config(cJSON *obj, anim_config_t *config)
-{
+static int parse_anim_config(cJSON *obj, anim_config_t *config) {
     if (obj == NULL || config == NULL) {
         return -1;
     }
@@ -73,8 +64,7 @@ static int parse_anim_config(cJSON *obj, anim_config_t *config)
     return 0;
 }
 
-static int load_meta_from_file(void)
-{
+static int load_meta_from_file(void) {
     FILE *f = fopen(ANIM_META_PATH, "r");
     if (f == NULL) {
         ESP_LOGI(TAG, "No metadata file found at %s, using defaults", ANIM_META_PATH);
@@ -93,7 +83,7 @@ static int load_meta_from_file(void)
     }
 
     /* Allocate buffer in internal RAM (small file) */
-    char *json_str = (char*)malloc(file_size + 1);
+    char *json_str = (char *)malloc(file_size + 1);
     if (json_str == NULL) {
         ESP_LOGE(TAG, "Failed to allocate buffer for metadata");
         fclose(f);
@@ -138,14 +128,12 @@ static int load_meta_from_file(void)
     }
 
     cJSON_Delete(root);
-    ESP_LOGI(TAG, "Loaded metadata v%s, default_fps=%d",
-             g_meta.version, g_meta.default_fps);
+    ESP_LOGI(TAG, "Loaded metadata v%s, default_fps=%d", g_meta.version, g_meta.default_fps);
 
     return 0;
 }
 
-int anim_meta_init(void)
-{
+int anim_meta_init(void) {
     /* Don't re-initialize if already loaded */
     if (g_meta_loaded) {
         ESP_LOGD(TAG, "Metadata already loaded, skipping init");
@@ -162,8 +150,7 @@ int anim_meta_init(void)
     return 0;
 }
 
-anim_config_t* anim_meta_get_config(emoji_anim_type_t type)
-{
+anim_config_t *anim_meta_get_config(emoji_anim_type_t type) {
     if (type < 0 || type >= EMOJI_ANIM_COUNT) {
         static anim_config_t fallback = {0, true, 0};
         return &fallback;
@@ -171,8 +158,7 @@ anim_config_t* anim_meta_get_config(emoji_anim_type_t type)
     return &g_meta.animations[type];
 }
 
-int anim_meta_get_fps(emoji_anim_type_t type)
-{
+int anim_meta_get_fps(emoji_anim_type_t type) {
     if (type < 0 || type >= EMOJI_ANIM_COUNT) {
         return anim_meta_get_default_fps();
     }
@@ -184,15 +170,13 @@ int anim_meta_get_fps(emoji_anim_type_t type)
     return g_meta.default_fps > 0 ? g_meta.default_fps : DEFAULT_FPS;
 }
 
-bool anim_meta_should_loop(emoji_anim_type_t type)
-{
+bool anim_meta_should_loop(emoji_anim_type_t type) {
     if (type < 0 || type >= EMOJI_ANIM_COUNT) {
         return DEFAULT_LOOP;
     }
     return g_meta.animations[type].loop;
 }
 
-int anim_meta_get_default_fps(void)
-{
+int anim_meta_get_default_fps(void) {
     return g_meta.default_fps > 0 ? g_meta.default_fps : DEFAULT_FPS;
 }

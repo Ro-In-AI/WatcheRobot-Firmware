@@ -1,13 +1,13 @@
 #include "display_ui.h"
 #include "hal_display.h"
-#include <string.h>
 #include <ctype.h>
+#include <string.h>
 
 /* ------------------------------------------------------------------ */
 /* Private: Current state                                             */
 /* ------------------------------------------------------------------ */
 
-#define MAX_TEXT_LEN  128
+#define MAX_TEXT_LEN 128
 
 static char g_current_text[MAX_TEXT_LEN] = {0};
 static emoji_type_t g_current_emoji = EMOJI_STANDBY;
@@ -17,14 +17,15 @@ static const int DEFAULT_FONT_SIZE = 24;
 /* Private: Case-insensitive string compare                           */
 /* ------------------------------------------------------------------ */
 
-static int strcasecmp_local(const char *a, const char *b)
-{
-    if (!a || !b) return (a != b) ? 1 : 0;
+static int strcasecmp_local(const char *a, const char *b) {
+    if (!a || !b)
+        return (a != b) ? 1 : 0;
 
     while (*a && *b) {
         int ca = tolower((unsigned char)*a);
         int cb = tolower((unsigned char)*b);
-        if (ca != cb) return ca - cb;
+        if (ca != cb)
+            return ca - cb;
         a++;
         b++;
     }
@@ -35,8 +36,7 @@ static int strcasecmp_local(const char *a, const char *b)
 /* Public: Initialize                                                 */
 /* ------------------------------------------------------------------ */
 
-void display_ui_init(void)
-{
+void display_ui_init(void) {
     memset(g_current_text, 0, sizeof(g_current_text));
     g_current_emoji = EMOJI_STANDBY;
 
@@ -48,27 +48,23 @@ void display_ui_init(void)
 /* Public: Map emoji string to enum                                   */
 /* ------------------------------------------------------------------ */
 
-emoji_type_t display_emoji_from_string(const char *emoji_str)
-{
+emoji_type_t display_emoji_from_string(const char *emoji_str) {
     if (!emoji_str) {
         return EMOJI_UNKNOWN;
     }
 
     /* Success/Happy states */
-    if (strcasecmp_local(emoji_str, "happy") == 0 ||
-        strcasecmp_local(emoji_str, "success") == 0) {
+    if (strcasecmp_local(emoji_str, "happy") == 0 || strcasecmp_local(emoji_str, "success") == 0) {
         return EMOJI_HAPPY;
     }
 
     /* Error/Sad states */
-    if (strcasecmp_local(emoji_str, "sad") == 0 ||
-        strcasecmp_local(emoji_str, "error") == 0) {
+    if (strcasecmp_local(emoji_str, "sad") == 0 || strcasecmp_local(emoji_str, "error") == 0) {
         return EMOJI_SAD;
     }
 
     /* Thinking/Processing states */
-    if (strcasecmp_local(emoji_str, "thinking") == 0 ||
-        strcasecmp_local(emoji_str, "analyzing") == 0) {
+    if (strcasecmp_local(emoji_str, "thinking") == 0 || strcasecmp_local(emoji_str, "analyzing") == 0) {
         return EMOJI_ANALYZING;
     }
 
@@ -83,8 +79,7 @@ emoji_type_t display_emoji_from_string(const char *emoji_str)
     }
 
     /* Standby/Idle states */
-    if (strcasecmp_local(emoji_str, "standby") == 0 ||
-        strcasecmp_local(emoji_str, "idle") == 0 ||
+    if (strcasecmp_local(emoji_str, "standby") == 0 || strcasecmp_local(emoji_str, "idle") == 0 ||
         strcasecmp_local(emoji_str, "normal") == 0) {
         return EMOJI_STANDBY;
     }
@@ -104,9 +99,7 @@ emoji_type_t display_emoji_from_string(const char *emoji_str)
 /* Public: Update display                                             */
 /* ------------------------------------------------------------------ */
 
-int display_update(const char *text, const char *emoji, int font_size,
-                   display_result_t *out_result)
-{
+int display_update(const char *text, const char *emoji, int font_size, display_result_t *out_result) {
     if (out_result) {
         memset(out_result, 0, sizeof(*out_result));
     }
@@ -130,7 +123,7 @@ int display_update(const char *text, const char *emoji, int font_size,
     if (emoji) {
         emoji_type_t emoji_id = display_emoji_from_string(emoji);
         if (emoji_id == EMOJI_UNKNOWN) {
-            emoji_id = EMOJI_STANDBY;  /* Fallback to standby */
+            emoji_id = EMOJI_STANDBY; /* Fallback to standby */
         }
 
         if (hal_display_set_emoji((int)emoji_id) != 0) {
@@ -151,14 +144,13 @@ int display_update(const char *text, const char *emoji, int font_size,
 /* Public: Get current text                                           */
 /* ------------------------------------------------------------------ */
 
-int display_get_text(char *out_buf, int buf_size)
-{
+int display_get_text(char *out_buf, int buf_size) {
     if (!out_buf || buf_size <= 0) {
         return -1;
     }
 
     if (g_current_text[0] == '\0') {
-        return -1;  /* No text set */
+        return -1; /* No text set */
     }
 
     strncpy(out_buf, g_current_text, buf_size - 1);
@@ -171,7 +163,6 @@ int display_get_text(char *out_buf, int buf_size)
 /* Public: Get current emoji                                          */
 /* ------------------------------------------------------------------ */
 
-emoji_type_t display_get_emoji(void)
-{
+emoji_type_t display_get_emoji(void) {
     return g_current_emoji;
 }

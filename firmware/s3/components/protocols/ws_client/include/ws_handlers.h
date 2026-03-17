@@ -80,7 +80,7 @@ void on_error_handler(const ws_error_cmd_t *cmd);
  * @param data Status data string (may contain [thinking], etc.)
  * @return Emoji string (analyzing, speaking, standby, sad)
  */
-const char* ws_status_data_to_emoji(const char *data);
+const char *ws_status_data_to_emoji(const char *data);
 
 /**
  * Get all handlers as a router struct (convenience function)

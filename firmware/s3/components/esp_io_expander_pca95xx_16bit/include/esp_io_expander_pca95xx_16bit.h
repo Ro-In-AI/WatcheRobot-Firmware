@@ -18,8 +18,7 @@
 extern "C" {
 #endif
 
-typedef struct
-{
+typedef struct {
     gpio_num_t int_gpio;
     uint32_t update_interval_us;
     void (*isr_cb)(void *arg);
@@ -38,7 +37,8 @@ typedef struct
  * @return
  *      - ESP_OK: Success, otherwise returns ESP_ERR_xxx
  */
-esp_err_t esp_io_expander_new_i2c_pca95xx_16bit(i2c_port_t i2c_num, uint32_t i2c_address, esp_io_expander_handle_t *handle);
+esp_err_t esp_io_expander_new_i2c_pca95xx_16bit(i2c_port_t i2c_num, uint32_t i2c_address,
+                                                esp_io_expander_handle_t *handle);
 
 /**
  * @brief Create a new PCA95xx_16bit IO expander driver with external function
@@ -53,7 +53,9 @@ esp_err_t esp_io_expander_new_i2c_pca95xx_16bit(i2c_port_t i2c_num, uint32_t i2c
  * @return
  *      - ESP_OK: Success, otherwise returns ESP_ERR_xxx
  */
-esp_err_t esp_io_expander_new_i2c_pca95xx_16bit_ex(i2c_port_t i2c_num, uint32_t i2c_address, const pca95xx_16bit_ex_config_t *config, esp_io_expander_handle_t *handle);
+esp_err_t esp_io_expander_new_i2c_pca95xx_16bit_ex(i2c_port_t i2c_num, uint32_t i2c_address,
+                                                   const pca95xx_16bit_ex_config_t *config,
+                                                   esp_io_expander_handle_t *handle);
 
 /**
  * @brief I2C address of the PCA9539 or PCA9535

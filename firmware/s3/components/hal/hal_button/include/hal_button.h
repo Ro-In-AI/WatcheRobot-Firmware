@@ -1,8 +1,8 @@
 #ifndef HAL_BUTTON_H
 #define HAL_BUTTON_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /**
  * Button event callback

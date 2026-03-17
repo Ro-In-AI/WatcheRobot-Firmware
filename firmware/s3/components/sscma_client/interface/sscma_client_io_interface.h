@@ -1,7 +1,7 @@
 #pragma once
 
-#include <stdbool.h>
 #include "esp_err.h"
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,8 +12,7 @@ typedef struct sscma_client_io_t sscma_client_io_t; /*!< Type of SSCMA client IO
 /**
  * @brief SSCMA IO interface
  */
-struct sscma_client_io_t
-{
+struct sscma_client_io_t {
     /**
      * @brief Bus handle
      */

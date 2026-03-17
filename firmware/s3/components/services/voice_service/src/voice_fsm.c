@@ -1,14 +1,14 @@
-#include "voice_service.h"
-#include "hal_audio.h"
-#include "hal_button.h"
-#include "hal_wake_word.h"
-#include "ws_client.h"
 #include "display_ui.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include <string.h>
+#include "hal_audio.h"
+#include "hal_button.h"
+#include "hal_wake_word.h"
+#include "voice_service.h"
+#include "ws_client.h"
 #include <math.h>
+#include <string.h>
 
 #define TAG "VOICE"
 
@@ -36,7 +36,7 @@ static voice_stats_t g_stats = {0};
 static bool g_recording_triggered_by_wake_word = false;
 
 /* Audio buffer for PCM data (16kHz, 16-bit, 60ms frame = 1920 bytes) */
-#define PCM_FRAME_SIZE  1920
+#define PCM_FRAME_SIZE 1920
 
 static uint8_t g_pcm_buf[PCM_FRAME_SIZE];
 
@@ -46,29 +46,27 @@ static uint8_t g_pcm_buf[PCM_FRAME_SIZE];
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
 /* VAD state */
-static int g_vad_silence_frames = 0;    /* Consecutive silent frames */
-static int g_vad_speech_frames = 0;     /* Total speech frames in this recording */
+static int g_vad_silence_frames = 0; /* Consecutive silent frames */
+static int g_vad_speech_frames = 0;  /* Total speech frames in this recording */
 
 /* VAD configuration from Kconfig */
-#define VAD_FRAME_MS            60      /* Each frame is 60ms */
-#define VAD_SILENCE_FRAMES      (CONFIG_VAD_SILENCE_TIMEOUT_MS / VAD_FRAME_MS)
-#define VAD_RMS_THRESHOLD       CONFIG_VAD_RMS_THRESHOLD
-#define VAD_MIN_SPEECH_FRAMES   (CONFIG_VAD_MIN_SPEECH_MS / VAD_FRAME_MS)
+#define VAD_FRAME_MS 60 /* Each frame is 60ms */
+#define VAD_SILENCE_FRAMES (CONFIG_VAD_SILENCE_TIMEOUT_MS / VAD_FRAME_MS)
+#define VAD_RMS_THRESHOLD CONFIG_VAD_RMS_THRESHOLD
+#define VAD_MIN_SPEECH_FRAMES (CONFIG_VAD_MIN_SPEECH_MS / VAD_FRAME_MS)
 
 /* VAD control: only enable when wake word triggered */
 static bool g_vad_enabled = false;
 
-static void vad_reset(void)
-{
+static void vad_reset(void) {
     g_vad_silence_frames = 0;
     g_vad_speech_frames = 0;
     g_vad_enabled = true;
-    ESP_LOGI(TAG, "VAD reset, silence_threshold=%d frames, rms_threshold=%d, min_speech=%d frames",
-             VAD_SILENCE_FRAMES, VAD_RMS_THRESHOLD, VAD_MIN_SPEECH_FRAMES);
+    ESP_LOGI(TAG, "VAD reset, silence_threshold=%d frames, rms_threshold=%d, min_speech=%d frames", VAD_SILENCE_FRAMES,
+             VAD_RMS_THRESHOLD, VAD_MIN_SPEECH_FRAMES);
 }
 
-static void vad_disable(void)
-{
+static void vad_disable(void) {
     g_vad_enabled = false;
 }
 
@@ -77,8 +75,7 @@ static void vad_disable(void)
  * @param rms RMS value of the audio frame
  * @return true if recording should stop (silence timeout)
  */
-static bool vad_process_frame(int rms)
-{
+static bool vad_process_frame(int rms) {
     if (!g_vad_enabled) {
         return false;
     }
@@ -94,20 +91,19 @@ static bool vad_process_frame(int rms)
 
         /* Log every 10 silent frames */
         if (g_vad_silence_frames % 10 == 0) {
-            ESP_LOGI(TAG, "VAD: silence_frames=%d/%d, rms=%d (threshold=%d)",
-                     g_vad_silence_frames, VAD_SILENCE_FRAMES, rms, VAD_RMS_THRESHOLD);
+            ESP_LOGI(TAG, "VAD: silence_frames=%d/%d, rms=%d (threshold=%d)", g_vad_silence_frames, VAD_SILENCE_FRAMES,
+                     rms, VAD_RMS_THRESHOLD);
         }
 
         /* Check if silence timeout reached and minimum speech achieved */
-        if (g_vad_silence_frames >= VAD_SILENCE_FRAMES &&
-            g_vad_speech_frames >= VAD_MIN_SPEECH_FRAMES) {
-            ESP_LOGI(TAG, "VAD: Silence timeout detected! speech_frames=%d, silence_frames=%d",
-                     g_vad_speech_frames, g_vad_silence_frames);
-            return true;  /* Signal to stop recording */
+        if (g_vad_silence_frames >= VAD_SILENCE_FRAMES && g_vad_speech_frames >= VAD_MIN_SPEECH_FRAMES) {
+            ESP_LOGI(TAG, "VAD: Silence timeout detected! speech_frames=%d, silence_frames=%d", g_vad_speech_frames,
+                     g_vad_silence_frames);
+            return true; /* Signal to stop recording */
         }
     } else {
         /* Speech frame */
-        g_vad_silence_frames = 0;  /* Reset silence counter */
+        g_vad_silence_frames = 0; /* Reset silence counter */
         g_vad_speech_frames++;
 
         /* Log every 20 speech frames */
@@ -124,8 +120,7 @@ static bool vad_process_frame(int rms)
 /* Public: Initialize                                                 */
 /* ------------------------------------------------------------------ */
 
-void voice_recorder_init(void)
-{
+void voice_recorder_init(void) {
     g_state = VOICE_STATE_IDLE;
     memset(&g_stats, 0, sizeof(g_stats));
 
@@ -142,8 +137,7 @@ void voice_recorder_init(void)
 /* Public: Get current state                                          */
 /* ------------------------------------------------------------------ */
 
-voice_state_t voice_recorder_get_state(void)
-{
+voice_state_t voice_recorder_get_state(void) {
     return g_state;
 }
 
@@ -151,8 +145,7 @@ voice_state_t voice_recorder_get_state(void)
 /* Public: Reset statistics                                           */
 /* ------------------------------------------------------------------ */
 
-void voice_recorder_reset_stats(void)
-{
+void voice_recorder_reset_stats(void) {
     g_stats.record_count = 0;
     g_stats.encode_count = 0;
     g_stats.error_count = 0;
@@ -162,8 +155,7 @@ void voice_recorder_reset_stats(void)
 /* Public: Get statistics                                             */
 /* ------------------------------------------------------------------ */
 
-void voice_recorder_get_stats(voice_stats_t *out_stats)
-{
+void voice_recorder_get_stats(voice_stats_t *out_stats) {
     if (out_stats) {
         out_stats->record_count = g_stats.record_count;
         out_stats->encode_count = g_stats.encode_count;
@@ -176,8 +168,7 @@ void voice_recorder_get_stats(voice_stats_t *out_stats)
 /* Private: Start recording                                           */
 /* ------------------------------------------------------------------ */
 
-static int start_recording(void)
-{
+static int start_recording(void) {
     ESP_LOGI(TAG, "start_recording: calling hal_audio_start()");
     if (hal_audio_start() != 0) {
         ESP_LOGE(TAG, "start_recording: hal_audio_start failed");
@@ -192,7 +183,7 @@ static int start_recording(void)
         /* Wait for detection task to finish current fetch */
         vTaskDelay(pdMS_TO_TICKS(50));
     }
-    
+
     /* Initialize VAD for wake word mode */
     if (g_recording_triggered_by_wake_word) {
         vad_reset();
@@ -210,8 +201,7 @@ static int start_recording(void)
 /* Private: Stop recording                                            */
 /* ------------------------------------------------------------------ */
 
-static int stop_recording(void)
-{
+static int stop_recording(void) {
     /* In wake word mode, keep audio running for continuous detection */
 #ifdef CONFIG_ENABLE_WAKE_WORD
     if (!g_recording_triggered_by_wake_word) {
@@ -235,7 +225,7 @@ static int stop_recording(void)
 
     g_state = VOICE_STATE_IDLE;
     g_stats.record_count++;
-    g_recording_triggered_by_wake_word = false;  /* Reset trigger flag */
+    g_recording_triggered_by_wake_word = false; /* Reset trigger flag */
     return 0;
 }
 
@@ -243,27 +233,24 @@ static int stop_recording(void)
 /* Public: Process event                                              */
 /* ------------------------------------------------------------------ */
 
-void voice_recorder_process_event(voice_event_t event)
-{
+void voice_recorder_process_event(voice_event_t event) {
     switch (g_state) {
-        case VOICE_STATE_IDLE:
-            if (event == VOICE_EVENT_BUTTON_PRESS ||
-                event == VOICE_EVENT_WAKE_WORD) {
+    case VOICE_STATE_IDLE:
+        if (event == VOICE_EVENT_BUTTON_PRESS || event == VOICE_EVENT_WAKE_WORD) {
 #ifdef CONFIG_ENABLE_WAKE_WORD
-                if (event == VOICE_EVENT_WAKE_WORD) {
-                    ESP_LOGI(TAG, "Wake word triggered recording");
-                }
+            if (event == VOICE_EVENT_WAKE_WORD) {
+                ESP_LOGI(TAG, "Wake word triggered recording");
+            }
 #endif
-                start_recording();
-            }
-            break;
+            start_recording();
+        }
+        break;
 
-        case VOICE_STATE_RECORDING:
-            if (event == VOICE_EVENT_BUTTON_RELEASE ||
-                event == VOICE_EVENT_TIMEOUT) {
-                stop_recording();
-            }
-            break;
+    case VOICE_STATE_RECORDING:
+        if (event == VOICE_EVENT_BUTTON_RELEASE || event == VOICE_EVENT_TIMEOUT) {
+            stop_recording();
+        }
+        break;
     }
 }
 
@@ -271,8 +258,7 @@ void voice_recorder_process_event(voice_event_t event)
 /* Public: Process tick (read, send)                                   */
 /* ------------------------------------------------------------------ */
 
-int voice_recorder_tick(void)
-{
+int voice_recorder_tick(void) {
     /* Always read audio when wake word detection is enabled */
     int pcm_len = 0;
 
@@ -285,11 +271,11 @@ int voice_recorder_tick(void)
         return -1;
     }
     if (pcm_len == 0) {
-        return 0;  /* No data available */
+        return 0; /* No data available */
     }
 
     int16_t *samples = (int16_t *)g_pcm_buf;
-    size_t num_samples = pcm_len / 2;  /* 16-bit samples */
+    size_t num_samples = pcm_len / 2; /* 16-bit samples */
 
     /* Feed wake word detector when idle (local detection, no network) */
     if (g_state == VOICE_STATE_IDLE && g_wake_word_ctx != NULL) {
@@ -317,11 +303,11 @@ int voice_recorder_tick(void)
     }
     if (pcm_len == 0) {
         ESP_LOGW(TAG, "Audio read: no data");
-        return 0;  /* No data available */
+        return 0; /* No data available */
     }
 
     int16_t *samples = (int16_t *)g_pcm_buf;
-    size_t num_samples = pcm_len / 2;  /* 16-bit samples */
+    size_t num_samples = pcm_len / 2; /* 16-bit samples */
 #endif
 
     /* Audio quality check: calculate RMS and peak */
@@ -332,10 +318,13 @@ int voice_recorder_tick(void)
 
     for (int i = 0; i < sample_count; i++) {
         int16_t s = samples[i];
-        if (s == 0) zero_count++;
-        if (s < 0) s = -s;  /* abs */
+        if (s == 0)
+            zero_count++;
+        if (s < 0)
+            s = -s; /* abs */
         sum_sq += (int64_t)s * s;
-        if (s > peak) peak = s;
+        if (s > peak)
+            peak = s;
     }
 
     int rms = (int)(sum_sq / sample_count);
@@ -343,8 +332,8 @@ int voice_recorder_tick(void)
 
     /* Log every 10 frames */
     if (g_stats.encode_count % 10 == 0) {
-        ESP_LOGI(TAG, "Audio: frame#%d, rms=%d, peak=%d, zeros=%d/%d",
-                 g_stats.encode_count + 1, rms, peak, zero_count, sample_count);
+        ESP_LOGI(TAG, "Audio: frame#%d, rms=%d, peak=%d, zeros=%d/%d", g_stats.encode_count + 1, rms, peak, zero_count,
+                 sample_count);
     }
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
@@ -354,7 +343,7 @@ int voice_recorder_tick(void)
         /* Stop recording due to silence timeout */
         voice_recorder_process_event(VOICE_EVENT_TIMEOUT);
         display_update("Processing...", "thinking", 0, NULL);
-        return 0;  /* Recording stopped, don't send this frame */
+        return 0; /* Recording stopped, don't send this frame */
     }
 #endif
 
@@ -369,15 +358,14 @@ int voice_recorder_tick(void)
     }
 
     g_stats.encode_count++;
-    return 1;  /* One frame sent */
+    return 1; /* One frame sent */
 }
 
 /* ------------------------------------------------------------------ */
 /* Private: Button callback (called from task context via poll)        */
 /* ------------------------------------------------------------------ */
 
-static void button_callback(bool pressed)
-{
+static void button_callback(bool pressed) {
     /* This is called from task context (via hal_button_poll) */
     if (pressed) {
         if (g_state == VOICE_STATE_IDLE) {
@@ -411,10 +399,9 @@ static TaskHandle_t g_voice_task_handle = NULL;
 static volatile bool g_task_running = false;
 
 /* Tick interval: 60ms for Opus frame size */
-#define TICK_INTERVAL_MS    60
+#define TICK_INTERVAL_MS 60
 
-static void voice_recorder_task(void *arg)
-{
+static void voice_recorder_task(void *arg) {
     ESP_LOGI(TAG, "Voice recorder task started");
 
     while (g_task_running) {
@@ -436,18 +423,16 @@ static void voice_recorder_task(void *arg)
 /* ------------------------------------------------------------------ */
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
-static void on_wake_word_detected(const char *wake_word, void *user_data)
-{
+static void on_wake_word_detected(const char *wake_word, void *user_data) {
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word);
-    g_recording_triggered_by_wake_word = true;  /* Mark as wake word triggered */
+    g_recording_triggered_by_wake_word = true; /* Mark as wake word triggered */
     display_update("Listening...", "listening", 0, NULL);
     voice_recorder_process_event(VOICE_EVENT_WAKE_WORD);
 }
 
-static int wake_word_setup(void)
-{
+static int wake_word_setup(void) {
     wake_word_config_t config = {
-        .model_path = NULL,  /* Use default */
+        .model_path = NULL, /* Use default */
         .callback = on_wake_word_detected,
         .user_data = NULL,
     };
@@ -468,8 +453,7 @@ static int wake_word_setup(void)
     return 0;
 }
 
-static void wake_word_cleanup(void)
-{
+static void wake_word_cleanup(void) {
     if (g_wake_word_ctx != NULL) {
         hal_wake_word_stop(g_wake_word_ctx);
         /* Wait for detection task to finish current fetch */
@@ -484,14 +468,13 @@ static void wake_word_cleanup(void)
 /* Public: Start voice recorder system (with button and task)         */
 /* ------------------------------------------------------------------ */
 
-int voice_recorder_start(void)
-{
+int voice_recorder_start(void) {
 #ifdef CONFIG_ENABLE_WAKE_WORD
     /* Initialize wake word detector */
     if (wake_word_setup() != 0) {
         ESP_LOGW(TAG, "Wake word setup failed, continuing without wake word");
     }
-    
+
     /* Start audio for wake word detection - must be running to feed AFE */
     ESP_LOGI(TAG, "Starting audio for wake word detection");
     if (hal_audio_start() != 0) {
@@ -510,14 +493,7 @@ int voice_recorder_start(void)
 
     /* Start voice recorder task */
     g_task_running = true;
-    BaseType_t ret = xTaskCreate(
-        voice_recorder_task,
-        "voice_task",
-        4096,
-        NULL,
-        5,
-        &g_voice_task_handle
-    );
+    BaseType_t ret = xTaskCreate(voice_recorder_task, "voice_task", 4096, NULL, 5, &g_voice_task_handle);
 
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Task create failed");
@@ -533,12 +509,11 @@ int voice_recorder_start(void)
 /* Public: Stop voice recorder system                                  */
 /* ------------------------------------------------------------------ */
 
-void voice_recorder_stop(void)
-{
+void voice_recorder_stop(void) {
     g_task_running = false;
 
     if (g_voice_task_handle) {
-        vTaskDelay(pdMS_TO_TICKS(100));  /* Wait for task to exit */
+        vTaskDelay(pdMS_TO_TICKS(100)); /* Wait for task to exit */
     }
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
@@ -554,8 +529,7 @@ void voice_recorder_stop(void)
 /* Public: Pause wake word detection before TTS                        */
 /* ------------------------------------------------------------------ */
 
-void voice_recorder_pause_wake_word(void)
-{
+void voice_recorder_pause_wake_word(void) {
 #ifdef CONFIG_ENABLE_WAKE_WORD
     if (g_wake_word_ctx != NULL) {
         ESP_LOGI(TAG, "Pausing wake word detection for TTS");
@@ -570,8 +544,7 @@ void voice_recorder_pause_wake_word(void)
 /* Public: Resume wake word detection after TTS                       */
 /* ------------------------------------------------------------------ */
 
-void voice_recorder_resume_wake_word(void)
-{
+void voice_recorder_resume_wake_word(void) {
 #ifdef CONFIG_ENABLE_WAKE_WORD
     if (g_wake_word_ctx != NULL) {
         ESP_LOGI(TAG, "Resuming wake word detection");

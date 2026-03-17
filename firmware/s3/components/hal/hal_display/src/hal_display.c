@@ -4,13 +4,13 @@
  */
 
 #include "hal_display.h"
+#include "anim_player.h"
+#include "anim_storage.h"
 #include "boot_anim.h"
 #include "display_ui.h"
-#include "anim_storage.h"
-#include "anim_player.h"
-#include "sensecap-watcher.h"
 #include "esp_log.h"
 #include "lvgl.h"
+#include "sensecap-watcher.h"
 
 /* PNG support is included via lvgl.h when LV_USE_PNG is enabled */
 
@@ -29,23 +29,31 @@ static bool minimal_initialized = false;
 static bool is_initialized = false;
 
 /* Map display_ui emoji_type to emoji_png emoji_anim_type */
-static emoji_anim_type_t map_emoji_type(int ui_emoji_id)
-{
+static emoji_anim_type_t map_emoji_type(int ui_emoji_id) {
     /* display_ui.h: 0=standby, 1=happy, 2=sad, 3=surprised, 4=angry,
      *              5=listening, 6=analyzing, 7=speaking */
     /* emoji_png.h: 0=greeting, 1=detecting, 2=detected, 3=speaking,
      *              4=listening, 5=analyzing, 6=standby */
     /* Map display_ui emoji types to animation types */
     switch (ui_emoji_id) {
-        case 0:  /* EMOJI_STANDBY */   return EMOJI_ANIM_STANDBY;    /* standby */
-        case 1:  /* EMOJI_HAPPY */     return EMOJI_ANIM_GREETING;   /* greeting */
-        case 2:  /* EMOJI_SAD */       return EMOJI_ANIM_DETECTED;   /* detected */
-        case 3:  /* EMOJI_SURPRISED */ return EMOJI_ANIM_ANALYZING;  /* thinking */
-        case 4:  /* EMOJI_ANGRY */     return EMOJI_ANIM_ANALYZING;  /* analyzing */
-        case 5:  /* EMOJI_LISTENING */ return EMOJI_ANIM_LISTENING;  /* listening */
-        case 6:  /* EMOJI_ANALYZING */ return EMOJI_ANIM_ANALYZING;  /* analyzing */
-        case 7:  /* EMOJI_SPEAKING */  return EMOJI_ANIM_SPEAKING;   /* speaking */
-        default: return EMOJI_ANIM_STANDBY;
+    case 0:                          /* EMOJI_STANDBY */
+        return EMOJI_ANIM_STANDBY;   /* standby */
+    case 1:                          /* EMOJI_HAPPY */
+        return EMOJI_ANIM_GREETING;  /* greeting */
+    case 2:                          /* EMOJI_SAD */
+        return EMOJI_ANIM_DETECTED;  /* detected */
+    case 3:                          /* EMOJI_SURPRISED */
+        return EMOJI_ANIM_ANALYZING; /* thinking */
+    case 4:                          /* EMOJI_ANGRY */
+        return EMOJI_ANIM_ANALYZING; /* analyzing */
+    case 5:                          /* EMOJI_LISTENING */
+        return EMOJI_ANIM_LISTENING; /* listening */
+    case 6:                          /* EMOJI_ANALYZING */
+        return EMOJI_ANIM_ANALYZING; /* analyzing */
+    case 7:                          /* EMOJI_SPEAKING */
+        return EMOJI_ANIM_SPEAKING;  /* speaking */
+    default:
+        return EMOJI_ANIM_STANDBY;
     }
 }
 
@@ -53,10 +61,9 @@ static emoji_anim_type_t map_emoji_type(int ui_emoji_id)
 /* Minimal init for boot animation                                            */
 /* ------------------------------------------------------------------ */
 
-int hal_display_minimal_init(void)
-{
+int hal_display_minimal_init(void) {
     if (minimal_initialized || is_initialized) {
-        return 0;  /* Already done */
+        return 0; /* Already done */
     }
 
     ESP_LOGI(TAG, "Minimal display init for boot animation...");
@@ -100,10 +107,9 @@ int hal_display_minimal_init(void)
 /* Full display initialization (with SPIFFS and emoji)            */
 /* ------------------------------------------------------------------ */
 
-int hal_display_init(void)
-{
+int hal_display_init(void) {
     if (is_initialized) {
-        return 0;  /* Already initialized */
+        return 0; /* Already initialized */
     }
 
     ESP_LOGI(TAG, "Full display initialization...");
@@ -150,10 +156,10 @@ int hal_display_init(void)
     label_text = lv_label_create(scr);
     lv_obj_set_width(label_text, 380);
     lv_label_set_long_mode(label_text, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(label_text, LV_TEXT_ALIGN_CENTER, 0);  /* Center align text */
+    lv_obj_set_style_text_align(label_text, LV_TEXT_ALIGN_CENTER, 0); /* Center align text */
     lv_label_set_text(label_text, "Ready");
     lv_obj_set_style_text_color(label_text, lv_color_white(), 0);
-    lv_obj_align(label_text, LV_ALIGN_CENTER, 0, -140);  /* Move higher to avoid emoji overlap */
+    lv_obj_align(label_text, LV_ALIGN_CENTER, 0, -140); /* Move higher to avoid emoji overlap */
 
     /* Set CJK font for Chinese character support */
 #if LV_FONT_SIMSUN_16_CJK
@@ -180,10 +186,9 @@ int hal_display_init(void)
 /* Display UI init - called after boot animation finishes                */
 /* ------------------------------------------------------------------ */
 
-int hal_display_ui_init(void)
-{
+int hal_display_ui_init(void) {
     if (is_initialized) {
-        return 0;  /* Already initialized */
+        return 0; /* Already initialized */
     }
 
     ESP_LOGI(TAG, "Initializing display UI...");
@@ -273,8 +278,7 @@ int hal_display_ui_init(void)
     return 0;
 }
 
-int hal_display_set_text(const char *text, int font_size)
-{
+int hal_display_set_text(const char *text, int font_size) {
     if (!is_initialized || !label_text) {
         ESP_LOGW(TAG, "Display not initialized");
         return -1;
@@ -284,7 +288,7 @@ int hal_display_set_text(const char *text, int font_size)
         return -1;
     }
 
-    #define MAX_DISPLAY_CHARS 30
+#define MAX_DISPLAY_CHARS 30
     char truncated[MAX_DISPLAY_CHARS + 4];
     int len = strlen(text);
 
@@ -305,8 +309,7 @@ int hal_display_set_text(const char *text, int font_size)
     return 0;
 }
 
-int hal_display_set_emoji(int emoji_id)
-{
+int hal_display_set_emoji(int emoji_id) {
     if (!is_initialized || !img_emoji) {
         ESP_LOGW(TAG, "Display not initialized");
         return -1;
@@ -326,14 +329,30 @@ int hal_display_set_emoji(int emoji_id)
 
     const char *emoji_name = "unknown";
     switch (emoji_id) {
-        case 0:  emoji_name = "standby"; break;
-        case 1:  emoji_name = "happy"; break;
-        case 2:  emoji_name = "sad"; break;
-        case 3:  emoji_name = "surprised"; break;
-        case 4:  emoji_name = "angry"; break;
-        case 5:  emoji_name = "listening"; break;
-        case 6:  emoji_name = "analyzing"; break;
-        case 7:  emoji_name = "speaking"; break;
+    case 0:
+        emoji_name = "standby";
+        break;
+    case 1:
+        emoji_name = "happy";
+        break;
+    case 2:
+        emoji_name = "sad";
+        break;
+    case 3:
+        emoji_name = "surprised";
+        break;
+    case 4:
+        emoji_name = "angry";
+        break;
+    case 5:
+        emoji_name = "listening";
+        break;
+    case 6:
+        emoji_name = "analyzing";
+        break;
+    case 7:
+        emoji_name = "speaking";
+        break;
     }
 
     ESP_LOGI(TAG, "Set emoji: %s -> %s animation", emoji_name, emoji_type_name(type));
@@ -343,36 +362,36 @@ int hal_display_set_emoji(int emoji_id)
 /**
  * @brief Start speaking animation (for voice interaction)
  */
-int hal_display_start_speaking(void)
-{
-    if (!is_initialized) return -1;
+int hal_display_start_speaking(void) {
+    if (!is_initialized)
+        return -1;
     lvgl_port_lock(0);
     int ret = emoji_anim_start(EMOJI_ANIM_SPEAKING);
     lvgl_port_unlock();
     return ret;
 }
 
-int hal_display_start_listening(void)
-{
-    if (!is_initialized) return -1;
+int hal_display_start_listening(void) {
+    if (!is_initialized)
+        return -1;
     lvgl_port_lock(0);
     int ret = emoji_anim_start(EMOJI_ANIM_LISTENING);
     lvgl_port_unlock();
     return ret;
 }
 
-int hal_display_start_analyzing(void)
-{
-    if (!is_initialized) return -1;
+int hal_display_start_analyzing(void) {
+    if (!is_initialized)
+        return -1;
     lvgl_port_lock(0);
     int ret = emoji_anim_start(EMOJI_ANIM_ANALYZING);
     lvgl_port_unlock();
     return ret;
 }
 
-int hal_display_stop_animation(void)
-{
-    if (!is_initialized) return -1;
+int hal_display_stop_animation(void) {
+    if (!is_initialized)
+        return -1;
     lvgl_port_lock(0);
     int ret = emoji_anim_start(EMOJI_ANIM_STANDBY);
     lvgl_port_unlock();

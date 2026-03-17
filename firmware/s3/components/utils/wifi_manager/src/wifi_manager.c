@@ -1,35 +1,31 @@
 #include "wifi_manager.h"
-#include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
-#include "nvs_flash.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "nvs_flash.h"
 
 #define TAG "WIFI"
 
 /* WiFi configuration (MVP: hardcoded) */
-#define WIFI_SSID     "Erroright"
-#define WIFI_PASS     "erroright"
+#define WIFI_SSID "Erroright"
+#define WIFI_PASS "erroright"
 
 #define WIFI_CONNECTED_BIT BIT0
 
 static EventGroupHandle_t wifi_event_group;
 static bool is_connected = false;
 
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
-{
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
-    }
-    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGW(TAG, "Disconnected, retrying...");
         is_connected = false;
         esp_wifi_connect();
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
-    }
-    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         is_connected = true;
@@ -37,8 +33,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-int wifi_init(void)
-{
+int wifi_init(void) {
     /* Initialize NVS */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -60,18 +55,18 @@ int wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     /* Register event handlers */
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                                        &wifi_event_handler, NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                        &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(
+        esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
 
     /* Configure WiFi */
     wifi_config_t wifi_cfg = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
-            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
-        },
+        .sta =
+            {
+                .ssid = WIFI_SSID,
+                .password = WIFI_PASS,
+                .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+            },
     };
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -81,13 +76,12 @@ int wifi_init(void)
     return 0;
 }
 
-int wifi_connect(void)
-{
+int wifi_connect(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     /* Wait for connection */
-    EventBits_t bits = xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT,
-                                           pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
+    EventBits_t bits =
+        xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(10000));
 
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Connected to WiFi");
@@ -98,13 +92,11 @@ int wifi_connect(void)
     }
 }
 
-int wifi_is_connected(void)
-{
+int wifi_is_connected(void) {
     return is_connected ? 1 : 0;
 }
 
-void wifi_disconnect(void)
-{
+void wifi_disconnect(void) {
     esp_wifi_disconnect();
     is_connected = false;
 }

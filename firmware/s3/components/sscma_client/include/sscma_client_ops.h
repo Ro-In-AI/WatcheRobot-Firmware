@@ -12,8 +12,7 @@ extern "C" {
 /**
  * @brief Configuration of SCCMA client
  */
-typedef struct
-{
+typedef struct {
     int reset_gpio_num;                   /*!< GPIO number of reset pin */
     int tx_buffer_size;                   /*!< Size of TX buffer */
     int rx_buffer_size;                   /*!< Size of RX buffer */
@@ -28,21 +27,21 @@ typedef struct
     int event_queue_size;                 /* Event queue size */
     void *user_ctx;                       /* User context */
     esp_io_expander_handle_t io_expander; /*!< IO expander handle */
-    struct
-    {
+    struct {
         unsigned int reset_active_high : 1;  /*!< Setting this if the panel reset is
                                                 high level active */
         unsigned int reset_use_expander : 1; /*!< Reset line use IO expander */
     } flags;                                 /*!< SSCMA client config flags */
 } sscma_client_config_t;
 
-#define SSCMA_CLIENT_CONFIG_DEFAULT()                                                                                                                                                                  \
-    {                                                                                                                                                                                                  \
-        .reset_gpio_num = -1, .tx_buffer_size = 4096, .rx_buffer_size = 65536, .process_task_priority = 5, .process_task_stack = 4096, .process_task_affinity = -1, .monitor_task_priority = 4,        \
-        .monitor_task_stack = 10240, .monitor_task_affinity = -1, .event_queue_size = 2, .user_ctx = NULL,                                                                                             \
-        .flags = {                                                                                                                                                                                     \
-            .reset_active_high = false,                                                                                                                                                                \
-        },                                                                                                                                                                                             \
+#define SSCMA_CLIENT_CONFIG_DEFAULT()                                                                                  \
+    {                                                                                                                  \
+        .reset_gpio_num = -1, .tx_buffer_size = 4096, .rx_buffer_size = 65536, .process_task_priority = 5,             \
+        .process_task_stack = 4096, .process_task_affinity = -1, .monitor_task_priority = 4,                           \
+        .monitor_task_stack = 10240, .monitor_task_affinity = -1, .event_queue_size = 2, .user_ctx = NULL,             \
+        .flags = {                                                                                                     \
+            .reset_active_high = false,                                                                                \
+        },                                                                                                             \
     }
 
 /**
@@ -56,7 +55,8 @@ typedef struct
  *          - ESP_ERR_INVALID_ARG if parameter is invalid
  *          - ESP_ERR_NO_MEM if out of memory
  */
-esp_err_t sscma_client_new(const sscma_client_io_handle_t io, const sscma_client_config_t *config, sscma_client_handle_t *ret_client);
+esp_err_t sscma_client_new(const sscma_client_io_handle_t io, const sscma_client_config_t *config,
+                           sscma_client_handle_t *ret_client);
 
 /**
  * @brief Destroy SCCMA client
@@ -130,7 +130,8 @@ esp_err_t sscma_client_available(sscma_client_handle_t client, size_t *ret_avail
  * @return
  *          - ESP_OK on success
  */
-esp_err_t sscma_client_register_callback(sscma_client_handle_t client, const sscma_client_callback_t *callback, void *user_ctx);
+esp_err_t sscma_client_register_callback(sscma_client_handle_t client, const sscma_client_callback_t *callback,
+                                         void *user_ctx);
 
 /**
  * @brief Clear reply
@@ -148,7 +149,8 @@ void sscma_client_reply_clear(sscma_client_reply_t *reply);
  * @return
  *          - ESP_OK on success
  */
-esp_err_t sscma_client_request(sscma_client_handle_t client, const char *cmd, sscma_client_reply_t *reply, bool wait, TickType_t timeout);
+esp_err_t sscma_client_request(sscma_client_handle_t client, const char *cmd, sscma_client_reply_t *reply, bool wait,
+                               TickType_t timeout);
 
 /**
  * @brief Get SCCMA client info
@@ -286,7 +288,8 @@ esp_err_t sscma_client_set_model_info(sscma_client_handle_t client, const char *
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_fetch_boxes_from_reply(const sscma_client_reply_t *reply, sscma_client_box_t **boxes, int *num_boxes);
+esp_err_t sscma_utils_fetch_boxes_from_reply(const sscma_client_reply_t *reply, sscma_client_box_t **boxes,
+                                             int *num_boxes);
 
 /**
  * Prase boxes from sscma client reply
@@ -297,7 +300,8 @@ esp_err_t sscma_utils_fetch_boxes_from_reply(const sscma_client_reply_t *reply, 
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_copy_boxes_from_reply(const sscma_client_reply_t *reply, sscma_client_box_t *boxes, int max_boxes, int *num_boxes);
+esp_err_t sscma_utils_copy_boxes_from_reply(const sscma_client_reply_t *reply, sscma_client_box_t *boxes, int max_boxes,
+                                            int *num_boxes);
 
 /**
  * Fetch classes from sscma client reply
@@ -307,7 +311,8 @@ esp_err_t sscma_utils_copy_boxes_from_reply(const sscma_client_reply_t *reply, s
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_fetch_classes_from_reply(const sscma_client_reply_t *reply, sscma_client_class_t **classes, int *num_classes);
+esp_err_t sscma_utils_fetch_classes_from_reply(const sscma_client_reply_t *reply, sscma_client_class_t **classes,
+                                               int *num_classes);
 
 /**
  * Prase classes from sscma client reply
@@ -318,7 +323,8 @@ esp_err_t sscma_utils_fetch_classes_from_reply(const sscma_client_reply_t *reply
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_copy_classes_from_reply(const sscma_client_reply_t *reply, sscma_client_class_t *classes, int max_classes, int *num_classes);
+esp_err_t sscma_utils_copy_classes_from_reply(const sscma_client_reply_t *reply, sscma_client_class_t *classes,
+                                              int max_classes, int *num_classes);
 
 /**
  * Fetch points from sscma client reply
@@ -328,7 +334,8 @@ esp_err_t sscma_utils_copy_classes_from_reply(const sscma_client_reply_t *reply,
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_fetch_points_from_reply(const sscma_client_reply_t *reply, sscma_client_point_t **points, int *num_points);
+esp_err_t sscma_utils_fetch_points_from_reply(const sscma_client_reply_t *reply, sscma_client_point_t **points,
+                                              int *num_points);
 
 /**
  * Prase points from sscma client reply
@@ -339,7 +346,8 @@ esp_err_t sscma_utils_fetch_points_from_reply(const sscma_client_reply_t *reply,
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_copy_points_from_reply(const sscma_client_reply_t *reply, sscma_client_point_t *points, int max_points, int *num_points);
+esp_err_t sscma_utils_copy_points_from_reply(const sscma_client_reply_t *reply, sscma_client_point_t *points,
+                                             int max_points, int *num_points);
 
 /**
  * Fetch keypoints from sscma client reply
@@ -349,7 +357,8 @@ esp_err_t sscma_utils_copy_points_from_reply(const sscma_client_reply_t *reply, 
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_fetch_keypoints_from_reply(const sscma_client_reply_t *reply, sscma_client_keypoint_t **keypoints, int *num_keypoints);
+esp_err_t sscma_utils_fetch_keypoints_from_reply(const sscma_client_reply_t *reply, sscma_client_keypoint_t **keypoints,
+                                                 int *num_keypoints);
 
 /**
  * Prase keypoints from sscma client reply
@@ -360,7 +369,8 @@ esp_err_t sscma_utils_fetch_keypoints_from_reply(const sscma_client_reply_t *rep
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_copy_keypoints_from_reply(const sscma_client_reply_t *reply, sscma_client_keypoint_t *keypoints, int max_keypoints, int *num_keypoints);
+esp_err_t sscma_utils_copy_keypoints_from_reply(const sscma_client_reply_t *reply, sscma_client_keypoint_t *keypoints,
+                                                int max_keypoints, int *num_keypoints);
 
 /**
  * Fetch image from sscma client reply
@@ -381,7 +391,8 @@ esp_err_t sscma_utils_fetch_image_from_reply(const sscma_client_reply_t *reply, 
  * @return
  *    - ESP_OK
  */
-esp_err_t sscma_utils_copy_image_from_reply(const sscma_client_reply_t *reply, char *image, int max_image_size, int *image_size);
+esp_err_t sscma_utils_copy_image_from_reply(const sscma_client_reply_t *reply, char *image, int max_image_size,
+                                            int *image_size);
 
 /**
  * Start ota
@@ -391,7 +402,8 @@ esp_err_t sscma_utils_copy_image_from_reply(const sscma_client_reply_t *reply, c
  * @return
  *          - ESP_OK on success
  */
-esp_err_t sscma_client_ota_start(sscma_client_handle_t client, const sscma_client_flasher_handle_t flasher, size_t offset);
+esp_err_t sscma_client_ota_start(sscma_client_handle_t client, const sscma_client_flasher_handle_t flasher,
+                                 size_t offset);
 
 /**
  * Write data to ota

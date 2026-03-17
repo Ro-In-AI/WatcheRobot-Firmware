@@ -20,12 +20,12 @@
 #ifdef CONFIG_WATCHER_ANIM_MAX_FRAMES_PER_TYPE
 #define MAX_EMOJI_IMAGES CONFIG_WATCHER_ANIM_MAX_FRAMES_PER_TYPE
 #else
-#define MAX_EMOJI_IMAGES    18
+#define MAX_EMOJI_IMAGES 18
 #endif
 
 /* Emoji animation types */
 typedef enum {
-    EMOJI_ANIM_BOOT = 0,       /* Boot animation (first play) */
+    EMOJI_ANIM_BOOT = 0, /* Boot animation (first play) */
     EMOJI_ANIM_GREETING,
     EMOJI_ANIM_DETECTING,
     EMOJI_ANIM_DETECTED,
@@ -83,7 +83,7 @@ int emoji_load_type(emoji_anim_type_t type);
  * @param frame Frame index (0 to count-1)
  * @return Pointer to image descriptor, or NULL if invalid
  */
-lv_img_dsc_t* emoji_get_image(emoji_anim_type_t type, int frame);
+lv_img_dsc_t *emoji_get_image(emoji_anim_type_t type, int frame);
 
 /**
  * @brief Get frame count for emoji type
@@ -123,7 +123,7 @@ int emoji_load_all_images_with_cb(emoji_progress_cb_t cb);
  * @param type Emoji type
  * @return Name string, or "unknown"
  */
-const char* emoji_type_name(emoji_anim_type_t type);
+const char *emoji_type_name(emoji_anim_type_t type);
 
 /* ------------------------------------------------------------------ */
 /* RGB565 Cache API (for 30fps playback)                              */
@@ -133,21 +133,21 @@ const char* emoji_type_name(emoji_anim_type_t type);
  * @brief Cached RGB565 frame data
  */
 typedef struct {
-    uint8_t *img_data;          /**< Decoded image data in LVGL native format (PSRAM) */
-    size_t data_size;           /**< Size in bytes for the decoded image buffer */
-    int width;                  /**< Image width */
-    int height;                 /**< Image height */
-    lv_img_dsc_t img_dsc;       /**< Persistent LVGL descriptor for this frame */
+    uint8_t *img_data;    /**< Decoded image data in LVGL native format (PSRAM) */
+    size_t data_size;     /**< Size in bytes for the decoded image buffer */
+    int width;            /**< Image width */
+    int height;           /**< Image height */
+    lv_img_dsc_t img_dsc; /**< Persistent LVGL descriptor for this frame */
 } anim_cached_frame_t;
 
 /**
  * @brief Cached animation type (all frames for one animation)
  */
 typedef struct {
-    anim_cached_frame_t *frames;    /**< Array of cached frames */
-    int frame_count;                /**< Number of cached frames */
-    bool is_loaded;                 /**< True if frames are valid */
-    emoji_anim_type_t type;         /**< Animation type */
+    anim_cached_frame_t *frames; /**< Array of cached frames */
+    int frame_count;             /**< Number of cached frames */
+    bool is_loaded;              /**< True if frames are valid */
+    emoji_anim_type_t type;      /**< Animation type */
 } anim_type_cache_t;
 
 /**
@@ -186,7 +186,7 @@ void anim_cache_unload_type(emoji_anim_type_t type);
  * @param frame Frame index
  * @return Pointer to cached frame, or NULL if not cached/invalid
  */
-anim_cached_frame_t* anim_cache_get_frame(emoji_anim_type_t type, int frame);
+anim_cached_frame_t *anim_cache_get_frame(emoji_anim_type_t type, int frame);
 
 /**
  * @brief Check if animation type is cached

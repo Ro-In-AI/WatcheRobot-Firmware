@@ -1,13 +1,13 @@
 #ifndef BUTTON_VOICE_H
 #define BUTTON_VOICE_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Voice recorder states */
 typedef enum {
-    VOICE_STATE_IDLE = 0,       /* Not recording */
-    VOICE_STATE_RECORDING,      /* Currently recording */
+    VOICE_STATE_IDLE = 0,  /* Not recording */
+    VOICE_STATE_RECORDING, /* Currently recording */
 } voice_state_t;
 
 /* Voice recorder events */
@@ -21,10 +21,10 @@ typedef enum {
 
 /* Voice recorder statistics */
 typedef struct {
-    int record_count;       /* Number of recordings completed */
-    int encode_count;       /* Number of audio frames encoded */
-    int error_count;        /* Number of errors */
-    int current_state;      /* Current state (voice_state_t) */
+    int record_count;  /* Number of recordings completed */
+    int encode_count;  /* Number of audio frames encoded */
+    int error_count;   /* Number of errors */
+    int current_state; /* Current state (voice_state_t) */
 } voice_stats_t;
 
 /**
@@ -114,8 +114,7 @@ int hal_audio_stop(void);
  * @param out_max Maximum output size
  * @return Encoded data length, or -1 on error
  */
-int hal_opus_encode(const uint8_t *pcm_in, int pcm_len,
-                    uint8_t *opus_out, int out_max);
+int hal_opus_encode(const uint8_t *pcm_in, int pcm_len, uint8_t *opus_out, int out_max);
 
 /* ------------------------------------------------------------------ */
 /* WebSocket Interface (to be implemented by network layer)           */

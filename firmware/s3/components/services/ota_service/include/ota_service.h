@@ -13,6 +13,6 @@
 esp_err_t ota_service_init(void);
 esp_err_t ota_service_start(const char *url, const char *expected_version);
 void ota_service_mark_valid(void);
-const char* ota_service_get_fw_version(void);
+const char *ota_service_get_fw_version(void);
 
 #endif /* OTA_SERVICE_H */

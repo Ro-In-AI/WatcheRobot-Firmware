@@ -1,38 +1,38 @@
+#include "sdkconfig.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/cdefs.h>
-#include "sdkconfig.h"
 #if CONFIG_SSCMA_ENABLE_DEBUG_LOG
 // The local log level must be defined before including esp_log.h
 // Set the maximum log level for this source file
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 #endif
+#include "driver/gpio.h"
+#include "driver/i2c.h"
+#include "esp_check.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "sscma_client_io_interface.h"
 #include "sscma_client_io.h"
-#include "driver/i2c.h"
-#include "driver/gpio.h"
-#include "esp_log.h"
-#include "esp_check.h"
+#include "sscma_client_io_interface.h"
 
 static const char *TAG = "sscma_client.io.i2c";
 
 #define I2C_ADDRESS (0x62)
 
-#define HEADER_LEN   (uint8_t)4
-#define MAX_PL_LEN   (uint8_t)250
+#define HEADER_LEN (uint8_t)4
+#define MAX_PL_LEN (uint8_t)250
 #define CHECKSUM_LEN (uint8_t)2
 
 #define PACKET_SIZE (uint16_t)(HEADER_LEN + MAX_PL_LEN + CHECKSUM_LEN)
 
-#define FEATURE_TRANSPORT               0x10
-#define FEATURE_TRANSPORT_CMD_READ      0x01
-#define FEATURE_TRANSPORT_CMD_WRITE     0x02
+#define FEATURE_TRANSPORT 0x10
+#define FEATURE_TRANSPORT_CMD_READ 0x01
+#define FEATURE_TRANSPORT_CMD_WRITE 0x02
 #define FEATURE_TRANSPORT_CMD_AVAILABLE 0x03
-#define FEATURE_TRANSPORT_CMD_START     0x04
-#define FEATURE_TRANSPORT_CMD_STOP      0x05
-#define FEATURE_TRANSPORT_CMD_RESET     0x06
+#define FEATURE_TRANSPORT_CMD_START 0x04
+#define FEATURE_TRANSPORT_CMD_STOP 0x05
+#define FEATURE_TRANSPORT_CMD_RESET 0x06
 
 static esp_err_t client_io_i2c_del(sscma_client_io_t *io);
 static esp_err_t client_io_i2c_write(sscma_client_io_t *io, const void *data, size_t len);
@@ -40,8 +40,7 @@ static esp_err_t client_io_i2c_read(sscma_client_io_t *io, void *data, size_t le
 static esp_err_t client_io_i2c_available(sscma_client_io_t *io, size_t *len);
 static esp_err_t client_io_i2c_flush(sscma_client_io_t *io);
 
-typedef struct
-{
+typedef struct {
     sscma_client_io_t base;
     uint32_t i2c_bus_id;         // I2C bus id, indicating which I2C port
     uint32_t dev_addr;           // Device address
@@ -51,8 +50,8 @@ typedef struct
     uint8_t buffer[PACKET_SIZE]; // I2C packet buffer
 } sscma_client_io_i2c_t;
 
-esp_err_t sscma_client_new_io_i2c_bus(sscma_client_i2c_bus_handle_t bus, const sscma_client_io_i2c_config_t *io_config, sscma_client_io_handle_t *ret_io)
-{
+esp_err_t sscma_client_new_io_i2c_bus(sscma_client_i2c_bus_handle_t bus, const sscma_client_io_i2c_config_t *io_config,
+                                      sscma_client_io_handle_t *ret_io) {
 #if CONFIG_SSCMA_ENABLE_DEBUG_LOG
     esp_log_level_set(TAG, ESP_LOG_DEBUG);
 #endif
@@ -81,10 +80,8 @@ esp_err_t sscma_client_new_io_i2c_bus(sscma_client_i2c_bus_handle_t bus, const s
     return ESP_OK;
 
 err:
-    if (i2c_client_io)
-    {
-        if (i2c_client_io->lock)
-        {
+    if (i2c_client_io) {
+        if (i2c_client_io->lock) {
             vSemaphoreDelete(i2c_client_io->lock);
         }
         free(i2c_client_io);
@@ -92,8 +89,7 @@ err:
     return ret;
 }
 
-static esp_err_t client_io_i2c_del(sscma_client_io_t *io)
-{
+static esp_err_t client_io_i2c_del(sscma_client_io_t *io) {
     esp_err_t ret = ESP_OK;
     sscma_client_io_i2c_t *i2c_client_io = __containerof(io, sscma_client_io_i2c_t, base);
 
@@ -103,8 +99,7 @@ static esp_err_t client_io_i2c_del(sscma_client_io_t *io)
     return ret;
 }
 
-static esp_err_t client_io_i2c_write(sscma_client_io_t *io, const void *data, size_t len)
-{
+static esp_err_t client_io_i2c_write(sscma_client_io_t *io, const void *data, size_t len) {
     esp_err_t ret = ESP_OK;
 
     sscma_client_io_i2c_t *i2c_client_io = __containerof(io, sscma_client_io_i2c_t, base);
@@ -113,10 +108,8 @@ static esp_err_t client_io_i2c_write(sscma_client_io_t *io, const void *data, si
 
     xSemaphoreTake(i2c_client_io->lock, portMAX_DELAY);
 
-    if (data)
-    {
-        for (uint16_t i = 0; i < packets; i++)
-        {
+    if (data) {
+        for (uint16_t i = 0; i < packets; i++) {
             i2c_client_io->buffer[0] = FEATURE_TRANSPORT;
             i2c_client_io->buffer[1] = FEATURE_TRANSPORT_CMD_WRITE;
             i2c_client_io->buffer[2] = MAX_PL_LEN >> 8;
@@ -125,16 +118,15 @@ static esp_err_t client_io_i2c_write(sscma_client_io_t *io, const void *data, si
             // TODO CRC
             i2c_client_io->buffer[4 + MAX_PL_LEN] = 0xFF;
             i2c_client_io->buffer[5 + MAX_PL_LEN] = 0xFF;
-            if (i2c_client_io->wait_delay > 0)
-            {
+            if (i2c_client_io->wait_delay > 0) {
                 vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
             }
-            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, MAX_PL_LEN + 6, portMAX_DELAY), err, TAG,
-                "i2c master write failed");
+            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                         i2c_client_io->buffer, MAX_PL_LEN + 6, portMAX_DELAY),
+                              err, TAG, "i2c master write failed");
         }
 
-        if (remain)
-        {
+        if (remain) {
             i2c_client_io->buffer[0] = FEATURE_TRANSPORT;
             i2c_client_io->buffer[1] = FEATURE_TRANSPORT_CMD_WRITE;
             i2c_client_io->buffer[2] = remain >> 8;
@@ -143,11 +135,12 @@ static esp_err_t client_io_i2c_write(sscma_client_io_t *io, const void *data, si
             // TODO CRC
             i2c_client_io->buffer[4 + remain] = 0xFF;
             i2c_client_io->buffer[5 + remain] = 0xFF;
-            if (i2c_client_io->wait_delay > 0)
-            {
+            if (i2c_client_io->wait_delay > 0) {
                 vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
             }
-            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, remain + 6, portMAX_DELAY), err, TAG, "i2c master write failed");
+            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                         i2c_client_io->buffer, remain + 6, portMAX_DELAY),
+                              err, TAG, "i2c master write failed");
         }
     }
 
@@ -156,8 +149,7 @@ err:
     return ret;
 }
 
-static esp_err_t client_io_i2c_read(sscma_client_io_t *io, void *data, size_t len)
-{
+static esp_err_t client_io_i2c_read(sscma_client_io_t *io, void *data, size_t len) {
     esp_err_t ret = ESP_OK;
 
     sscma_client_io_i2c_t *i2c_client_io = __containerof(io, sscma_client_io_i2c_t, base);
@@ -166,48 +158,48 @@ static esp_err_t client_io_i2c_read(sscma_client_io_t *io, void *data, size_t le
 
     xSemaphoreTake(i2c_client_io->lock, portMAX_DELAY);
 
-    if (data)
-    {
-        for (uint16_t i = 0; i < packets; i++)
-        {
+    if (data) {
+        for (uint16_t i = 0; i < packets; i++) {
             i2c_client_io->buffer[0] = FEATURE_TRANSPORT;
             i2c_client_io->buffer[1] = FEATURE_TRANSPORT_CMD_READ;
             i2c_client_io->buffer[2] = MAX_PL_LEN >> 8;
             i2c_client_io->buffer[3] = MAX_PL_LEN & 0xFF;
             i2c_client_io->buffer[4] = 0xFF;
             i2c_client_io->buffer[5] = 0xFF;
-            if (i2c_client_io->wait_delay > 0)
-            {
+            if (i2c_client_io->wait_delay > 0) {
                 vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
             }
-            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, 6, portMAX_DELAY), err, TAG, "i2c master write failed");
-            if (i2c_client_io->wait_delay > 0)
-            {
+            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                         i2c_client_io->buffer, 6, portMAX_DELAY),
+                              err, TAG, "i2c master write failed");
+            if (i2c_client_io->wait_delay > 0) {
                 vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
             }
-            ESP_GOTO_ON_ERROR(i2c_master_read_from_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, MAX_PL_LEN + 6, portMAX_DELAY), err, TAG,
-                "i2c master read failed");
+            ESP_GOTO_ON_ERROR(i2c_master_read_from_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                          i2c_client_io->buffer, MAX_PL_LEN + 6, portMAX_DELAY),
+                              err, TAG, "i2c master read failed");
             memcpy(data + i * MAX_PL_LEN, i2c_client_io->buffer, MAX_PL_LEN);
         }
 
-        if (remain)
-        {
+        if (remain) {
             i2c_client_io->buffer[0] = FEATURE_TRANSPORT;
             i2c_client_io->buffer[1] = FEATURE_TRANSPORT_CMD_READ;
             i2c_client_io->buffer[2] = remain >> 8;
             i2c_client_io->buffer[3] = remain & 0xFF;
             i2c_client_io->buffer[4] = 0xFF;
             i2c_client_io->buffer[5] = 0xFF;
-            if (i2c_client_io->wait_delay > 0)
-            {
+            if (i2c_client_io->wait_delay > 0) {
                 vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
             }
-            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, 6, portMAX_DELAY), err, TAG, "i2c master write failed");
-            if (i2c_client_io->wait_delay > 0)
-            {
+            ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                         i2c_client_io->buffer, 6, portMAX_DELAY),
+                              err, TAG, "i2c master write failed");
+            if (i2c_client_io->wait_delay > 0) {
                 vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
             }
-            ESP_GOTO_ON_ERROR(i2c_master_read_from_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, remain + 6, portMAX_DELAY), err, TAG, "i2c master read failed");
+            ESP_GOTO_ON_ERROR(i2c_master_read_from_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                          i2c_client_io->buffer, remain + 6, portMAX_DELAY),
+                              err, TAG, "i2c master read failed");
             memcpy(data + packets * MAX_PL_LEN, i2c_client_io->buffer, remain);
         }
     }
@@ -217,8 +209,7 @@ err:
     return ret;
 }
 
-static esp_err_t client_io_i2c_available(sscma_client_io_t *io, size_t *len)
-{
+static esp_err_t client_io_i2c_available(sscma_client_io_t *io, size_t *len) {
     esp_err_t ret = ESP_OK;
     sscma_client_io_i2c_t *i2c_client_io = __containerof(io, sscma_client_io_i2c_t, base);
 
@@ -231,17 +222,18 @@ static esp_err_t client_io_i2c_available(sscma_client_io_t *io, size_t *len)
     i2c_client_io->buffer[4] = 0xFF;
     i2c_client_io->buffer[5] = 0xFF;
 
-    if (i2c_client_io->wait_delay > 0)
-    {
+    if (i2c_client_io->wait_delay > 0) {
         vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
     }
-    ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, HEADER_LEN + CHECKSUM_LEN, portMAX_DELAY), err, TAG,
-        "i2c master write failed");
-    if (i2c_client_io->wait_delay > 0)
-    {
+    ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                 i2c_client_io->buffer, HEADER_LEN + CHECKSUM_LEN, portMAX_DELAY),
+                      err, TAG, "i2c master write failed");
+    if (i2c_client_io->wait_delay > 0) {
         vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
     }
-    ESP_GOTO_ON_ERROR(i2c_master_read_from_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, 2, portMAX_DELAY), err, TAG, "i2c master read failed");
+    ESP_GOTO_ON_ERROR(i2c_master_read_from_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                  i2c_client_io->buffer, 2, portMAX_DELAY),
+                      err, TAG, "i2c master read failed");
 
     *len = (i2c_client_io->buffer[0] << 8) | i2c_client_io->buffer[1];
 
@@ -250,8 +242,7 @@ err:
     return ret;
 }
 
-static esp_err_t client_io_i2c_flush(sscma_client_io_t *io)
-{
+static esp_err_t client_io_i2c_flush(sscma_client_io_t *io) {
     esp_err_t ret = ESP_OK;
     sscma_client_io_i2c_t *i2c_client_io = __containerof(io, sscma_client_io_i2c_t, base);
 
@@ -264,14 +255,13 @@ static esp_err_t client_io_i2c_flush(sscma_client_io_t *io)
     i2c_client_io->buffer[4] = 0xFF;
     i2c_client_io->buffer[5] = 0xFF;
 
-    if (i2c_client_io->wait_delay > 0)
-    {
+    if (i2c_client_io->wait_delay > 0) {
         vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
     }
-    ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr, i2c_client_io->buffer, HEADER_LEN + CHECKSUM_LEN, portMAX_DELAY), err, TAG,
-        "i2c master write failed");
-    if (i2c_client_io->wait_delay > 0)
-    {
+    ESP_GOTO_ON_ERROR(i2c_master_write_to_device(i2c_client_io->i2c_bus_id, i2c_client_io->dev_addr,
+                                                 i2c_client_io->buffer, HEADER_LEN + CHECKSUM_LEN, portMAX_DELAY),
+                      err, TAG, "i2c master write failed");
+    if (i2c_client_io->wait_delay > 0) {
         vTaskDelay(pdMS_TO_TICKS(i2c_client_io->wait_delay));
     }
 

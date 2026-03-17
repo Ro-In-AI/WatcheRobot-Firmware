@@ -4,21 +4,21 @@
  */
 
 #include "discovery_client.h"
-#include "esp_log.h"
-#include "esp_wifi.h"
-#include "esp_timer.h"
-#include "lwip/sockets.h"
-#include "lwip/inet.h"
 #include "cJSON.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lwip/inet.h"
+#include "lwip/sockets.h"
 #include <string.h>
 
 #define TAG "DISCOVERY"
 
 /* Buffer sizes */
-#define RX_BUF_SIZE    512
-#define TX_BUF_SIZE    256
+#define RX_BUF_SIZE 512
+#define TX_BUF_SIZE 256
 
 /* Global state */
 static bool g_initialized = false;
@@ -28,20 +28,17 @@ static server_info_t g_server_info = {0};
 /* Helper: Get MAC address string                                      */
 /* ------------------------------------------------------------------ */
 
-static void get_mac_string(char *buf, size_t len)
-{
+static void get_mac_string(char *buf, size_t len) {
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
-    snprintf(buf, len, "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    snprintf(buf, len, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 /* ------------------------------------------------------------------ */
 /* Helper: Get device ID from MAC                                      */
 /* ------------------------------------------------------------------ */
 
-static void get_device_id(char *buf, size_t len)
-{
+static void get_device_id(char *buf, size_t len) {
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
     snprintf(buf, len, "watcher-%02X%02X", mac[4], mac[5]);
@@ -51,8 +48,7 @@ static void get_device_id(char *buf, size_t len)
 /* Helper: Parse ANNOUNCE response                                     */
 /* ------------------------------------------------------------------ */
 
-static int parse_announce(const char *json, server_info_t *info)
-{
+static int parse_announce(const char *json, server_info_t *info) {
     cJSON *root = cJSON_Parse(json);
     if (!root) {
         ESP_LOGW(TAG, "Failed to parse JSON");
@@ -83,7 +79,7 @@ static int parse_announce(const char *json, server_info_t *info)
     if (port && cJSON_IsNumber(port)) {
         info->port = (uint16_t)port->valueint;
     } else {
-        info->port = 8765;  /* Default port */
+        info->port = 8765; /* Default port */
     }
 
     /* Extract version (optional) */
@@ -102,8 +98,7 @@ static int parse_announce(const char *json, server_info_t *info)
 /* Public: Initialize discovery client                                 */
 /* ------------------------------------------------------------------ */
 
-int discovery_init(void)
-{
+int discovery_init(void) {
     memset(&g_server_info, 0, sizeof(g_server_info));
     g_initialized = true;
     ESP_LOGI(TAG, "Discovery client initialized");
@@ -114,8 +109,7 @@ int discovery_init(void)
 /* Public: Start service discovery                                     */
 /* ------------------------------------------------------------------ */
 
-int discovery_start(server_info_t *info)
-{
+int discovery_start(server_info_t *info) {
     if (!g_initialized) {
         ESP_LOGE(TAG, "Discovery not initialized");
         return -1;
@@ -155,9 +149,7 @@ int discovery_start(server_info_t *info)
     get_device_id(device_id, sizeof(device_id));
 
     /* Build discovery message */
-    snprintf(tx_buf, sizeof(tx_buf),
-             "{\"cmd\":\"DISCOVER\",\"device_id\":\"%s\",\"mac\":\"%s\"}",
-             device_id, mac_str);
+    snprintf(tx_buf, sizeof(tx_buf), "{\"cmd\":\"DISCOVER\",\"device_id\":\"%s\",\"mac\":\"%s\"}", device_id, mac_str);
 
     /* Setup broadcast address */
     struct sockaddr_in dest_addr;
@@ -179,10 +171,9 @@ int discovery_start(server_info_t *info)
         /* Continue anyway - we can still receive via unicast */
     }
 
-    ESP_LOGI(TAG, "Starting discovery (port %d, timeout %d ms)...",
-             DISCOVERY_PORT, DISCOVERY_TIMEOUT_MS);
+    ESP_LOGI(TAG, "Starting discovery (port %d, timeout %d ms)...", DISCOVERY_PORT, DISCOVERY_TIMEOUT_MS);
 
-    int64_t start_time = esp_timer_get_time() / 1000;  /* ms */
+    int64_t start_time = esp_timer_get_time() / 1000; /* ms */
     int retry_count = 0;
 
     while (1) {
@@ -195,8 +186,7 @@ int discovery_start(server_info_t *info)
 
         /* Send discovery broadcast (retry 3 times per interval) */
         if (retry_count < DISCOVERY_RETRY_COUNT) {
-            int sent = sendto(sock, tx_buf, strlen(tx_buf), 0,
-                              (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+            int sent = sendto(sock, tx_buf, strlen(tx_buf), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
             if (sent > 0) {
                 ESP_LOGD(TAG, "Sent discovery: %s", tx_buf);
             } else {
@@ -208,18 +198,16 @@ int discovery_start(server_info_t *info)
         /* Wait for response */
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        int recv_len = recvfrom(sock, rx_buf, sizeof(rx_buf) - 1, 0,
-                                (struct sockaddr *)&from_addr, &from_len);
+        int recv_len = recvfrom(sock, rx_buf, sizeof(rx_buf) - 1, 0, (struct sockaddr *)&from_addr, &from_len);
 
         if (recv_len > 0) {
             rx_buf[recv_len] = '\0';
-            ESP_LOGI(TAG, "Received from %s: %s",
-                     inet_ntoa(from_addr.sin_addr), rx_buf);
+            ESP_LOGI(TAG, "Received from %s: %s", inet_ntoa(from_addr.sin_addr), rx_buf);
 
             /* Parse response */
             if (parse_announce(rx_buf, &g_server_info) == 0) {
-                ESP_LOGI(TAG, "Discovered server: %s:%u (v%s)",
-                         g_server_info.ip, g_server_info.port, g_server_info.version);
+                ESP_LOGI(TAG, "Discovered server: %s:%u (v%s)", g_server_info.ip, g_server_info.port,
+                         g_server_info.version);
 
                 if (info) {
                     memcpy(info, &g_server_info, sizeof(server_info_t));
@@ -247,8 +235,7 @@ int discovery_start(server_info_t *info)
 /* Public: Get WebSocket URL                                           */
 /* ------------------------------------------------------------------ */
 
-char* discovery_get_ws_url(const server_info_t *info)
-{
+char *discovery_get_ws_url(const server_info_t *info) {
     if (!info || !info->discovered) {
         return NULL;
     }
@@ -264,8 +251,7 @@ char* discovery_get_ws_url(const server_info_t *info)
 /* Public: Check if discovered                                         */
 /* ------------------------------------------------------------------ */
 
-bool discovery_is_discovered(void)
-{
+bool discovery_is_discovered(void) {
     return g_server_info.discovered;
 }
 
@@ -273,8 +259,7 @@ bool discovery_is_discovered(void)
 /* Public: Clear discovery state                                       */
 /* ------------------------------------------------------------------ */
 
-void discovery_clear(void)
-{
+void discovery_clear(void) {
     memset(&g_server_info, 0, sizeof(g_server_info));
     ESP_LOGI(TAG, "Discovery state cleared");
 }

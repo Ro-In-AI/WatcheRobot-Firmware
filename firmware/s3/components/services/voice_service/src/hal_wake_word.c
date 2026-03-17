@@ -9,11 +9,11 @@
  */
 
 #include "hal_wake_word.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/event_groups.h"
-#include "esp_heap_caps.h"
+#include "freertos/task.h"
 #include <string.h>
 
 #define TAG "HAL_WAKE_WORD"
@@ -32,12 +32,12 @@
 /* Constants                                                         */
 /* ------------------------------------------------------------------ */
 
-#define DETECTION_RUNNING_BIT  (1 << 0)
-#define MAX_WAKE_WORDS         16
-#define MAX_WAKE_WORD_LEN      32
-#define DETECTION_TASK_STACK   4096
-#define DETECTION_TASK_PRIO    6
-#define INPUT_BUFFER_CAPACITY  2048  /* samples */
+#define DETECTION_RUNNING_BIT (1 << 0)
+#define MAX_WAKE_WORDS 16
+#define MAX_WAKE_WORD_LEN 32
+#define DETECTION_TASK_STACK 4096
+#define DETECTION_TASK_PRIO 6
+#define INPUT_BUFFER_CAPACITY 2048 /* samples */
 
 /* ------------------------------------------------------------------ */
 /* Context Structure                                                */
@@ -75,21 +75,17 @@ struct wake_word_ctx_s {
 /* Private: Detection Task                                             */
 /* ------------------------------------------------------------------ */
 
-static void detection_task(void *arg)
-{
+static void detection_task(void *arg) {
     wake_word_ctx_t *ctx = (wake_word_ctx_t *)arg;
 
     ESP_LOGI(TAG, "Detection task started");
 
     while (1) {
         /* Wait for detection to be enabled */
-        EventBits_t bits = xEventGroupWaitBits(
-            ctx->event_group,
-            DETECTION_RUNNING_BIT,
-            pdFALSE,      /* don't clear on exit */
-            pdTRUE,       /* wait for all bits */
-            portMAX_DELAY
-        );
+        EventBits_t bits =
+            xEventGroupWaitBits(ctx->event_group, DETECTION_RUNNING_BIT, pdFALSE, /* don't clear on exit */
+                                pdTRUE,                                           /* wait for all bits */
+                                portMAX_DELAY);
 
         if (!(bits & DETECTION_RUNNING_BIT)) {
             continue;
@@ -140,8 +136,7 @@ static void detection_task(void *arg)
 /* Private: Parse wake words from model                              */
 /* ------------------------------------------------------------------ */
 
-static int parse_wake_words(wake_word_ctx_t *ctx, const char *wake_words_str)
-{
+static int parse_wake_words(wake_word_ctx_t *ctx, const char *wake_words_str) {
     if (wake_words_str == NULL || strlen(wake_words_str) == 0) {
         return 0;
     }
@@ -184,15 +179,15 @@ static int parse_wake_words(wake_word_ctx_t *ctx, const char *wake_words_str)
 /* Public: Initialize                                                 */
 /* ------------------------------------------------------------------ */
 
-wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
-{
+wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config) {
     if (config == NULL) {
         ESP_LOGE(TAG, "Config is NULL");
         return NULL;
     }
 
     /* Allocate context */
-    wake_word_ctx_t *ctx = (wake_word_ctx_t *)heap_caps_calloc(1, sizeof(wake_word_ctx_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    wake_word_ctx_t *ctx =
+        (wake_word_ctx_t *)heap_caps_calloc(1, sizeof(wake_word_ctx_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (ctx == NULL) {
         ESP_LOGE(TAG, "Failed to allocate context");
         return NULL;
@@ -234,8 +229,7 @@ wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
     const char *wakenet_model = NULL;
     ESP_LOGI(TAG, "Looking for wakenet model with prefix: %s", ESP_WN_PREFIX);
     for (int i = 0; i < ctx->models->num; i++) {
-        ESP_LOGD(TAG, "Checking model %d: %s (contains 'wn': %s)",
-                 i, ctx->models->model_name[i],
+        ESP_LOGD(TAG, "Checking model %d: %s (contains 'wn': %s)", i, ctx->models->model_name[i],
                  strstr(ctx->models->model_name[i], ESP_WN_PREFIX) ? "yes" : "no");
         if (strstr(ctx->models->model_name[i], ESP_WN_PREFIX) != NULL) {
             wakenet_model = ctx->models->model_name[i];
@@ -259,7 +253,7 @@ wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
 
     /* Configure AFE */
     /* Single microphone, no reference channel */
-    const char *input_format = "M";  /* M = microphone, R = reference */
+    const char *input_format = "M"; /* M = microphone, R = reference */
 
     afe_config_t *afe_config = afe_config_init(input_format, ctx->models, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     if (afe_config == NULL) {
@@ -271,10 +265,10 @@ wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
     }
 
     /* Configure AFE for ESP32-S3 with PSRAM */
-    afe_config->aec_init = false;             /* No acoustic echo cancellation */
-    afe_config->afe_perferred_core = 1;       /* Run on core 1 */
-    afe_config->afe_perferred_priority = 3;    /* Medium priority */
-    afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;  /* Use PSRAM */
+    afe_config->aec_init = false;                                /* No acoustic echo cancellation */
+    afe_config->afe_perferred_core = 1;                          /* Run on core 1 */
+    afe_config->afe_perferred_priority = 3;                      /* Medium priority */
+    afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM; /* Use PSRAM */
 
     /* Get AFE interface */
     ctx->afe_iface = esp_afe_handle_from_config(afe_config);
@@ -300,7 +294,7 @@ wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
 
     /* Get feed chunk size */
     ctx->feed_chunk_size = ctx->afe_iface->get_feed_chunksize(ctx->afe_data);
-    ctx->input_channels = 1;  /* Single channel */
+    ctx->input_channels = 1; /* Single channel */
 
     ESP_LOGI(TAG, "AFE initialized, feed chunk size: %d samples", ctx->feed_chunk_size);
 
@@ -320,14 +314,8 @@ wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
     free(afe_config);
 
     /* Create detection task */
-    BaseType_t ret = xTaskCreate(
-        detection_task,
-        "wake_detect",
-        DETECTION_TASK_STACK,
-        ctx,
-        DETECTION_TASK_PRIO,
-        &ctx->detection_task
-    );
+    BaseType_t ret = xTaskCreate(detection_task, "wake_detect", DETECTION_TASK_STACK, ctx, DETECTION_TASK_PRIO,
+                                 &ctx->detection_task);
 
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create detection task");
@@ -347,15 +335,14 @@ wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
 /* Public: Feed Audio                                                 */
 /* ------------------------------------------------------------------ */
 
-void hal_wake_word_feed(wake_word_ctx_t *ctx, const int16_t *samples, size_t num_samples)
-{
+void hal_wake_word_feed(wake_word_ctx_t *ctx, const int16_t *samples, size_t num_samples) {
     if (ctx == NULL || samples == NULL || num_samples == 0) {
         return;
     }
 
     /* Check if detection is running */
     if (!(xEventGroupGetBits(ctx->event_group) & DETECTION_RUNNING_BIT)) {
-        return;  /* Detection is stopped */
+        return; /* Detection is stopped */
     }
 
     /* Accumulate samples in input buffer */
@@ -399,8 +386,7 @@ void hal_wake_word_feed(wake_word_ctx_t *ctx, const int16_t *samples, size_t num
 /* Public: Start/Stop                                                 */
 /* ------------------------------------------------------------------ */
 
-void hal_wake_word_start(wake_word_ctx_t *ctx)
-{
+void hal_wake_word_start(wake_word_ctx_t *ctx) {
     if (ctx == NULL) {
         return;
     }
@@ -413,8 +399,7 @@ void hal_wake_word_start(wake_word_ctx_t *ctx)
     ESP_LOGI(TAG, "Wake word detection started");
 }
 
-void hal_wake_word_stop(wake_word_ctx_t *ctx)
-{
+void hal_wake_word_stop(wake_word_ctx_t *ctx) {
     if (ctx == NULL) {
         return;
     }
@@ -438,8 +423,7 @@ void hal_wake_word_stop(wake_word_ctx_t *ctx)
 /* Public: Get Feed Size                                              */
 /* ------------------------------------------------------------------ */
 
-size_t hal_wake_word_get_feed_size(wake_word_ctx_t *ctx)
-{
+size_t hal_wake_word_get_feed_size(wake_word_ctx_t *ctx) {
     if (ctx == NULL || ctx->afe_data == NULL) {
         return 0;
     }
@@ -450,8 +434,7 @@ size_t hal_wake_word_get_feed_size(wake_word_ctx_t *ctx)
 /* Public: Deinitialize                                               */
 /* ------------------------------------------------------------------ */
 
-void hal_wake_word_deinit(wake_word_ctx_t *ctx)
-{
+void hal_wake_word_deinit(wake_word_ctx_t *ctx) {
     if (ctx == NULL) {
         return;
     }
@@ -499,8 +482,7 @@ void hal_wake_word_deinit(wake_word_ctx_t *ctx)
 /* Public: Is Supported                                               */
 /* ------------------------------------------------------------------ */
 
-bool hal_wake_word_is_supported(void)
-{
+bool hal_wake_word_is_supported(void) {
     /* ESP-SR requires ESP32-S3 with PSRAM */
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 #ifdef CONFIG_SPIRAM
@@ -514,8 +496,7 @@ bool hal_wake_word_is_supported(void)
 /* Public: Get Last Detected                                          */
 /* ------------------------------------------------------------------ */
 
-const char *hal_wake_word_get_last_detected(wake_word_ctx_t *ctx)
-{
+const char *hal_wake_word_get_last_detected(wake_word_ctx_t *ctx) {
     if (ctx == NULL) {
         return NULL;
     }
@@ -526,8 +507,7 @@ const char *hal_wake_word_get_last_detected(wake_word_ctx_t *ctx)
 /* Public: Get Available Wake Words                                   */
 /* ------------------------------------------------------------------ */
 
-int hal_wake_word_get_available_list(wake_word_ctx_t *ctx, char *out_buf, size_t buf_size)
-{
+int hal_wake_word_get_available_list(wake_word_ctx_t *ctx, char *out_buf, size_t buf_size) {
     if (ctx == NULL || out_buf == NULL || buf_size == 0) {
         return 0;
     }
@@ -555,54 +535,45 @@ int hal_wake_word_get_available_list(wake_word_ctx_t *ctx, char *out_buf, size_t
 /* Stub Implementation (Wake Word Disabled)                           */
 /* ------------------------------------------------------------------ */
 
-wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config)
-{
+wake_word_ctx_t *hal_wake_word_init(const wake_word_config_t *config) {
     (void)config;
     ESP_LOGW(TAG, "Wake word detection is disabled (CONFIG_ENABLE_WAKE_WORD=n)");
     return NULL;
 }
 
-void hal_wake_word_feed(wake_word_ctx_t *ctx, const int16_t *samples, size_t num_samples)
-{
+void hal_wake_word_feed(wake_word_ctx_t *ctx, const int16_t *samples, size_t num_samples) {
     (void)ctx;
     (void)samples;
     (void)num_samples;
 }
 
-void hal_wake_word_start(wake_word_ctx_t *ctx)
-{
+void hal_wake_word_start(wake_word_ctx_t *ctx) {
     (void)ctx;
 }
 
-void hal_wake_word_stop(wake_word_ctx_t *ctx)
-{
+void hal_wake_word_stop(wake_word_ctx_t *ctx) {
     (void)ctx;
 }
 
-size_t hal_wake_word_get_feed_size(wake_word_ctx_t *ctx)
-{
+size_t hal_wake_word_get_feed_size(wake_word_ctx_t *ctx) {
     (void)ctx;
     return 0;
 }
 
-void hal_wake_word_deinit(wake_word_ctx_t *ctx)
-{
+void hal_wake_word_deinit(wake_word_ctx_t *ctx) {
     (void)ctx;
 }
 
-bool hal_wake_word_is_supported(void)
-{
+bool hal_wake_word_is_supported(void) {
     return false;
 }
 
-const char *hal_wake_word_get_last_detected(wake_word_ctx_t *ctx)
-{
+const char *hal_wake_word_get_last_detected(wake_word_ctx_t *ctx) {
     (void)ctx;
     return NULL;
 }
 
-int hal_wake_word_get_available_list(wake_word_ctx_t *ctx, char *out_buf, size_t buf_size)
-{
+int hal_wake_word_get_available_list(wake_word_ctx_t *ctx, char *out_buf, size_t buf_size) {
     (void)ctx;
     (void)out_buf;
     (void)buf_size;
