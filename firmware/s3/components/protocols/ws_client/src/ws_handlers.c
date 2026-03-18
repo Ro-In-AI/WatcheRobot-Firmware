@@ -434,7 +434,6 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
 
         if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
             eos_stream_id = s_camera_ctx.current_stream_id;
-            eos_seq = s_camera_ctx.next_seq;
             fps = s_camera_ctx.target_fps;
             xSemaphoreGive(s_camera_ctx.lock);
         }
@@ -442,6 +441,14 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
         ws_send_sys_ack(cmd->command_id, command_type, eos_stream_id, "accepted");
         ret = camera_service_stop_stream();
         if (ret == ESP_OK) {
+            if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                if (s_camera_ctx.current_stream_id != 0) {
+                    eos_stream_id = s_camera_ctx.current_stream_id;
+                }
+                eos_seq = s_camera_ctx.next_seq;
+                fps = s_camera_ctx.target_fps;
+                xSemaphoreGive(s_camera_ctx.lock);
+            }
             if (eos_stream_id != 0) {
                 ws_send_video_end(eos_stream_id, eos_seq);
             }
