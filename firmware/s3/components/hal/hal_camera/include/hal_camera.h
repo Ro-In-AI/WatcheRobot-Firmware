@@ -8,8 +8,9 @@
  * Current implementation supports:
  * - SSCMA client initialization and connect wait
  * - one-shot frame capture via hal_camera_capture_once()
+ * - continuous frame capture via hal_camera_start()/hal_camera_stop()
  *
- * Continuous streaming APIs remain deferred until hardware verification is complete.
+ * Streaming is currently implemented as a paced one-shot INVOKE loop over SSCMA.
  */
 
 #ifndef HAL_CAMERA_H

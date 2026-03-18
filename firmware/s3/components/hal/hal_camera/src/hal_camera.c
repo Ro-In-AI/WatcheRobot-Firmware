@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "mbedtls/base64.h"
 #include "sensecap-watcher.h"
 #include "sscma_client.h"
@@ -17,18 +18,31 @@
 #define TAG "HAL_CAMERA"
 #define HAL_CAMERA_CONNECT_TIMEOUT_MS CONFIG_WATCHER_CAMERA_CONNECT_TIMEOUT_MS
 #define HAL_CAMERA_CAPTURE_TIMEOUT_MS CONFIG_WATCHER_CAMERA_CAPTURE_TIMEOUT_MS
+#define HAL_CAMERA_MAX_FPS 30
+#define HAL_CAMERA_STREAM_TASK_STACK 6144
+#define HAL_CAMERA_STREAM_TASK_PRIORITY 5
+#define HAL_CAMERA_STREAM_STOP_TIMEOUT_MS (HAL_CAMERA_CAPTURE_TIMEOUT_MS + 1000)
+#define HAL_CAMERA_STREAM_LOG_EVERY 30
 
 typedef struct {
     sscma_client_handle_t client;
     SemaphoreHandle_t lock;
     SemaphoreHandle_t connect_sem;
     SemaphoreHandle_t capture_sem;
+    TaskHandle_t stream_task;
+    hal_camera_frame_cb_t stream_cb;
+    void *stream_ctx;
+    int stream_fps;
     bool initialized;
     bool connected;
     bool capture_in_progress;
+    bool streaming;
+    bool stream_stop_requested;
     esp_err_t capture_status;
     char *capture_image;
     int capture_image_size;
+    uint32_t stream_frames_ok;
+    uint32_t stream_frames_err;
 } hal_camera_context_t;
 
 static hal_camera_context_t s_ctx = {
@@ -36,12 +50,20 @@ static hal_camera_context_t s_ctx = {
     .lock = NULL,
     .connect_sem = NULL,
     .capture_sem = NULL,
+    .stream_task = NULL,
+    .stream_cb = NULL,
+    .stream_ctx = NULL,
+    .stream_fps = 0,
     .initialized = false,
     .connected = false,
     .capture_in_progress = false,
+    .streaming = false,
+    .stream_stop_requested = false,
     .capture_status = ESP_OK,
     .capture_image = NULL,
     .capture_image_size = 0,
+    .stream_frames_ok = 0,
+    .stream_frames_err = 0,
 };
 
 static void hal_camera_clear_capture_locked(void) {
@@ -253,6 +275,189 @@ static esp_err_t hal_camera_decode_image(const char *image, uint8_t **jpeg, size
     return ESP_OK;
 }
 
+static esp_err_t hal_camera_prepare_capture(bool from_stream) {
+    ESP_RETURN_ON_ERROR(hal_camera_init(), TAG, "hal_camera_init failed");
+
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    if (s_ctx.capture_in_progress) {
+        xSemaphoreGive(s_ctx.lock);
+        ESP_LOGW(TAG, "capture already in progress");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_ctx.streaming && !from_stream) {
+        xSemaphoreGive(s_ctx.lock);
+        ESP_LOGW(TAG, "capture rejected while streaming");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    hal_camera_clear_capture_locked();
+    s_ctx.capture_in_progress = true;
+    s_ctx.capture_status = ESP_ERR_TIMEOUT;
+    xSemaphoreGive(s_ctx.lock);
+
+    hal_camera_drain_semaphore(s_ctx.capture_sem);
+    return ESP_OK;
+}
+
+static void hal_camera_abort_capture(void) {
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+        s_ctx.capture_in_progress = false;
+        hal_camera_clear_capture_locked();
+        xSemaphoreGive(s_ctx.lock);
+    }
+}
+
+static esp_err_t hal_camera_take_image_string(bool from_stream, char **image, int *image_size) {
+    esp_err_t ret;
+
+    ESP_RETURN_ON_FALSE(image != NULL && image_size != NULL, ESP_ERR_INVALID_ARG, TAG, "invalid image output");
+    *image = NULL;
+    *image_size = 0;
+
+    ESP_RETURN_ON_ERROR(hal_camera_prepare_capture(from_stream), TAG, "prepare capture failed");
+
+    ret = sscma_client_invoke(s_ctx.client, 1, false, true);
+    if (ret != ESP_OK) {
+        hal_camera_abort_capture();
+        ESP_LOGE(TAG, "sscma invoke failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    if (xSemaphoreTake(s_ctx.capture_sem, pdMS_TO_TICKS(HAL_CAMERA_CAPTURE_TIMEOUT_MS)) != pdTRUE) {
+        hal_camera_abort_capture();
+        ESP_LOGW(TAG, "capture timed out after %d ms", HAL_CAMERA_CAPTURE_TIMEOUT_MS);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    ret = s_ctx.capture_status;
+    *image = s_ctx.capture_image;
+    *image_size = s_ctx.capture_image_size;
+    s_ctx.capture_image = NULL;
+    s_ctx.capture_image_size = 0;
+    s_ctx.capture_in_progress = false;
+    xSemaphoreGive(s_ctx.lock);
+
+    return ret;
+}
+
+static esp_err_t hal_camera_capture_jpeg_internal(bool from_stream, uint8_t **jpeg, size_t *jpeg_size,
+                                                  uint32_t *timestamp_ms) {
+    esp_err_t ret;
+    char *image = NULL;
+    int image_size = 0;
+
+    ESP_RETURN_ON_FALSE(jpeg != NULL && jpeg_size != NULL && timestamp_ms != NULL, ESP_ERR_INVALID_ARG, TAG,
+                        "invalid jpeg output");
+
+    *jpeg = NULL;
+    *jpeg_size = 0;
+    *timestamp_ms = 0;
+
+    ret = hal_camera_take_image_string(from_stream, &image, &image_size);
+    ESP_GOTO_ON_ERROR(ret, cleanup, TAG, "capture failed");
+    ESP_GOTO_ON_FALSE(image != NULL && image_size > 0, ESP_ERR_INVALID_RESPONSE, cleanup, TAG, "capture image missing");
+    ESP_GOTO_ON_ERROR(hal_camera_decode_image(image, jpeg, jpeg_size), cleanup, TAG, "image decode failed");
+
+    *timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+
+cleanup:
+    if (image != NULL) {
+        free(image);
+    }
+    return ret;
+}
+
+static void hal_camera_stream_task(void *arg) {
+    (void)arg;
+
+    while (true) {
+        uint64_t loop_start_us = (uint64_t)esp_timer_get_time();
+        hal_camera_frame_cb_t frame_cb = NULL;
+        void *frame_ctx = NULL;
+        int fps = 0;
+        uint8_t *jpeg = NULL;
+        size_t jpeg_size = 0;
+        uint32_t timestamp_ms = 0;
+        esp_err_t ret;
+        uint32_t ok_count = 0;
+        uint32_t err_count = 0;
+
+        if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
+            break;
+        }
+
+        if (s_ctx.stream_stop_requested) {
+            s_ctx.streaming = false;
+            s_ctx.stream_stop_requested = false;
+            s_ctx.stream_task = NULL;
+            s_ctx.stream_cb = NULL;
+            s_ctx.stream_ctx = NULL;
+            s_ctx.stream_fps = 0;
+            xSemaphoreGive(s_ctx.lock);
+            break;
+        }
+
+        frame_cb = s_ctx.stream_cb;
+        frame_ctx = s_ctx.stream_ctx;
+        fps = s_ctx.stream_fps;
+        xSemaphoreGive(s_ctx.lock);
+
+        ret = hal_camera_capture_jpeg_internal(true, &jpeg, &jpeg_size, &timestamp_ms);
+        if (ret == ESP_OK) {
+            if (frame_cb != NULL) {
+                frame_cb(jpeg, jpeg_size, timestamp_ms, frame_ctx);
+            }
+
+            if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                s_ctx.stream_frames_ok++;
+                ok_count = s_ctx.stream_frames_ok;
+                xSemaphoreGive(s_ctx.lock);
+            }
+
+            if (ok_count > 0 && (ok_count % HAL_CAMERA_STREAM_LOG_EVERY) == 0) {
+                ESP_LOGI(TAG, "stream frames ok=%lu err=%lu fps=%d last_jpeg=%u",
+                         (unsigned long)ok_count,
+                         (unsigned long)s_ctx.stream_frames_err,
+                         fps,
+                         (unsigned int)jpeg_size);
+            }
+        } else {
+            if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                s_ctx.stream_frames_err++;
+                err_count = s_ctx.stream_frames_err;
+                xSemaphoreGive(s_ctx.lock);
+            }
+            ESP_LOGW(TAG, "stream frame failed #%lu: %s", (unsigned long)err_count, esp_err_to_name(ret));
+        }
+
+        if (jpeg != NULL) {
+            free(jpeg);
+        }
+
+        if (fps > 0) {
+            uint64_t period_us = 1000000ULL / (uint64_t)fps;
+            uint64_t elapsed_us = (uint64_t)esp_timer_get_time() - loop_start_us;
+            if (elapsed_us < period_us) {
+                uint32_t delay_ms = (uint32_t)((period_us - elapsed_us + 999ULL) / 1000ULL);
+                if (delay_ms > 0) {
+                    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+                }
+            }
+        }
+    }
+
+    ESP_LOGI(TAG, "camera stream task exited");
+    vTaskDelete(NULL);
+}
+
 esp_err_t hal_camera_init(void) {
     esp_err_t ret;
     const sscma_client_callback_t callbacks = {
@@ -308,88 +513,106 @@ esp_err_t hal_camera_init(void) {
 }
 
 esp_err_t hal_camera_start(int fps, hal_camera_frame_cb_t cb, void *ctx) {
-    (void)cb;
-    (void)ctx;
-    ESP_LOGW(TAG, "hal_camera_start(%d fps): streaming deferred", fps);
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t hal_camera_stop(void) {
-    ESP_LOGW(TAG, "hal_camera_stop: streaming deferred");
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-esp_err_t hal_camera_capture_once(hal_camera_frame_cb_t cb, void *ctx) {
-    esp_err_t ret;
-    char *image = NULL;
-    int image_size = 0;
-    uint8_t *jpeg = NULL;
-    size_t jpeg_size = 0;
-    uint32_t timestamp_ms;
+    BaseType_t task_ret;
 
     ESP_RETURN_ON_FALSE(cb != NULL, ESP_ERR_INVALID_ARG, TAG, "frame callback required");
+    ESP_RETURN_ON_FALSE(fps > 0 && fps <= HAL_CAMERA_MAX_FPS, ESP_ERR_INVALID_ARG, TAG, "fps out of range");
     ESP_RETURN_ON_ERROR(hal_camera_init(), TAG, "hal_camera_init failed");
 
     if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
         return ESP_FAIL;
     }
 
-    if (s_ctx.capture_in_progress) {
+    if (s_ctx.streaming || s_ctx.stream_task != NULL) {
         xSemaphoreGive(s_ctx.lock);
-        ESP_LOGW(TAG, "capture already in progress");
+        ESP_LOGW(TAG, "camera already streaming");
         return ESP_ERR_INVALID_STATE;
     }
 
-    hal_camera_clear_capture_locked();
-    s_ctx.capture_in_progress = true;
-    s_ctx.capture_status = ESP_ERR_TIMEOUT;
+    if (s_ctx.capture_in_progress) {
+        xSemaphoreGive(s_ctx.lock);
+        ESP_LOGW(TAG, "camera busy with one-shot capture");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_ctx.streaming = true;
+    s_ctx.stream_stop_requested = false;
+    s_ctx.stream_cb = cb;
+    s_ctx.stream_ctx = ctx;
+    s_ctx.stream_fps = fps;
+    s_ctx.stream_frames_ok = 0;
+    s_ctx.stream_frames_err = 0;
     xSemaphoreGive(s_ctx.lock);
 
-    hal_camera_drain_semaphore(s_ctx.capture_sem);
-
-    ret = sscma_client_invoke(s_ctx.client, 1, false, true);
-    if (ret != ESP_OK) {
+    task_ret = xTaskCreate(hal_camera_stream_task, "hal_camera_stream", HAL_CAMERA_STREAM_TASK_STACK, NULL,
+                           HAL_CAMERA_STREAM_TASK_PRIORITY, &s_ctx.stream_task);
+    if (task_ret != pdPASS) {
         if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
-            s_ctx.capture_in_progress = false;
-            hal_camera_clear_capture_locked();
+            s_ctx.streaming = false;
+            s_ctx.stream_cb = NULL;
+            s_ctx.stream_ctx = NULL;
+            s_ctx.stream_fps = 0;
+            s_ctx.stream_task = NULL;
             xSemaphoreGive(s_ctx.lock);
         }
-        ESP_LOGE(TAG, "sscma invoke failed: %s", esp_err_to_name(ret));
-        return ret;
+        ESP_LOGE(TAG, "failed to create stream task");
+        return ESP_FAIL;
     }
 
-    if (xSemaphoreTake(s_ctx.capture_sem, pdMS_TO_TICKS(HAL_CAMERA_CAPTURE_TIMEOUT_MS)) != pdTRUE) {
-        if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
-            s_ctx.capture_in_progress = false;
-            hal_camera_clear_capture_locked();
-            xSemaphoreGive(s_ctx.lock);
-        }
-        ESP_LOGW(TAG, "capture timed out after %d ms", HAL_CAMERA_CAPTURE_TIMEOUT_MS);
-        return ESP_ERR_TIMEOUT;
-    }
+    ESP_LOGI(TAG, "camera stream started, target_fps=%d", fps);
+    return ESP_OK;
+}
+
+esp_err_t hal_camera_stop(void) {
+    TickType_t waited_ticks = 0;
+    const TickType_t step_ticks = pdMS_TO_TICKS(20);
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(HAL_CAMERA_STREAM_STOP_TIMEOUT_MS);
 
     if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
         return ESP_FAIL;
     }
 
-    ret = s_ctx.capture_status;
-    image = s_ctx.capture_image;
-    image_size = s_ctx.capture_image_size;
-    s_ctx.capture_image = NULL;
-    s_ctx.capture_image_size = 0;
+    if (!s_ctx.streaming && s_ctx.stream_task == NULL) {
+        xSemaphoreGive(s_ctx.lock);
+        return ESP_OK;
+    }
+
+    s_ctx.stream_stop_requested = true;
     xSemaphoreGive(s_ctx.lock);
 
-    ESP_GOTO_ON_ERROR(ret, cleanup, TAG, "capture failed");
-    ESP_GOTO_ON_FALSE(image != NULL && image_size > 0, ESP_ERR_INVALID_RESPONSE, cleanup, TAG, "capture image missing");
-    ESP_GOTO_ON_ERROR(hal_camera_decode_image(image, &jpeg, &jpeg_size), cleanup, TAG, "image decode failed");
+    while (waited_ticks < timeout_ticks) {
+        bool done = false;
 
-    timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            done = (!s_ctx.streaming && s_ctx.stream_task == NULL);
+            xSemaphoreGive(s_ctx.lock);
+        }
+
+        if (done) {
+            ESP_LOGI(TAG, "camera stream stopped");
+            return ESP_OK;
+        }
+
+        vTaskDelay(step_ticks);
+        waited_ticks += step_ticks;
+    }
+
+    ESP_LOGW(TAG, "camera stream stop timed out after %d ms", HAL_CAMERA_STREAM_STOP_TIMEOUT_MS);
+    return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t hal_camera_capture_once(hal_camera_frame_cb_t cb, void *ctx) {
+    uint8_t *jpeg = NULL;
+    size_t jpeg_size = 0;
+    uint32_t timestamp_ms;
+    esp_err_t ret;
+
+    ESP_RETURN_ON_FALSE(cb != NULL, ESP_ERR_INVALID_ARG, TAG, "frame callback required");
+    ret = hal_camera_capture_jpeg_internal(false, &jpeg, &jpeg_size, &timestamp_ms);
+    ESP_GOTO_ON_ERROR(ret, cleanup, TAG, "capture failed");
     cb(jpeg, jpeg_size, timestamp_ms, ctx);
 
 cleanup:
-    if (image != NULL) {
-        free(image);
-    }
     if (jpeg != NULL) {
         free(jpeg);
     }
@@ -397,5 +620,12 @@ cleanup:
 }
 
 bool hal_camera_is_streaming(void) {
-    return false;
+    bool streaming = false;
+
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+        streaming = s_ctx.streaming;
+        xSemaphoreGive(s_ctx.lock);
+    }
+
+    return streaming;
 }
