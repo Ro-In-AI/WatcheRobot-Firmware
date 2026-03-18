@@ -41,6 +41,27 @@ typedef void (*hal_camera_frame_cb_t)(const uint8_t *jpeg, size_t size, uint32_t
 esp_err_t hal_camera_init(void);
 
 /**
+ * @brief Configure the active HX6538 camera sensor output profile.
+ *
+ * Supported profiles currently map to the sensor catalog reported by the coprocessor:
+ * - 240x240
+ * - 416x416
+ * - 480x480
+ * - 640x480
+ *
+ * Quality is accepted as a hint for upper layers, but the current SSCMA path
+ * does not expose a writable JPEG quality control.
+ *
+ * @param width          Requested output width
+ * @param height         Requested output height
+ * @param quality        Requested quality hint (stored for diagnostics only)
+ * @param applied_width  Optional: applied width on success
+ * @param applied_height Optional: applied height on success
+ * @return ESP_OK on success
+ */
+esp_err_t hal_camera_configure(int width, int height, int quality, int *applied_width, int *applied_height);
+
+/**
  * @brief Start continuous frame capture.
  *
  * @param fps Target frame rate (1–30). Actual rate depends on Himax AI workload.

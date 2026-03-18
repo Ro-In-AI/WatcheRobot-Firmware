@@ -102,6 +102,11 @@ esp_err_t camera_service_init(void) {
     return ESP_OK;
 }
 
+esp_err_t camera_service_configure(int width, int height, int quality, int *applied_width, int *applied_height) {
+    ESP_RETURN_ON_ERROR(camera_service_init(), TAG, "camera_service_init failed");
+    return hal_camera_configure(width, height, quality, applied_width, applied_height);
+}
+
 esp_err_t camera_service_register_frame_callback(camera_service_frame_cb_t cb, void *ctx) {
     ESP_RETURN_ON_ERROR(camera_service_ensure_lock(), TAG, "camera service lock init failed");
 

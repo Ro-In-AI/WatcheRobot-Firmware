@@ -23,6 +23,22 @@
 #define HAL_CAMERA_STREAM_TASK_PRIORITY 5
 #define HAL_CAMERA_STREAM_STOP_TIMEOUT_MS (HAL_CAMERA_CAPTURE_TIMEOUT_MS + 1000)
 #define HAL_CAMERA_STREAM_LOG_EVERY 30
+#define HAL_CAMERA_DEFAULT_SENSOR_ID 1
+#define HAL_CAMERA_DEFAULT_QUALITY 80
+
+typedef struct {
+    int opt_id;
+    int width;
+    int height;
+    const char *detail;
+} hal_camera_sensor_option_t;
+
+static const hal_camera_sensor_option_t s_hal_camera_sensor_options[] = {
+    {.opt_id = 0, .width = 240, .height = 240, .detail = "240x240 Auto"},
+    {.opt_id = 1, .width = 416, .height = 416, .detail = "416x416 Auto"},
+    {.opt_id = 2, .width = 480, .height = 480, .detail = "480x480 Auto"},
+    {.opt_id = 3, .width = 640, .height = 480, .detail = "640x480 Auto"},
+};
 
 typedef struct {
     sscma_client_handle_t client;
@@ -47,6 +63,11 @@ typedef struct {
     int capture_image_size;
     uint32_t stream_frames_ok;
     uint32_t stream_frames_err;
+    int sensor_id;
+    int sensor_opt_id;
+    int configured_width;
+    int configured_height;
+    int configured_quality;
 } hal_camera_context_t;
 
 static hal_camera_context_t s_ctx = {
@@ -72,7 +93,119 @@ static hal_camera_context_t s_ctx = {
     .capture_image_size = 0,
     .stream_frames_ok = 0,
     .stream_frames_err = 0,
+    .sensor_id = HAL_CAMERA_DEFAULT_SENSOR_ID,
+    .sensor_opt_id = 0,
+    .configured_width = 240,
+    .configured_height = 240,
+    .configured_quality = HAL_CAMERA_DEFAULT_QUALITY,
 };
+
+static const hal_camera_sensor_option_t *hal_camera_find_sensor_option_by_opt_id(int opt_id) {
+    size_t i;
+
+    for (i = 0; i < sizeof(s_hal_camera_sensor_options) / sizeof(s_hal_camera_sensor_options[0]); ++i) {
+        if (s_hal_camera_sensor_options[i].opt_id == opt_id) {
+            return &s_hal_camera_sensor_options[i];
+        }
+    }
+
+    return NULL;
+}
+
+static const hal_camera_sensor_option_t *hal_camera_find_sensor_option_by_size(int width, int height) {
+    size_t i;
+
+    for (i = 0; i < sizeof(s_hal_camera_sensor_options) / sizeof(s_hal_camera_sensor_options[0]); ++i) {
+        if (s_hal_camera_sensor_options[i].width == width && s_hal_camera_sensor_options[i].height == height) {
+            return &s_hal_camera_sensor_options[i];
+        }
+    }
+
+    return NULL;
+}
+
+static int hal_camera_get_json_int(cJSON *object, const char *field_name, int fallback) {
+    cJSON *field;
+
+    if (object == NULL || field_name == NULL) {
+        return fallback;
+    }
+
+    field = cJSON_GetObjectItem(object, field_name);
+    if (!cJSON_IsNumber(field)) {
+        return fallback;
+    }
+
+    return field->valueint;
+}
+
+static void hal_camera_update_sensor_state_locked(int sensor_id, int opt_id, int quality) {
+    const hal_camera_sensor_option_t *option = hal_camera_find_sensor_option_by_opt_id(opt_id);
+
+    if (sensor_id > 0) {
+        s_ctx.sensor_id = sensor_id;
+    }
+    if (option != NULL) {
+        s_ctx.sensor_opt_id = option->opt_id;
+        s_ctx.configured_width = option->width;
+        s_ctx.configured_height = option->height;
+    }
+    if (quality > 0) {
+        s_ctx.configured_quality = quality;
+    }
+}
+
+static esp_err_t hal_camera_refresh_sensor_catalog(bool log_catalog) {
+    sscma_client_reply_t reply = {0};
+    esp_err_t ret;
+
+    ret = sscma_client_request(s_ctx.client, "AT+SENSORS?\r\n", &reply, true, 2000 / portTICK_PERIOD_MS);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "sscma_client_request(AT+SENSORS?) failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    if (reply.payload != NULL) {
+        cJSON *data = cJSON_GetObjectItem(reply.payload, "data");
+        cJSON *sensor = NULL;
+        int sensor_id = HAL_CAMERA_DEFAULT_SENSOR_ID;
+        int opt_id = s_ctx.sensor_opt_id;
+
+        if (cJSON_IsArray(data)) {
+            sensor = cJSON_GetArrayItem(data, 0);
+        } else if (cJSON_IsObject(data)) {
+            sensor = cJSON_GetObjectItem(data, "sensor");
+        }
+
+        if (sensor != NULL) {
+            sensor_id = hal_camera_get_json_int(sensor, "id", sensor_id);
+            opt_id = hal_camera_get_json_int(sensor, "opt_id", opt_id);
+            if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                hal_camera_update_sensor_state_locked(sensor_id, opt_id, 0);
+                xSemaphoreGive(s_ctx.lock);
+            }
+        }
+
+        if (log_catalog) {
+            char *json = cJSON_PrintUnformatted(reply.payload);
+            if (json != NULL) {
+                ESP_LOGI(TAG, "HX6538 sensors catalog: %s", json);
+                free(json);
+            } else {
+                ESP_LOGW(TAG, "HX6538 sensors catalog print failed");
+            }
+        }
+    } else if (reply.data != NULL && reply.len > 0) {
+        if (log_catalog) {
+            ESP_LOGI(TAG, "HX6538 sensors catalog raw: %.*s", (int)reply.len, reply.data);
+        }
+    } else if (log_catalog) {
+        ESP_LOGW(TAG, "HX6538 sensors catalog reply empty");
+    }
+
+    sscma_client_reply_clear(&reply);
+    return ESP_OK;
+}
 
 static void hal_camera_clear_capture_locked(void) {
     if (s_ctx.capture_image != NULL) {
@@ -178,30 +311,7 @@ static void hal_camera_drain_semaphore(SemaphoreHandle_t sem) {
 }
 
 static void hal_camera_log_sensor_catalog(void) {
-    sscma_client_reply_t reply = {0};
-    esp_err_t ret;
-
-    ret = sscma_client_request(s_ctx.client, "AT+SENSORS?\r\n", &reply, true, 2000 / portTICK_PERIOD_MS);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "sscma_client_request(AT+SENSORS?) failed: %s", esp_err_to_name(ret));
-        return;
-    }
-
-    if (reply.payload != NULL) {
-        char *json = cJSON_PrintUnformatted(reply.payload);
-        if (json != NULL) {
-            ESP_LOGI(TAG, "HX6538 sensors catalog: %s", json);
-            free(json);
-        } else {
-            ESP_LOGW(TAG, "HX6538 sensors catalog print failed");
-        }
-    } else if (reply.data != NULL && reply.len > 0) {
-        ESP_LOGI(TAG, "HX6538 sensors catalog raw: %.*s", (int)reply.len, reply.data);
-    } else {
-        ESP_LOGW(TAG, "HX6538 sensors catalog reply empty");
-    }
-
-    sscma_client_reply_clear(&reply);
+    (void)hal_camera_refresh_sensor_catalog(true);
 }
 
 static esp_err_t hal_camera_log_device_info(void) {
@@ -238,6 +348,10 @@ static esp_err_t hal_camera_log_device_info(void) {
         ESP_LOGI(TAG, "HX6538 sensor id=%d type=%d state=%d opt_id=%d detail=%s",
                  sensor.id, sensor.type, sensor.state, sensor.opt_id,
                  sensor.opt_detail ? sensor.opt_detail : "<null>");
+        if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            hal_camera_update_sensor_state_locked(sensor.id, sensor.opt_id, 0);
+            xSemaphoreGive(s_ctx.lock);
+        }
         free(sensor.opt_detail);
     } else {
         ESP_LOGW(TAG, "sscma_client_get_sensor failed: %s", esp_err_to_name(ret));
@@ -620,6 +734,80 @@ esp_err_t hal_camera_init(void) {
     }
 
     hal_camera_log_device_info();
+    return ESP_OK;
+}
+
+esp_err_t hal_camera_configure(int width, int height, int quality, int *applied_width, int *applied_height) {
+    const hal_camera_sensor_option_t *option = NULL;
+    int sensor_id = HAL_CAMERA_DEFAULT_SENSOR_ID;
+    int current_quality = HAL_CAMERA_DEFAULT_QUALITY;
+    esp_err_t ret;
+
+    if (applied_width != NULL) {
+        *applied_width = 0;
+    }
+    if (applied_height != NULL) {
+        *applied_height = 0;
+    }
+
+    ESP_RETURN_ON_ERROR(hal_camera_init(), TAG, "hal_camera_init failed");
+
+    if (width > 0 || height > 0) {
+        ESP_RETURN_ON_FALSE(width > 0 && height > 0, ESP_ERR_INVALID_ARG, TAG, "width/height must both be set");
+        option = hal_camera_find_sensor_option_by_size(width, height);
+        ESP_RETURN_ON_FALSE(option != NULL, ESP_ERR_NOT_SUPPORTED, TAG, "unsupported resolution %dx%d", width, height);
+    }
+
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    if (s_ctx.streaming || s_ctx.capture_in_progress) {
+        xSemaphoreGive(s_ctx.lock);
+        ESP_LOGW(TAG, "camera configure rejected while busy");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    sensor_id = s_ctx.sensor_id > 0 ? s_ctx.sensor_id : HAL_CAMERA_DEFAULT_SENSOR_ID;
+    current_quality = s_ctx.configured_quality;
+
+    if (option == NULL) {
+        const hal_camera_sensor_option_t *current = hal_camera_find_sensor_option_by_opt_id(s_ctx.sensor_opt_id);
+        option = current != NULL ? current : hal_camera_find_sensor_option_by_opt_id(0);
+    }
+
+    if (quality > 0) {
+        current_quality = quality;
+    }
+
+    xSemaphoreGive(s_ctx.lock);
+
+    ret = sscma_client_set_sensor(s_ctx.client, sensor_id, option->opt_id, true);
+    ESP_RETURN_ON_ERROR(ret, TAG, "sscma_client_set_sensor failed");
+
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+        hal_camera_update_sensor_state_locked(sensor_id, option->opt_id, current_quality);
+        xSemaphoreGive(s_ctx.lock);
+    }
+
+    (void)hal_camera_refresh_sensor_catalog(true);
+    ESP_LOGI(TAG, "camera sensor profile applied: sensor=%d opt_id=%d detail=%s quality_hint=%d",
+             sensor_id,
+             option->opt_id,
+             option->detail,
+             current_quality);
+
+    if (applied_width != NULL) {
+        *applied_width = option->width;
+    }
+    if (applied_height != NULL) {
+        *applied_height = option->height;
+    }
+
+    if (quality > 0) {
+        ESP_LOGI(TAG, "camera quality hint stored=%d (current SSCMA path does not expose writable JPEG quality)", quality);
+    }
+
     return ESP_OK;
 }
 

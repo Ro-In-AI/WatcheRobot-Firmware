@@ -229,6 +229,41 @@ static void ws_camera_set_streaming(bool streaming, int fps) {
     }
 }
 
+static void ws_camera_get_cached_config(int *width, int *height, int *fps, int *quality) {
+    if (width != NULL) {
+        *width = 0;
+    }
+    if (height != NULL) {
+        *height = 0;
+    }
+    if (fps != NULL) {
+        *fps = 0;
+    }
+    if (quality != NULL) {
+        *quality = WS_CAPTURE_DEFAULT_QUALITY;
+    }
+
+    if (ws_camera_ensure_lock() != ESP_OK) {
+        return;
+    }
+
+    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+        if (width != NULL) {
+            *width = s_camera_ctx.configured_width;
+        }
+        if (height != NULL) {
+            *height = s_camera_ctx.configured_height;
+        }
+        if (fps != NULL) {
+            *fps = s_camera_ctx.target_fps;
+        }
+        if (quality != NULL) {
+            *quality = s_camera_ctx.configured_quality;
+        }
+        xSemaphoreGive(s_camera_ctx.lock);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Helper: Parse status data to determine emoji                       */
 /* ------------------------------------------------------------------ */
@@ -340,8 +375,15 @@ void on_status_handler(const ws_status_cmd_t *cmd) {
 void on_capture_handler(const ws_capture_cmd_t *cmd) {
     esp_err_t ret;
     int fps = WS_CAPTURE_DEFAULT_FPS;
+    int requested_width = 0;
+    int requested_height = 0;
+    int requested_quality = WS_CAPTURE_DEFAULT_QUALITY;
+    int applied_width = 0;
+    int applied_height = 0;
+    int cached_fps = 0;
     uint16_t stream_id = 0;
     const char *command_type;
+    char config_message[96];
 
     if (!cmd) {
         return;
@@ -365,24 +407,67 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
     }
 
     if (strcasecmp(cmd->action, "config") == 0) {
-        if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-            if (cmd->width > 0) {
-                s_camera_ctx.configured_width = cmd->width;
+        ws_camera_get_cached_config(&requested_width, &requested_height, &cached_fps, &requested_quality);
+
+        if (cmd->width > 0) {
+            requested_width = cmd->width;
+        }
+        if (cmd->height > 0) {
+            requested_height = cmd->height;
+        }
+        if (cmd->quality > 0) {
+            requested_quality = cmd->quality;
+        }
+
+        if ((requested_width > 0) != (requested_height > 0)) {
+            ws_send_sys_nack(cmd->command_id, command_type, "width_height_must_be_paired");
+            return;
+        }
+
+        if (requested_width > 0 && requested_height > 0) {
+            ret = camera_service_configure(requested_width, requested_height, requested_quality,
+                                           &applied_width, &applied_height);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "camera config failed: %s", esp_err_to_name(ret));
+                if (ret == ESP_ERR_NOT_SUPPORTED) {
+                    ws_send_sys_nack(cmd->command_id, command_type, "unsupported_resolution");
+                } else if (ret == ESP_ERR_INVALID_STATE) {
+                    ws_send_sys_nack(cmd->command_id, command_type, "camera_busy");
+                } else {
+                    ws_send_sys_nack(cmd->command_id, command_type, "camera_config_failed");
+                }
+                return;
             }
-            if (cmd->height > 0) {
-                s_camera_ctx.configured_height = cmd->height;
+        } else {
+            applied_width = requested_width;
+            applied_height = requested_height;
+        }
+
+        if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            if (applied_width > 0) {
+                s_camera_ctx.configured_width = applied_width;
+            }
+            if (applied_height > 0) {
+                s_camera_ctx.configured_height = applied_height;
             }
             if (cmd->fps > 0) {
                 s_camera_ctx.target_fps = cmd->fps;
             }
-            if (cmd->quality > 0) {
-                s_camera_ctx.configured_quality = cmd->quality;
-            }
+            s_camera_ctx.configured_quality = requested_quality;
             xSemaphoreGive(s_camera_ctx.lock);
         }
 
+        if (applied_width > 0 && applied_height > 0) {
+            snprintf(config_message, sizeof(config_message), "applied=%dx%d quality_hint=%d",
+                     applied_width, applied_height, requested_quality);
+        } else {
+            snprintf(config_message, sizeof(config_message), "fps=%d quality_hint=%d resolution_unchanged",
+                     cmd->fps > 0 ? cmd->fps : cached_fps,
+                     requested_quality);
+        }
+
         ws_send_sys_ack(cmd->command_id, command_type, 0, "accepted");
-        ws_send_camera_state("video_config", "accepted", 0, cmd->fps, "watcher_runtime_negotiates_actual_resolution");
+        ws_send_camera_state("video_config", "accepted", 0, cmd->fps, config_message);
         return;
     }
 
