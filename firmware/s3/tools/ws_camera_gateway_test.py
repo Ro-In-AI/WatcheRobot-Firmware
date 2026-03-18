@@ -411,6 +411,7 @@ class GatewayHarness:
         )
         self.output_dir = Path(args.output_dir).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.save_mode = self.resolve_save_mode()
 
         self.discovery_transport: asyncio.DatagramTransport | None = None
         self.websocket: Any = None
@@ -421,6 +422,7 @@ class GatewayHarness:
         self.video_config_expectation: PendingCommand | None = None
         self.video_start_expectation: PendingCommand | None = None
         self.video_stop_expectation: PendingCommand | None = None
+        self.video_stream_active = False
 
         self.failures: list[str] = []
         self.discovery_packets = 0
@@ -428,12 +430,22 @@ class GatewayHarness:
         self.binary_frames = 0
         self.invalid_binary_frames = 0
         self.saved_files: list[Path] = []
+        self.saved_packet_keys: set[tuple[int, int]] = set()
         self.video_frame_count = 0
         self.image_frame_count = 0
 
     def fail(self, message: str) -> None:
         logging.error("%s", message)
         self.failures.append(message)
+
+    def resolve_save_mode(self) -> str:
+        if self.args.save_mode != "auto":
+            return self.args.save_mode
+
+        if self.args.scenario == "video-continuous":
+            return "first"
+
+        return "all"
 
     async def start_udp_server(self) -> None:
         loop = asyncio.get_running_loop()
@@ -667,6 +679,15 @@ class GatewayHarness:
         self.save_packet(packet)
 
     def save_packet(self, packet: WspkPacket) -> None:
+        if self.save_mode == "none":
+            return
+
+        key = (packet.stream_id, packet.frame_type)
+        if self.save_mode == "first":
+            if key in self.saved_packet_keys:
+                return
+            self.saved_packet_keys.add(key)
+
         stream_dir = self.output_dir / f"stream_{packet.stream_id:04d}"
         stream_dir.mkdir(parents=True, exist_ok=True)
 
@@ -722,7 +743,7 @@ class GatewayHarness:
             self.capture_expectation.state_event, "capture evt.camera.state"
         )
 
-    async def run_video_flow(self) -> None:
+    async def start_video_flow(self) -> None:
         config_id = f"cam-cfg-{int(time.time())}"
         self.video_config_expectation = PendingCommand(
             command_id=config_id,
@@ -775,9 +796,11 @@ class GatewayHarness:
         await self.wait_for_event(
             self.video_start_expectation.binary_event, "first video WSPK frame"
         )
+        self.video_stream_active = True
 
-        logging.info("Video stream running for %.1f seconds", self.args.video_seconds)
-        await asyncio.sleep(self.args.video_seconds)
+    async def stop_video_flow(self) -> None:
+        if not self.video_stream_active:
+            return
 
         stop_id = f"cam-stop-{int(time.time())}"
         self.video_stop_expectation = PendingCommand(
@@ -804,6 +827,20 @@ class GatewayHarness:
         await self.wait_for_event(
             self.video_stop_expectation.state_event, "stop_video evt.camera.state"
         )
+        self.video_stream_active = False
+
+    async def run_video_flow(self, continuous: bool = False) -> None:
+        await self.start_video_flow()
+
+        if continuous or self.args.video_seconds <= 0:
+            logging.info("Continuous video mode enabled; press Ctrl+C to stop.")
+            while self.websocket is not None:
+                await asyncio.sleep(1.0)
+            return
+
+        logging.info("Video stream running for %.1f seconds", self.args.video_seconds)
+        await asyncio.sleep(self.args.video_seconds)
+        await self.stop_video_flow()
 
     async def run_scenario(self) -> None:
         if self.args.scenario in ("capture", "all"):
@@ -811,6 +848,9 @@ class GatewayHarness:
 
         if self.args.scenario in ("video", "all"):
             await self.run_video_flow()
+
+        if self.args.scenario == "video-continuous":
+            await self.run_video_flow(continuous=True)
 
         if self.args.scenario == "listen":
             logging.info("Listen mode enabled; press Ctrl+C to stop.")
@@ -821,6 +861,7 @@ class GatewayHarness:
         logging.info("----- Summary -----")
         logging.info("announce_ip=%s", self.announce_ip)
         logging.info("preferred_subnets=%s", ",".join(self.preferred_subnets))
+        logging.info("save_mode=%s", self.save_mode)
         logging.info("discovery_packets=%d", self.discovery_packets)
         logging.info("text_frames=%d", self.text_frames)
         logging.info("binary_frames=%d", self.binary_frames)
@@ -868,6 +909,11 @@ class GatewayHarness:
             except Exception as exc:  # noqa: BLE001
                 self.fail(str(exc))
             finally:
+                if self.video_stream_active and self.websocket is not None:
+                    try:
+                        await asyncio.wait_for(self.stop_video_flow(), timeout=5.0)
+                    except Exception as exc:  # noqa: BLE001
+                        logging.warning("best-effort stop_video during shutdown failed: %s", exc)
                 self.print_summary()
                 if self.discovery_transport is not None:
                     self.discovery_transport.close()
@@ -881,7 +927,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--scenario",
-        choices=("all", "capture", "video", "listen"),
+        choices=("all", "capture", "video", "video-continuous", "listen"),
         default="all",
         help="Test scenario to run after the Watcher connects.",
     )
@@ -924,6 +970,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory where received JPEG frames are saved.",
     )
     parser.add_argument(
+        "--save-mode",
+        choices=("auto", "all", "first", "none"),
+        default="auto",
+        help="Frame save policy. 'auto' keeps prior behavior for short tests and saves only first frames in video-continuous mode.",
+    )
+    parser.add_argument(
         "--connect-timeout",
         type=float,
         default=90.0,
@@ -939,7 +991,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--video-seconds",
         type=float,
         default=5.0,
-        help="How long to keep video streaming before sending stop_video.",
+        help="How long to keep video streaming before sending stop_video. Values <= 0 keep streaming until interrupted.",
     )
     parser.add_argument(
         "--width",
