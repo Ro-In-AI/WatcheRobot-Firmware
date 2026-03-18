@@ -7,7 +7,7 @@
 ## 2. 当前生效通信链路（按启动顺序）
 1. `Wi-Fi STA` 连接路由器。
 2. `UDP Broadcast Discovery` 发现服务端 IP/端口。
-3. `WebSocket` 建链并收发控制消息、音频流。
+3. `WebSocket` 建链并收发控制消息、音频流、视频控制与视频帧。
 
 ## 3. 现在必须冻结（Freeze Now）
 
@@ -44,7 +44,7 @@
   - `bot_reply`
   - `tts_end`
   - `error`
-  - `capture`（当前 no-op，但类型保留）
+  - `capture`
   - `reboot`
 - `servo` 字段冻结：
   - `data.id`: `"x"` / `"y"`（大小写兼容）
@@ -60,6 +60,10 @@
   - `asr_result.data`：256
   - `bot_reply.data`：256
   - `error.data`：256
+- `capture` 字段冻结：
+  - `data.action`: `"single"` / `"start"` / `"stop"`，缺省按 `"single"` 处理
+  - `data.fps`: 连续流目标帧率，默认 `5`
+  - `data.quality`: 预留字段，当前实现接收但不参与 HX6538 输出质量控制
 
 ### FZ-05 WebSocket 音频流协议
 - 上行（设备 -> 服务端）：
@@ -70,7 +74,24 @@
   - 二进制帧：裸 `PCM`，`16-bit`，`24kHz`，`mono`
   - 结束标记：JSON `{"type":"tts_end", ...}`
 
-### FZ-06 执行约束（联调必须知晓）
+### FZ-06 WebSocket 视频协议
+- 下行控制（服务端 -> 设备）：
+  - 单帧抓拍：`{"type":"capture","code":0,"data":{"action":"single"}}`
+  - 开始视频流：`{"type":"capture","code":0,"data":{"action":"start","fps":5}}`
+  - 停止视频流：`{"type":"capture","code":0,"data":{"action":"stop"}}`
+- 上行状态（设备 -> 服务端）：
+  - 开始成功：`{"type":"video","code":0,"data":{"event":"started","fps":5}}`
+  - 停止成功：`{"type":"video","code":0,"data":{"event":"stopped","fps":0}}`
+  - 出错：`{"type":"video","code":1,"data":{"event":"error","message":"stream_start_failed","fps":5}}`
+- 上行帧（设备 -> 服务端）：
+  1. 先发送文本元数据帧：`{"type":"video","code":0,"data":{"event":"frame","seq":1,"timestamp_ms":1234,"size":5472,"format":"jpeg","streaming":true}}`
+  2. 紧接着发送一帧二进制 `JPEG`
+- 当前冻结约束：
+  - 单帧和连续流都复用同一相机回调链路
+  - 服务端必须把“某个 `video/frame` 文本帧之后紧跟的第一帧二进制数据”解释为对应 `JPEG`
+  - 当前版本不承诺音频上行与视频上行的并发多路复用顺序语义；联调时默认不要同时开启双上行流
+
+### FZ-07 执行约束（联调必须知晓）
 - 舵机：
   - `X` 轴范围 `0..180`
   - `Y` 轴最终被机械保护钳位到配置区间（当前默认 `90..150`）
@@ -79,9 +100,9 @@
 
 ## 4. 暂不冻结（Freeze Later）
 - BLE GATT + Wi-Fi Provisioning（当前为 stub）。
-- Camera 服务与 Camera HAL（当前为 stub）。
 - OTA 下载与升级流程（当前为 stub）。
-- SSCMA 视觉链路对云侧的报文协议（当前未进入主链路联调）。
+- 更复杂的视频多路复用、分片与重传策略。
+- SSCMA 推理结果对云侧的结构化上报协议。
 
 ## 5. 协议版本统一建议（本轮要拍板）
 - 现状存在 `v2.0` 与 `v2.1` 注释混用。
@@ -95,9 +116,12 @@
 2. Servo：`x/y`、`angle/Angle`、默认值路径都可执行。
 3. 语音上行：持续发送二进制 PCM，结束后发送 `"over"`。
 4. TTS 下行：收到二进制 PCM 播放，收到 `tts_end` 正确收尾。
-5. Display/Status/Error：表情映射与文本截断行为一致。
+5. Capture single：收到 `capture/single` 后，设备上行 1 个 `video/frame` 元数据帧和 1 个 JPEG 二进制帧。
+6. Capture stream：收到 `capture/start` 后，设备持续上行 `video/frame + JPEG`；收到 `capture/stop` 后停止并上报 `video/stopped`。
+7. Display/Status/Error：表情映射与文本截断行为一致。
 
 ## 7. 风险记录（不阻塞本次冻结）
 - Discovery 与 WS 目前均未做链路鉴权/加密。
 - Wi-Fi 仍为硬编码凭据。
 - 个别注释仍保留“Opus”历史描述，和当前裸 PCM 实现不一致（文档需后续对齐）。
+- 当前视频协议使用“文本元数据 + 紧随其后的 JPEG 二进制”配对方式，服务端需要按顺序消费。

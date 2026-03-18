@@ -4,6 +4,7 @@
  */
 
 #include "ws_client.h"
+#include "camera_service.h"
 #include "display_ui.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -12,6 +13,7 @@
 #include "freertos/task.h"
 #include "hal_audio.h"
 #include "ws_router.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +24,9 @@
 #define WS_TIMEOUT_MS 10000
 #define WS_URL_MAX_LEN 128
 #define RESPONSE_TIMEOUT_MS 30000 /* 30 seconds timeout for server response */
+#define WS_BUFFER_SIZE 65536
+#define WS_TASK_STACK 24576
+#define WS_VIDEO_META_MAX 256
 
 static esp_websocket_client_handle_t ws_client = NULL;
 static bool is_connected = false;
@@ -49,6 +54,10 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "WebSocket disconnected");
         is_connected = false;
+        if (camera_service_is_streaming()) {
+            ESP_LOGW(TAG, "stopping camera stream on WebSocket disconnect");
+            camera_service_stop_stream();
+        }
         /* Show standby when disconnected */
         display_update("Disconnected", "standby", 0, NULL);
         break;
@@ -103,8 +112,8 @@ int ws_client_init(void) {
     esp_websocket_client_config_t cfg = {
         .uri = ws_server_url,
         .network_timeout_ms = WS_TIMEOUT_MS,
-        .buffer_size = 16384, /* Increased for audio streaming (16KB) */
-        .task_stack = 16384,  /* Increased stack size (16KB) */
+        .buffer_size = WS_BUFFER_SIZE,
+        .task_stack = WS_TASK_STACK,
     };
 
     ws_client = esp_websocket_client_init(&cfg);
@@ -165,6 +174,10 @@ int ws_client_start(void) {
 }
 
 void ws_client_stop(void) {
+    if (camera_service_is_streaming()) {
+        camera_service_stop_stream();
+    }
+
     if (ws_client) {
         esp_websocket_client_stop(ws_client);
         esp_websocket_client_destroy(ws_client);
@@ -197,6 +210,71 @@ int ws_client_send_text(const char *text) {
 
 int ws_client_is_connected(void) {
     return is_connected ? 1 : 0;
+}
+
+int ws_send_video_event(const char *event, int code, const char *message, int fps) {
+    char payload[WS_VIDEO_META_MAX];
+    int len;
+
+    if (!event || !ws_client || !is_connected) {
+        return -1;
+    }
+
+    if (message && message[0] != '\0') {
+        len = snprintf(payload, sizeof(payload),
+                       "{\"type\":\"video\",\"code\":%d,\"data\":{\"event\":\"%s\",\"message\":\"%s\",\"fps\":%d}}",
+                       code,
+                       event,
+                       message,
+                       fps);
+    } else {
+        len = snprintf(payload, sizeof(payload),
+                       "{\"type\":\"video\",\"code\":%d,\"data\":{\"event\":\"%s\",\"fps\":%d}}",
+                       code,
+                       event,
+                       fps);
+    }
+
+    if (len <= 0 || len >= (int)sizeof(payload)) {
+        ESP_LOGE(TAG, "video event payload overflow");
+        return -1;
+    }
+
+    return ws_client_send_text(payload);
+}
+
+int ws_send_video_frame(const uint8_t *jpeg, size_t len, uint32_t timestamp_ms, uint32_t seq, bool streaming) {
+    char meta[WS_VIDEO_META_MAX];
+    int meta_len;
+    int sent;
+
+    if (!jpeg || len == 0 || !ws_client || !is_connected) {
+        return -1;
+    }
+
+    meta_len = snprintf(meta, sizeof(meta),
+                        "{\"type\":\"video\",\"code\":0,\"data\":{\"event\":\"frame\",\"seq\":%lu,"
+                        "\"timestamp_ms\":%lu,\"size\":%lu,\"format\":\"jpeg\",\"streaming\":%s}}",
+                        (unsigned long)seq,
+                        (unsigned long)timestamp_ms,
+                        (unsigned long)len,
+                        streaming ? "true" : "false");
+    if (meta_len <= 0 || meta_len >= (int)sizeof(meta)) {
+        ESP_LOGE(TAG, "video metadata payload overflow");
+        return -1;
+    }
+
+    if (ws_client_send_text(meta) < 0) {
+        return -1;
+    }
+
+    sent = ws_client_send_binary(jpeg, (int)len);
+    if (sent != (int)len) {
+        ESP_LOGW(TAG, "video binary send incomplete: %d/%u", sent, (unsigned int)len);
+        return -1;
+    }
+
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */

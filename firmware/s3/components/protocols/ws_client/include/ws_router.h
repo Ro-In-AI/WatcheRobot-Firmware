@@ -79,8 +79,11 @@ typedef struct {
 } ws_error_cmd_t;
 
 /* Capture command structure */
+#define WS_CAPTURE_ACTION_MAX 16
 typedef struct {
-    int quality; /* JPEG quality (1-100) */
+    char action[WS_CAPTURE_ACTION_MAX]; /* "single", "start", "stop" */
+    int fps;                            /* requested stream fps */
+    int quality;                        /* reserved for future JPEG tuning */
 } ws_capture_cmd_t;
 
 /* Legacy structures (deprecated) */

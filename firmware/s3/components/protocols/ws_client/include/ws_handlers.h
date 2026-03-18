@@ -34,8 +34,8 @@ void on_display_handler(const ws_display_cmd_t *cmd);
 void on_status_handler(const ws_status_cmd_t *cmd);
 
 /**
- * Handle capture command - take photo (MVP: not implemented)
- * @param cmd Capture command with quality
+ * Handle capture command - single frame or stream lifecycle control
+ * @param cmd Capture command with action/fps
  */
 void on_capture_handler(const ws_capture_cmd_t *cmd);
 

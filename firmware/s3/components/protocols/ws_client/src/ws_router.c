@@ -160,8 +160,13 @@ ws_msg_type_t ws_route_message(const char *json_str) {
         if (g_router.on_capture) {
             cJSON *data = cJSON_GetObjectItem(root, "data");
             ws_capture_cmd_t cmd = {
+                .fps = data ? get_int(data, "fps", 5) : 5,
                 .quality = data ? get_int(data, "quality", 80) : 80,
             };
+            copy_string(cmd.action, sizeof(cmd.action), data ? get_string(data, "action") : "single");
+            if (cmd.action[0] == '\0') {
+                copy_string(cmd.action, sizeof(cmd.action), "single");
+            }
             g_router.on_capture(&cmd);
         }
     } else if (strcmp(type, "reboot") == 0) {

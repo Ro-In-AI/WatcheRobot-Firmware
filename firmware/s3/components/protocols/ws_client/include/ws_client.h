@@ -1,6 +1,8 @@
 #ifndef WS_CLIENT_H
 #define WS_CLIENT_H
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /**
@@ -55,6 +57,18 @@ int ws_client_send_text(const char *text);
  * Check if WebSocket is connected
  */
 int ws_client_is_connected(void);
+
+/**
+ * Send a video lifecycle/status event as JSON text.
+ * The cloud uses this to track stream start/stop/error state.
+ */
+int ws_send_video_event(const char *event, int code, const char *message, int fps);
+
+/**
+ * Send one JPEG video frame.
+ * Current protocol sends a small JSON metadata frame first, followed by the JPEG binary frame.
+ */
+int ws_send_video_frame(const uint8_t *jpeg, size_t len, uint32_t timestamp_ms, uint32_t seq, bool streaming);
 
 /**
  * Send audio data via WebSocket (v2.0: raw PCM)
