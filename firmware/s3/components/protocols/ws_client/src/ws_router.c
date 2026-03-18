@@ -63,6 +63,22 @@ static void copy_string(char *dst, size_t dst_size, const char *src) {
     }
 }
 
+static void fill_camera_cmd(cJSON *data, const char *action, ws_capture_cmd_t *cmd) {
+    if (!cmd) {
+        return;
+    }
+
+    memset(cmd, 0, sizeof(*cmd));
+    copy_string(cmd->action, sizeof(cmd->action), action);
+    if (data && cJSON_IsObject(data)) {
+        copy_string(cmd->command_id, sizeof(cmd->command_id), get_string(data, "command_id"));
+        cmd->width = get_int(data, "width", 0);
+        cmd->height = get_int(data, "height", 0);
+        cmd->fps = get_int(data, "fps", 0);
+        cmd->quality = get_int(data, "quality", 0);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Public: Route message to appropriate handler (v2.1 format)          */
 /* ------------------------------------------------------------------ */
@@ -159,14 +175,50 @@ ws_msg_type_t ws_route_message(const char *json_str) {
         msg_type = WS_MSG_CAPTURE;
         if (g_router.on_capture) {
             cJSON *data = cJSON_GetObjectItem(root, "data");
-            ws_capture_cmd_t cmd = {
-                .fps = data ? get_int(data, "fps", 5) : 5,
-                .quality = data ? get_int(data, "quality", 80) : 80,
-            };
-            copy_string(cmd.action, sizeof(cmd.action), data ? get_string(data, "action") : "single");
+            ws_capture_cmd_t cmd = {0};
+            fill_camera_cmd(data, "single", &cmd);
+            if (data) {
+                cmd.fps = get_int(data, "fps", 5);
+                cmd.quality = get_int(data, "quality", 80);
+            } else {
+                cmd.fps = 5;
+                cmd.quality = 80;
+            }
             if (cmd.action[0] == '\0') {
                 copy_string(cmd.action, sizeof(cmd.action), "single");
             }
+            g_router.on_capture(&cmd);
+        }
+    } else if (strcmp(type, "ctrl.camera.video_config") == 0) {
+        msg_type = WS_MSG_CTRL_CAMERA_VIDEO_CONFIG;
+        if (g_router.on_capture) {
+            cJSON *data = cJSON_GetObjectItem(root, "data");
+            ws_capture_cmd_t cmd = {0};
+            fill_camera_cmd(data, "config", &cmd);
+            g_router.on_capture(&cmd);
+        }
+    } else if (strcmp(type, "ctrl.camera.capture_image") == 0) {
+        msg_type = WS_MSG_CTRL_CAMERA_CAPTURE_IMAGE;
+        if (g_router.on_capture) {
+            cJSON *data = cJSON_GetObjectItem(root, "data");
+            ws_capture_cmd_t cmd = {0};
+            fill_camera_cmd(data, "single", &cmd);
+            g_router.on_capture(&cmd);
+        }
+    } else if (strcmp(type, "ctrl.camera.start_video") == 0) {
+        msg_type = WS_MSG_CTRL_CAMERA_START_VIDEO;
+        if (g_router.on_capture) {
+            cJSON *data = cJSON_GetObjectItem(root, "data");
+            ws_capture_cmd_t cmd = {0};
+            fill_camera_cmd(data, "start", &cmd);
+            g_router.on_capture(&cmd);
+        }
+    } else if (strcmp(type, "ctrl.camera.stop_video") == 0) {
+        msg_type = WS_MSG_CTRL_CAMERA_STOP_VIDEO;
+        if (g_router.on_capture) {
+            cJSON *data = cJSON_GetObjectItem(root, "data");
+            ws_capture_cmd_t cmd = {0};
+            fill_camera_cmd(data, "stop", &cmd);
             g_router.on_capture(&cmd);
         }
     } else if (strcmp(type, "reboot") == 0) {

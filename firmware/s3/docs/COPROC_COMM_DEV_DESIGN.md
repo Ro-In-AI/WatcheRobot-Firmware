@@ -187,9 +187,9 @@ sensecap-watcher
 
 当前分支的最小落地方案：
 
-- `capture` 下行负责 `single/start/stop`
-- `video` 上行先发一条文本元数据，再紧跟一帧 JPEG 二进制
-- 这只是联调适配层，不等同于最终版云侧多路复用协议
+- camera 控制面统一收敛到 `ctrl.camera.*`
+- camera media 面统一收敛到 `WSPK + JPEG/MJPEG`
+- 服务端/网关侧最终协议见 `docs/SERVER_GATEWAY_CAMERA_MEDIA_PROTOCOL.md`
 
 ## 5. 推荐数据流
 

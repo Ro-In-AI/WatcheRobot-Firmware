@@ -26,7 +26,14 @@
 #define RESPONSE_TIMEOUT_MS 30000 /* 30 seconds timeout for server response */
 #define WS_BUFFER_SIZE 65536
 #define WS_TASK_STACK 24576
-#define WS_VIDEO_META_MAX 256
+#define WS_TEXT_PAYLOAD_MAX 384
+#define WS_BINARY_HEADER_LEN 16
+#define WS_BINARY_MAGIC "WSPK"
+#define WS_BINARY_FRAME_VIDEO 2
+#define WS_BINARY_FRAME_IMAGE 3
+#define WS_BINARY_FLAG_FIRST 0x01
+#define WS_BINARY_FLAG_LAST 0x02
+#define WS_BINARY_FLAG_KEYFRAME 0x04
 
 static esp_websocket_client_handle_t ws_client = NULL;
 static bool is_connected = false;
@@ -212,69 +219,186 @@ int ws_client_is_connected(void) {
     return is_connected ? 1 : 0;
 }
 
-int ws_send_video_event(const char *event, int code, const char *message, int fps) {
-    char payload[WS_VIDEO_META_MAX];
+static void ws_write_u16_le(uint8_t *dst, uint16_t value) {
+    dst[0] = (uint8_t)(value & 0xFF);
+    dst[1] = (uint8_t)((value >> 8) & 0xFF);
+}
+
+static void ws_write_u32_le(uint8_t *dst, uint32_t value) {
+    dst[0] = (uint8_t)(value & 0xFF);
+    dst[1] = (uint8_t)((value >> 8) & 0xFF);
+    dst[2] = (uint8_t)((value >> 16) & 0xFF);
+    dst[3] = (uint8_t)((value >> 24) & 0xFF);
+}
+
+static int ws_send_binary_packet(uint8_t frame_type, uint8_t flags, uint16_t stream_id, uint32_t seq,
+                                 const uint8_t *payload, size_t len) {
+    uint8_t *packet = NULL;
+    size_t packet_len = WS_BINARY_HEADER_LEN + len;
+    int sent;
+
+    if (!ws_client || !is_connected) {
+        return -1;
+    }
+
+    if (len > 0 && payload == NULL) {
+        return -1;
+    }
+
+    packet = (uint8_t *)malloc(packet_len);
+    if (!packet) {
+        ESP_LOGE(TAG, "binary packet alloc failed, len=%u", (unsigned int)packet_len);
+        return -1;
+    }
+
+    memcpy(packet, WS_BINARY_MAGIC, 4);
+    packet[4] = frame_type;
+    packet[5] = flags;
+    ws_write_u16_le(packet + 6, stream_id);
+    ws_write_u32_le(packet + 8, seq);
+    ws_write_u32_le(packet + 12, (uint32_t)len);
+    if (len > 0) {
+        memcpy(packet + WS_BINARY_HEADER_LEN, payload, len);
+    }
+
+    sent = ws_client_send_binary(packet, (int)packet_len);
+    free(packet);
+
+    if (sent != (int)packet_len) {
+        ESP_LOGW(TAG, "binary packet send incomplete: %d/%u", sent, (unsigned int)packet_len);
+        return -1;
+    }
+
+    return 0;
+}
+
+int ws_send_sys_ack(const char *command_id, const char *command_type, uint16_t stream_id, const char *message) {
+    char payload[WS_TEXT_PAYLOAD_MAX];
     int len;
 
-    if (!event || !ws_client || !is_connected) {
+    if (!command_id || command_id[0] == '\0' || !command_type || !ws_client || !is_connected) {
         return -1;
     }
 
     if (message && message[0] != '\0') {
         len = snprintf(payload, sizeof(payload),
-                       "{\"type\":\"video\",\"code\":%d,\"data\":{\"event\":\"%s\",\"message\":\"%s\",\"fps\":%d}}",
-                       code,
-                       event,
-                       message,
-                       fps);
+                       "{\"type\":\"sys.ack\",\"code\":0,\"data\":{\"command_id\":\"%s\",\"command_type\":\"%s\","
+                       "\"stream_id\":%u,\"message\":\"%s\"}}",
+                       command_id,
+                       command_type,
+                       (unsigned int)stream_id,
+                       message);
     } else {
         len = snprintf(payload, sizeof(payload),
-                       "{\"type\":\"video\",\"code\":%d,\"data\":{\"event\":\"%s\",\"fps\":%d}}",
-                       code,
-                       event,
-                       fps);
+                       "{\"type\":\"sys.ack\",\"code\":0,\"data\":{\"command_id\":\"%s\",\"command_type\":\"%s\","
+                       "\"stream_id\":%u}}",
+                       command_id,
+                       command_type,
+                       (unsigned int)stream_id);
     }
 
     if (len <= 0 || len >= (int)sizeof(payload)) {
-        ESP_LOGE(TAG, "video event payload overflow");
+        ESP_LOGE(TAG, "ack payload overflow");
         return -1;
     }
 
     return ws_client_send_text(payload);
 }
 
-int ws_send_video_frame(const uint8_t *jpeg, size_t len, uint32_t timestamp_ms, uint32_t seq, bool streaming) {
-    char meta[WS_VIDEO_META_MAX];
-    int meta_len;
-    int sent;
+int ws_send_sys_nack(const char *command_id, const char *command_type, const char *reason) {
+    char payload[WS_TEXT_PAYLOAD_MAX];
+    int len;
 
-    if (!jpeg || len == 0 || !ws_client || !is_connected) {
+    if (!command_type || !reason || !ws_client || !is_connected) {
         return -1;
     }
 
-    meta_len = snprintf(meta, sizeof(meta),
-                        "{\"type\":\"video\",\"code\":0,\"data\":{\"event\":\"frame\",\"seq\":%lu,"
-                        "\"timestamp_ms\":%lu,\"size\":%lu,\"format\":\"jpeg\",\"streaming\":%s}}",
-                        (unsigned long)seq,
-                        (unsigned long)timestamp_ms,
-                        (unsigned long)len,
-                        streaming ? "true" : "false");
-    if (meta_len <= 0 || meta_len >= (int)sizeof(meta)) {
-        ESP_LOGE(TAG, "video metadata payload overflow");
+    if (command_id && command_id[0] != '\0') {
+        len = snprintf(payload, sizeof(payload),
+                       "{\"type\":\"sys.nack\",\"code\":1,\"data\":{\"command_id\":\"%s\",\"command_type\":\"%s\","
+                       "\"reason\":\"%s\"}}",
+                       command_id,
+                       command_type,
+                       reason);
+    } else {
+        len = snprintf(payload, sizeof(payload),
+                       "{\"type\":\"sys.nack\",\"code\":1,\"data\":{\"command_type\":\"%s\",\"reason\":\"%s\"}}",
+                       command_type,
+                       reason);
+    }
+
+    if (len <= 0 || len >= (int)sizeof(payload)) {
+        ESP_LOGE(TAG, "nack payload overflow");
         return -1;
     }
 
-    if (ws_client_send_text(meta) < 0) {
+    return ws_client_send_text(payload);
+}
+
+int ws_send_camera_state(const char *action, const char *state, uint16_t stream_id, int fps, const char *message) {
+    char payload[WS_TEXT_PAYLOAD_MAX];
+    int len;
+
+    if (!action || !state || !ws_client || !is_connected) {
         return -1;
     }
 
-    sent = ws_client_send_binary(jpeg, (int)len);
-    if (sent != (int)len) {
-        ESP_LOGW(TAG, "video binary send incomplete: %d/%u", sent, (unsigned int)len);
+    if (message && message[0] != '\0') {
+        len = snprintf(payload, sizeof(payload),
+                       "{\"type\":\"evt.camera.state\",\"code\":0,\"data\":{\"action\":\"%s\",\"state\":\"%s\","
+                       "\"stream_id\":%u,\"fps\":%d,\"message\":\"%s\"}}",
+                       action,
+                       state,
+                       (unsigned int)stream_id,
+                       fps,
+                       message);
+    } else {
+        len = snprintf(payload, sizeof(payload),
+                       "{\"type\":\"evt.camera.state\",\"code\":0,\"data\":{\"action\":\"%s\",\"state\":\"%s\","
+                       "\"stream_id\":%u,\"fps\":%d}}",
+                       action,
+                       state,
+                       (unsigned int)stream_id,
+                       fps);
+    }
+
+    if (len <= 0 || len >= (int)sizeof(payload)) {
+        ESP_LOGE(TAG, "camera state payload overflow");
         return -1;
     }
 
-    return 0;
+    return ws_client_send_text(payload);
+}
+
+int ws_send_video_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id, uint32_t seq, bool first_frame) {
+    uint8_t flags = WS_BINARY_FLAG_KEYFRAME;
+
+    if (!jpeg || len == 0) {
+        return -1;
+    }
+
+    if (first_frame) {
+        flags |= WS_BINARY_FLAG_FIRST;
+    }
+
+    return ws_send_binary_packet(WS_BINARY_FRAME_VIDEO, flags, stream_id, seq, jpeg, len);
+}
+
+int ws_send_video_end(uint16_t stream_id, uint32_t seq) {
+    return ws_send_binary_packet(WS_BINARY_FRAME_VIDEO, WS_BINARY_FLAG_LAST, stream_id, seq, NULL, 0);
+}
+
+int ws_send_image_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id) {
+    if (!jpeg || len == 0) {
+        return -1;
+    }
+
+    return ws_send_binary_packet(WS_BINARY_FRAME_IMAGE,
+                                 WS_BINARY_FLAG_FIRST | WS_BINARY_FLAG_LAST | WS_BINARY_FLAG_KEYFRAME,
+                                 stream_id,
+                                 1,
+                                 jpeg,
+                                 len);
 }
 
 /* ------------------------------------------------------------------ */

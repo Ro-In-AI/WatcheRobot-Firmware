@@ -11,7 +11,11 @@ typedef enum {
     /* Control commands (Cloud -> Watcher) - v2.0 format */
     WS_MSG_SERVO,   /* {"type": "servo", "data": {"id": "x", "angle": 90, "time": 500}} */
     WS_MSG_DISPLAY, /* {"type": "display", "code": 0, "data": {"text": "...", "emoji": "happy"}} */
-    WS_MSG_CAPTURE, /* {"type": "capture", "code": 0, "data": {"quality": 80}} */
+    WS_MSG_CAPTURE, /* Legacy capture message */
+    WS_MSG_CTRL_CAMERA_VIDEO_CONFIG,
+    WS_MSG_CTRL_CAMERA_CAPTURE_IMAGE,
+    WS_MSG_CTRL_CAMERA_START_VIDEO,
+    WS_MSG_CTRL_CAMERA_STOP_VIDEO,
     WS_MSG_STATUS,  /* {"type": "status", "code": 0, "data": "状态描述"} */
     WS_MSG_REBOOT,  /* {"type": "reboot", "code": 0, "data": null} */
 
@@ -79,9 +83,13 @@ typedef struct {
 } ws_error_cmd_t;
 
 /* Capture command structure */
+#define WS_COMMAND_ID_MAX 48
 #define WS_CAPTURE_ACTION_MAX 16
 typedef struct {
+    char command_id[WS_COMMAND_ID_MAX];
     char action[WS_CAPTURE_ACTION_MAX]; /* "single", "start", "stop" */
+    int width;                          /* requested width */
+    int height;                         /* requested height */
     int fps;                            /* requested stream fps */
     int quality;                        /* reserved for future JPEG tuning */
 } ws_capture_cmd_t;
