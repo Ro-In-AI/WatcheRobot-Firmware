@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import logging
+import re
 import socket
 import struct
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -46,6 +49,16 @@ WSPK_FLAG_LAST = 0x02
 WSPK_FLAG_KEYFRAME = 0x04
 JPEG_SOI = b"\xFF\xD8"
 JPEG_EOI = b"\xFF\xD9"
+DEFAULT_PREFERRED_SUBNETS = ("192.168.31.",)
+WINDOWS_VIRTUAL_ADAPTER_HINTS = (
+    "mihomo",
+    "vethernet",
+    "virtual",
+    "vmware",
+    "hyper-v",
+    "tailscale",
+    "loopback",
+)
 
 
 def configure_logging(level: str) -> None:
@@ -56,25 +69,196 @@ def configure_logging(level: str) -> None:
     )
 
 
-def detect_local_ip() -> str:
+@dataclass
+class LocalIpv4Candidate:
+    name: str
+    ip: str
+    gateway: str = ""
+
+
+def subnet_prefix(ip: str) -> str:
+    octets = ip.split(".")
+    if len(octets) != 4:
+        return ""
+    return ".".join(octets[:3]) + "."
+
+
+def is_reserved_or_unusable_ip(ip: str) -> bool:
+    if ip.startswith("127.") or ip.startswith("169.254."):
+        return True
+
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+
+    # 198.18.0.0/15 is commonly used by virtual/proxy adapters and should
+    # never be announced to the Watcher as a LAN WebSocket endpoint.
+    return addr in ipaddress.ip_network("198.18.0.0/15")
+
+
+def discover_preferred_subnets_from_firmware_logs(repo_root: Path) -> list[str]:
+    subnets: list[str] = []
+    log_dir = repo_root / "build" / "log"
+    if not log_dir.exists():
+        return list(DEFAULT_PREFERRED_SUBNETS)
+
+    patterns = [
+        re.compile(r"WIFI: Got IP: (?P<ip>\d+\.\d+\.\d+\.\d+)"),
+        re.compile(r"DISCOVERY: Received from (?P<ip>\d+\.\d+\.\d+\.\d+)"),
+        re.compile(r"MAIN: Server: (?P<ip>\d+\.\d+\.\d+\.\d+):\d+"),
+        re.compile(r"WS_CLIENT: Server URL set to: ws://(?P<ip>\d+\.\d+\.\d+\.\d+):\d+"),
+    ]
+
+    for path in sorted(log_dir.glob("idf_py_stdout_output_*"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        for pattern in patterns:
+            for match in pattern.finditer(content):
+                prefix = subnet_prefix(match.group("ip"))
+                if prefix and prefix not in subnets:
+                    subnets.append(prefix)
+
+        if subnets:
+            break
+
+    if not subnets:
+        subnets.extend(DEFAULT_PREFERRED_SUBNETS)
+
+    return subnets
+
+
+def parse_windows_ipconfig() -> list[LocalIpv4Candidate]:
+    try:
+        result = subprocess.run(
+            ["ipconfig"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except OSError:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    candidates: list[LocalIpv4Candidate] = []
+    current_name = ""
+    current_ip = ""
+    current_gateway = ""
+
+    def flush_current() -> None:
+        nonlocal current_name, current_ip, current_gateway
+        if current_name and current_ip:
+            candidates.append(LocalIpv4Candidate(current_name, current_ip, current_gateway))
+        current_name = ""
+        current_ip = ""
+        current_gateway = ""
+
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            if current_ip:
+                flush_current()
+            continue
+
+        if not raw_line.startswith(" ") and stripped.endswith(":"):
+            flush_current()
+            current_name = stripped[:-1]
+            continue
+
+        if ":" not in stripped:
+            continue
+
+        key, _, value = stripped.partition(":")
+        value = value.strip()
+        if not value:
+            continue
+
+        if "IPv4" in key:
+            current_ip = value
+        elif "Default Gateway" in key:
+            current_gateway = value
+
+    flush_current()
+    return candidates
+
+
+def score_candidate(candidate: LocalIpv4Candidate, preferred_subnets: list[str]) -> int:
+    if is_reserved_or_unusable_ip(candidate.ip):
+        return -1000
+
+    score = 0
+    if any(candidate.ip.startswith(prefix) for prefix in preferred_subnets):
+        score += 200
+
+    try:
+        addr = ipaddress.ip_address(candidate.ip)
+        if addr.is_private:
+            score += 40
+    except ValueError:
+        return -1000
+
+    if candidate.gateway:
+        score += 25
+
+    name_lc = candidate.name.lower()
+    if any(hint in name_lc for hint in WINDOWS_VIRTUAL_ADAPTER_HINTS):
+        score -= 120
+
+    return score
+
+
+def detect_local_ip(repo_root: Path, preferred_subnets: list[str] | None = None) -> str:
+    preferred = preferred_subnets or discover_preferred_subnets_from_firmware_logs(repo_root)
+    candidates = parse_windows_ipconfig()
+    scored = sorted(
+        (
+            (score_candidate(candidate, preferred), candidate)
+            for candidate in candidates
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    for score, candidate in scored:
+        if score > 0:
+            logging.info(
+                "Selected local IP %s from '%s' (gateway=%s, preferred_subnets=%s)",
+                candidate.ip,
+                candidate.name,
+                candidate.gateway or "none",
+                ",".join(preferred),
+            )
+            return candidate.ip
+
     probes = [("8.8.8.8", 80), ("1.1.1.1", 80)]
     for host, port in probes:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.connect((host, port))
                 ip = sock.getsockname()[0]
-                if ip and not ip.startswith("127."):
+                if ip and not is_reserved_or_unusable_ip(ip):
+                    logging.info("Selected local IP %s via socket probe fallback", ip)
                     return ip
         except OSError:
             continue
 
     try:
         ip = socket.gethostbyname(socket.gethostname())
-        if ip:
+        if ip and not is_reserved_or_unusable_ip(ip):
+            logging.info("Selected local IP %s via hostname fallback", ip)
             return ip
     except OSError:
         pass
 
+    logging.warning("Falling back to loopback announce IP; no LAN IPv4 candidate matched")
     return "127.0.0.1"
 
 
@@ -196,7 +380,13 @@ class DiscoveryProtocol(asyncio.DatagramProtocol):
 class GatewayHarness:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.announce_ip = args.announce_ip or detect_local_ip()
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.preferred_subnets = args.preferred_subnet or discover_preferred_subnets_from_firmware_logs(
+            self.repo_root
+        )
+        self.announce_ip = args.announce_ip or detect_local_ip(
+            self.repo_root, self.preferred_subnets
+        )
         self.output_dir = Path(args.output_dir).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -593,6 +783,7 @@ class GatewayHarness:
     def print_summary(self) -> None:
         logging.info("----- Summary -----")
         logging.info("announce_ip=%s", self.announce_ip)
+        logging.info("preferred_subnets=%s", ",".join(self.preferred_subnets))
         logging.info("discovery_packets=%d", self.discovery_packets)
         logging.info("text_frames=%d", self.text_frames)
         logging.info("binary_frames=%d", self.binary_frames)
@@ -666,6 +857,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--announce-ip",
         default="",
         help="IP address returned in the UDP ANNOUNCE response. Defaults to auto-detect.",
+    )
+    parser.add_argument(
+        "--preferred-subnet",
+        action="append",
+        default=None,
+        help="Preferred IPv4 subnet prefix for auto-detection, e.g. 192.168.31.",
     )
     parser.add_argument(
         "--discovery-port",
