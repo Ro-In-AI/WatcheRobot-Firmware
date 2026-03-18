@@ -177,6 +177,33 @@ static void hal_camera_drain_semaphore(SemaphoreHandle_t sem) {
     }
 }
 
+static void hal_camera_log_sensor_catalog(void) {
+    sscma_client_reply_t reply = {0};
+    esp_err_t ret;
+
+    ret = sscma_client_request(s_ctx.client, "AT+SENSORS?\r\n", &reply, true, 2000 / portTICK_PERIOD_MS);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "sscma_client_request(AT+SENSORS?) failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    if (reply.payload != NULL) {
+        char *json = cJSON_PrintUnformatted(reply.payload);
+        if (json != NULL) {
+            ESP_LOGI(TAG, "HX6538 sensors catalog: %s", json);
+            free(json);
+        } else {
+            ESP_LOGW(TAG, "HX6538 sensors catalog print failed");
+        }
+    } else if (reply.data != NULL && reply.len > 0) {
+        ESP_LOGI(TAG, "HX6538 sensors catalog raw: %.*s", (int)reply.len, reply.data);
+    } else {
+        ESP_LOGW(TAG, "HX6538 sensors catalog reply empty");
+    }
+
+    sscma_client_reply_clear(&reply);
+}
+
 static esp_err_t hal_camera_log_device_info(void) {
     sscma_client_info_t *info = NULL;
     sscma_client_model_t *model = NULL;
@@ -215,6 +242,8 @@ static esp_err_t hal_camera_log_device_info(void) {
     } else {
         ESP_LOGW(TAG, "sscma_client_get_sensor failed: %s", esp_err_to_name(ret));
     }
+
+    hal_camera_log_sensor_catalog();
 
     return ESP_OK;
 }
