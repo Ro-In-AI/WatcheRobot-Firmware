@@ -318,7 +318,29 @@ class WspkPacket:
         )
 
     def is_jpeg(self) -> bool:
-        return self.payload.startswith(JPEG_SOI) and self.payload.endswith(JPEG_EOI)
+        return self.jpeg_end_offset() is not None
+
+    def jpeg_end_offset(self) -> int | None:
+        if not self.payload.startswith(JPEG_SOI):
+            return None
+
+        idx = self.payload.rfind(JPEG_EOI)
+        if idx < 0:
+            return None
+
+        return idx + len(JPEG_EOI)
+
+    def jpeg_padding_len(self) -> int:
+        end = self.jpeg_end_offset()
+        if end is None:
+            return 0
+        return len(self.payload) - end
+
+    def normalized_payload(self) -> bytes:
+        end = self.jpeg_end_offset()
+        if end is None:
+            return self.payload
+        return self.payload[:end]
 
 
 @dataclass
@@ -583,6 +605,13 @@ class GatewayHarness:
             self.fail(
                 f"image packet stream={packet.stream_id} seq={packet.seq} does not contain a full JPEG"
             )
+        elif packet.jpeg_padding_len() > 0:
+            logging.warning(
+                "image packet stream=%d seq=%d contains %d bytes of trailing padding after JPEG EOI",
+                packet.stream_id,
+                packet.seq,
+                packet.jpeg_padding_len(),
+            )
 
         if self.capture_expectation is not None:
             expected_stream = self.capture_expectation.stream_id
@@ -617,6 +646,13 @@ class GatewayHarness:
             self.fail(
                 f"video packet stream={packet.stream_id} seq={packet.seq} does not contain a full JPEG"
             )
+        elif packet.jpeg_padding_len() > 0:
+            logging.warning(
+                "video packet stream=%d seq=%d contains %d bytes of trailing padding after JPEG EOI",
+                packet.stream_id,
+                packet.seq,
+                packet.jpeg_padding_len(),
+            )
 
         if self.video_start_expectation is not None:
             expected_stream = self.video_start_expectation.stream_id
@@ -635,9 +671,10 @@ class GatewayHarness:
         stream_dir.mkdir(parents=True, exist_ok=True)
 
         kind = frame_type_name(packet.frame_type)
+        payload = packet.normalized_payload()
         suffix = ".jpg" if packet.is_jpeg() else ".bin"
         path = stream_dir / f"{kind}_seq_{packet.seq:06d}{suffix}"
-        path.write_bytes(packet.payload)
+        path.write_bytes(payload)
         self.saved_files.append(path)
         logging.info("Saved %s", path)
 
