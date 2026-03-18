@@ -77,13 +77,28 @@ static void camera_service_frame_cb_internal(const uint8_t *jpeg, size_t size, u
 esp_err_t camera_service_init(void) {
     ESP_RETURN_ON_ERROR(camera_service_ensure_lock(), TAG, "camera service lock init failed");
 
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
     if (s_ctx.initialized) {
+        xSemaphoreGive(s_ctx.lock);
         return ESP_OK;
     }
 
+    xSemaphoreGive(s_ctx.lock);
     ESP_RETURN_ON_ERROR(hal_camera_init(), TAG, "hal_camera_init failed");
-    s_ctx.initialized = true;
-    ESP_LOGI(TAG, "camera service initialized");
+
+    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    if (!s_ctx.initialized) {
+        s_ctx.initialized = true;
+        ESP_LOGI(TAG, "camera service initialized");
+    }
+
+    xSemaphoreGive(s_ctx.lock);
     return ESP_OK;
 }
 

@@ -35,9 +35,13 @@ typedef struct {
     int stream_fps;
     bool initialized;
     bool connected;
+    bool init_in_progress;
+    bool callbacks_registered;
+    bool client_started;
     bool capture_in_progress;
     bool streaming;
     bool stream_stop_requested;
+    esp_err_t init_status;
     esp_err_t capture_status;
     char *capture_image;
     int capture_image_size;
@@ -56,9 +60,13 @@ static hal_camera_context_t s_ctx = {
     .stream_fps = 0,
     .initialized = false,
     .connected = false,
+    .init_in_progress = false,
+    .callbacks_registered = false,
+    .client_started = false,
     .capture_in_progress = false,
     .streaming = false,
     .stream_stop_requested = false,
+    .init_status = ESP_OK,
     .capture_status = ESP_OK,
     .capture_image = NULL,
     .capture_image_size = 0,
@@ -460,6 +468,11 @@ static void hal_camera_stream_task(void *arg) {
 
 esp_err_t hal_camera_init(void) {
     esp_err_t ret;
+    bool need_register = false;
+    bool need_client_start = false;
+    TickType_t waited_ticks = 0;
+    const TickType_t step_ticks = pdMS_TO_TICKS(20);
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(HAL_CAMERA_CONNECT_TIMEOUT_MS);
     const sscma_client_callback_t callbacks = {
         .on_connect = hal_camera_on_connect,
         .on_disconnect = NULL,
@@ -470,41 +483,110 @@ esp_err_t hal_camera_init(void) {
 
     ESP_RETURN_ON_ERROR(hal_camera_ensure_sync_primitives(), TAG, "camera sync primitive init failed");
 
-    if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
-        return ESP_FAIL;
-    }
+    while (true) {
+        if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
+            return ESP_FAIL;
+        }
 
-    if (s_ctx.initialized && s_ctx.connected && s_ctx.client != NULL) {
+        if (s_ctx.initialized && s_ctx.connected && s_ctx.client != NULL) {
+            xSemaphoreGive(s_ctx.lock);
+            return ESP_OK;
+        }
+
+        if (s_ctx.init_in_progress) {
+            esp_err_t init_status = s_ctx.init_status;
+            bool initialized = s_ctx.initialized;
+            xSemaphoreGive(s_ctx.lock);
+
+            if (initialized && init_status == ESP_OK) {
+                return ESP_OK;
+            }
+
+            if (waited_ticks >= timeout_ticks) {
+                ESP_LOGE(TAG, "HX6538 init wait timeout after %d ms", HAL_CAMERA_CONNECT_TIMEOUT_MS);
+                return ESP_ERR_TIMEOUT;
+            }
+
+            vTaskDelay(step_ticks);
+            waited_ticks += step_ticks;
+            continue;
+        }
+
+        s_ctx.init_in_progress = true;
+        s_ctx.init_status = ESP_ERR_TIMEOUT;
+
+        if (s_ctx.client == NULL) {
+            s_ctx.client = bsp_sscma_client_init();
+            if (s_ctx.client == NULL) {
+                s_ctx.init_in_progress = false;
+                s_ctx.init_status = ESP_FAIL;
+                xSemaphoreGive(s_ctx.lock);
+                ESP_LOGE(TAG, "bsp_sscma_client_init failed");
+                return ESP_FAIL;
+            }
+        }
+
+        need_register = !s_ctx.callbacks_registered;
+        need_client_start = !s_ctx.client_started || !s_ctx.connected;
+        s_ctx.connected = false;
+        hal_camera_clear_capture_locked();
         xSemaphoreGive(s_ctx.lock);
-        return ESP_OK;
+        break;
     }
 
-    s_ctx.client = bsp_sscma_client_init();
-    if (s_ctx.client == NULL) {
-        xSemaphoreGive(s_ctx.lock);
-        ESP_LOGE(TAG, "bsp_sscma_client_init failed");
-        return ESP_FAIL;
+    if (need_register) {
+        ret = sscma_client_register_callback(s_ctx.client, &callbacks, NULL);
+        if (ret != ESP_OK) {
+            if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                s_ctx.init_in_progress = false;
+                s_ctx.init_status = ret;
+                xSemaphoreGive(s_ctx.lock);
+            }
+            ESP_LOGE(TAG, "sscma register callback failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
+
+        if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            s_ctx.callbacks_registered = true;
+            xSemaphoreGive(s_ctx.lock);
+        }
     }
 
-    s_ctx.connected = false;
-    hal_camera_clear_capture_locked();
-    xSemaphoreGive(s_ctx.lock);
+    if (need_client_start) {
+        hal_camera_drain_semaphore(s_ctx.connect_sem);
+        ret = sscma_client_init(s_ctx.client);
+        if (ret != ESP_OK) {
+            if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                s_ctx.init_in_progress = false;
+                s_ctx.init_status = ret;
+                xSemaphoreGive(s_ctx.lock);
+            }
+            ESP_LOGE(TAG, "sscma init failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
 
-    hal_camera_drain_semaphore(s_ctx.connect_sem);
+        if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            s_ctx.client_started = true;
+            xSemaphoreGive(s_ctx.lock);
+        }
 
-    ESP_RETURN_ON_ERROR(sscma_client_register_callback(s_ctx.client, &callbacks, NULL), TAG,
-                        "sscma register callback failed");
-    ESP_RETURN_ON_ERROR(sscma_client_init(s_ctx.client), TAG, "sscma init failed");
-
-    ret = xSemaphoreTake(s_ctx.connect_sem, pdMS_TO_TICKS(HAL_CAMERA_CONNECT_TIMEOUT_MS)) == pdTRUE ? ESP_OK
-                                                                                                     : ESP_ERR_TIMEOUT;
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "HX6538 connect timeout after %d ms", HAL_CAMERA_CONNECT_TIMEOUT_MS);
-        return ret;
+        ret = xSemaphoreTake(s_ctx.connect_sem, pdMS_TO_TICKS(HAL_CAMERA_CONNECT_TIMEOUT_MS)) == pdTRUE ? ESP_OK
+                                                                                                         : ESP_ERR_TIMEOUT;
+        if (ret != ESP_OK) {
+            if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                s_ctx.init_in_progress = false;
+                s_ctx.init_status = ret;
+                xSemaphoreGive(s_ctx.lock);
+            }
+            ESP_LOGE(TAG, "HX6538 connect timeout after %d ms", HAL_CAMERA_CONNECT_TIMEOUT_MS);
+            return ret;
+        }
     }
 
     if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
         s_ctx.initialized = true;
+        s_ctx.init_in_progress = false;
+        s_ctx.init_status = ESP_OK;
         xSemaphoreGive(s_ctx.lock);
     }
 

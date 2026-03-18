@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "hal_audio.h"
 #include "ws_router.h"
@@ -42,6 +43,34 @@ static bool waiting_for_response = false;
 static int timeout_display_count = 0;                       /* Limit timeout display to 1 time */
 static int64_t response_wait_start_time = 0;                /* Timestamp when response wait started */
 static char ws_server_url[WS_URL_MAX_LEN] = WS_DEFAULT_URL; /* Dynamic server URL */
+static SemaphoreHandle_t ws_send_lock = NULL;
+
+static int ws_client_lock_and_send(bool binary, const void *payload, int len) {
+    int sent = -1;
+
+    if (!ws_client || !is_connected || payload == NULL || len < 0) {
+        return -1;
+    }
+
+    if (ws_send_lock == NULL) {
+        ws_send_lock = xSemaphoreCreateMutex();
+        if (ws_send_lock == NULL) {
+            ESP_LOGE(TAG, "create ws send lock failed");
+            return -1;
+        }
+    }
+
+    if (xSemaphoreTake(ws_send_lock, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        ESP_LOGW(TAG, "ws send lock timeout");
+        return -1;
+    }
+
+    sent = binary ? esp_websocket_client_send_bin(ws_client, (const char *)payload, len, pdMS_TO_TICKS(1000))
+                  : esp_websocket_client_send_text(ws_client, (const char *)payload, len, pdMS_TO_TICKS(1000));
+
+    xSemaphoreGive(ws_send_lock);
+    return sent;
+}
 
 /* ------------------------------------------------------------------ */
 /* WebSocket Event Handler                                            */
@@ -129,6 +158,16 @@ int ws_client_init(void) {
         return -1;
     }
 
+    if (ws_send_lock == NULL) {
+        ws_send_lock = xSemaphoreCreateMutex();
+        if (ws_send_lock == NULL) {
+            esp_websocket_client_destroy(ws_client);
+            ws_client = NULL;
+            ESP_LOGE(TAG, "Failed to create WebSocket send lock");
+            return -1;
+        }
+    }
+
     esp_websocket_register_events(ws_client, WEBSOCKET_EVENT_ANY, ws_event_handler, NULL);
 
     ESP_LOGI(TAG, "WebSocket client initialized (URL: %s)", ws_server_url);
@@ -198,21 +237,19 @@ void ws_client_stop(void) {
 /* ------------------------------------------------------------------ */
 
 int ws_client_send_binary(const uint8_t *data, int len) {
-    if (!ws_client || !is_connected) {
+    if (!ws_client || !is_connected || data == NULL || len < 0) {
         return -1;
     }
 
-    int sent = esp_websocket_client_send_bin(ws_client, (const char *)data, len, pdMS_TO_TICKS(1000));
-    return sent;
+    return ws_client_lock_and_send(true, data, len);
 }
 
 int ws_client_send_text(const char *text) {
-    if (!ws_client || !is_connected) {
+    if (!ws_client || !is_connected || text == NULL) {
         return -1;
     }
 
-    int sent = esp_websocket_client_send_text(ws_client, text, strlen(text), pdMS_TO_TICKS(1000));
-    return sent;
+    return ws_client_lock_and_send(false, text, (int)strlen(text));
 }
 
 int ws_client_is_connected(void) {
