@@ -11,8 +11,10 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "hal_servo.h"
 #include "ws_client.h"
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -23,11 +25,15 @@
 #define WS_CAPTURE_DEFAULT_FPS 5
 #define WS_CAPTURE_MAX_FPS 10
 #define WS_CAPTURE_DEFAULT_QUALITY 80
+#define WS_CAMERA_UPLOAD_TASK_STACK 6144
+#define WS_CAMERA_UPLOAD_TASK_PRIORITY 5
 
 typedef struct {
     SemaphoreHandle_t lock;
+    SemaphoreHandle_t frame_ready_sem;
     bool callback_registered;
     bool streaming;
+    bool upload_stop_requested;
     uint16_t current_stream_id;
     uint16_t next_stream_id;
     uint32_t next_seq;
@@ -39,13 +45,20 @@ typedef struct {
     uint64_t send_total_us;
     uint64_t send_lock_wait_total_us;
     uint64_t send_sock_total_us;
+    uint32_t frames_dropped;
+    uint8_t *pending_jpeg;
+    size_t pending_size;
+    uint32_t pending_timestamp_ms;
+    TaskHandle_t upload_task;
     char current_command_id[WS_COMMAND_ID_MAX];
 } ws_camera_context_t;
 
 static ws_camera_context_t s_camera_ctx = {
     .lock = NULL,
+    .frame_ready_sem = NULL,
     .callback_registered = false,
     .streaming = false,
+    .upload_stop_requested = false,
     .current_stream_id = 0,
     .next_stream_id = 0,
     .next_seq = 1,
@@ -57,6 +70,11 @@ static ws_camera_context_t s_camera_ctx = {
     .send_total_us = 0,
     .send_lock_wait_total_us = 0,
     .send_sock_total_us = 0,
+    .frames_dropped = 0,
+    .pending_jpeg = NULL,
+    .pending_size = 0,
+    .pending_timestamp_ms = 0,
+    .upload_task = NULL,
     .current_command_id = {0},
 };
 
@@ -67,6 +85,158 @@ static esp_err_t ws_camera_ensure_lock(void) {
             ESP_LOGE(TAG, "camera ws lock create failed");
             return ESP_ERR_NO_MEM;
         }
+    }
+    if (s_camera_ctx.frame_ready_sem == NULL) {
+        s_camera_ctx.frame_ready_sem = xSemaphoreCreateBinary();
+        if (s_camera_ctx.frame_ready_sem == NULL) {
+            ESP_LOGE(TAG, "camera ws frame semaphore create failed");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    return ESP_OK;
+}
+
+static void ws_camera_drain_frame_signal(void) {
+    if (s_camera_ctx.frame_ready_sem == NULL) {
+        return;
+    }
+    while (xSemaphoreTake(s_camera_ctx.frame_ready_sem, 0) == pdTRUE) {
+    }
+}
+
+static void ws_camera_release_pending_locked(void) {
+    if (s_camera_ctx.pending_jpeg != NULL) {
+        free(s_camera_ctx.pending_jpeg);
+        s_camera_ctx.pending_jpeg = NULL;
+    }
+    s_camera_ctx.pending_size = 0;
+    s_camera_ctx.pending_timestamp_ms = 0;
+}
+
+static void ws_camera_upload_task(void *arg) {
+    (void)arg;
+
+    while (true) {
+        uint8_t *jpeg = NULL;
+        size_t size = 0;
+        uint32_t timestamp_ms = 0;
+        uint32_t seq = 0;
+        uint16_t stream_id = 0;
+        bool first_frame = false;
+        uint32_t frames_sent = 0;
+        uint64_t send_total_us = 0;
+        uint64_t send_lock_wait_total_us = 0;
+        uint64_t send_sock_total_us = 0;
+        ws_client_media_send_stats_t send_stats = {0};
+        int send_ret;
+
+        if (xSemaphoreTake(s_camera_ctx.frame_ready_sem, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        if (s_camera_ctx.upload_stop_requested) {
+            ws_camera_release_pending_locked();
+            s_camera_ctx.upload_task = NULL;
+            s_camera_ctx.upload_stop_requested = false;
+            xSemaphoreGive(s_camera_ctx.lock);
+            break;
+        }
+
+        if (!s_camera_ctx.streaming || s_camera_ctx.current_stream_id == 0 || s_camera_ctx.pending_jpeg == NULL ||
+            s_camera_ctx.pending_size == 0) {
+            xSemaphoreGive(s_camera_ctx.lock);
+            continue;
+        }
+
+        jpeg = s_camera_ctx.pending_jpeg;
+        size = s_camera_ctx.pending_size;
+        timestamp_ms = s_camera_ctx.pending_timestamp_ms;
+        s_camera_ctx.pending_jpeg = NULL;
+        s_camera_ctx.pending_size = 0;
+        s_camera_ctx.pending_timestamp_ms = 0;
+        stream_id = s_camera_ctx.current_stream_id;
+        seq = s_camera_ctx.next_seq++;
+        first_frame = (seq == 1);
+        xSemaphoreGive(s_camera_ctx.lock);
+
+        send_ret = ws_send_video_frame(jpeg, size, stream_id, seq, first_frame);
+        ws_client_get_media_send_stats(&send_stats);
+        if (send_ret < 0) {
+            ESP_LOGW(TAG, "video frame upload failed: stream=%u seq=%lu size=%u",
+                     (unsigned int)stream_id,
+                     (unsigned long)seq,
+                     (unsigned int)size);
+        } else if (send_stats.valid && xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            s_camera_ctx.frames_sent++;
+            s_camera_ctx.send_total_us += send_stats.total_us;
+            s_camera_ctx.send_lock_wait_total_us += send_stats.lock_wait_us;
+            s_camera_ctx.send_sock_total_us += send_stats.send_us;
+            frames_sent = s_camera_ctx.frames_sent;
+            send_total_us = s_camera_ctx.send_total_us;
+            send_lock_wait_total_us = s_camera_ctx.send_lock_wait_total_us;
+            send_sock_total_us = s_camera_ctx.send_sock_total_us;
+            xSemaphoreGive(s_camera_ctx.lock);
+            if ((frames_sent % 30U) == 0U) {
+                ESP_LOGI(TAG,
+                         "ws media timing stream=%u latest_us{total=%lu lock=%lu send=%lu payload=%u packet=%u ts=%lu} "
+                         "avg_us{total=%lu lock=%lu send=%lu} frames=%lu dropped=%lu",
+                         (unsigned int)stream_id,
+                         (unsigned long)send_stats.total_us,
+                         (unsigned long)send_stats.lock_wait_us,
+                         (unsigned long)send_stats.send_us,
+                         (unsigned int)send_stats.payload_len,
+                         (unsigned int)send_stats.packet_len,
+                         (unsigned long)timestamp_ms,
+                         (unsigned long)(send_total_us / frames_sent),
+                         (unsigned long)(send_lock_wait_total_us / frames_sent),
+                         (unsigned long)(send_sock_total_us / frames_sent),
+                         (unsigned long)frames_sent,
+                         (unsigned long)s_camera_ctx.frames_dropped);
+            }
+        }
+
+        free(jpeg);
+    }
+
+    ESP_LOGI(TAG, "camera upload task exited");
+    vTaskDelete(NULL);
+}
+
+static esp_err_t ws_camera_ensure_upload_task(void) {
+    BaseType_t task_ret;
+
+    ESP_RETURN_ON_ERROR(ws_camera_ensure_lock(), TAG, "camera ws lock init failed");
+
+    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    if (s_camera_ctx.upload_task != NULL) {
+        xSemaphoreGive(s_camera_ctx.lock);
+        return ESP_OK;
+    }
+
+    s_camera_ctx.upload_stop_requested = false;
+    xSemaphoreGive(s_camera_ctx.lock);
+
+    task_ret = xTaskCreate(ws_camera_upload_task,
+                           "ws_cam_upload",
+                           WS_CAMERA_UPLOAD_TASK_STACK,
+                           NULL,
+                           WS_CAMERA_UPLOAD_TASK_PRIORITY,
+                           &s_camera_ctx.upload_task);
+    if (task_ret != pdPASS) {
+        if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            s_camera_ctx.upload_task = NULL;
+            xSemaphoreGive(s_camera_ctx.lock);
+        }
+        ESP_LOGE(TAG, "camera upload task create failed");
+        return ESP_FAIL;
     }
 
     return ESP_OK;
@@ -96,6 +266,9 @@ static uint16_t ws_camera_begin_transfer(bool streaming, int fps, const char *co
         s_camera_ctx.send_total_us = 0;
         s_camera_ctx.send_lock_wait_total_us = 0;
         s_camera_ctx.send_sock_total_us = 0;
+        s_camera_ctx.frames_dropped = 0;
+        ws_camera_release_pending_locked();
+        ws_camera_drain_frame_signal();
         stream_id = s_camera_ctx.current_stream_id;
         if (command_id) {
             strncpy(s_camera_ctx.current_command_id, command_id, sizeof(s_camera_ctx.current_command_id) - 1);
@@ -122,6 +295,9 @@ static void ws_camera_finish_one_shot(void) {
         s_camera_ctx.send_total_us = 0;
         s_camera_ctx.send_lock_wait_total_us = 0;
         s_camera_ctx.send_sock_total_us = 0;
+        s_camera_ctx.frames_dropped = 0;
+        ws_camera_release_pending_locked();
+        ws_camera_drain_frame_signal();
         xSemaphoreGive(s_camera_ctx.lock);
     }
 }
@@ -146,23 +322,18 @@ static void ws_camera_reset_stream(bool keep_config) {
         s_camera_ctx.send_total_us = 0;
         s_camera_ctx.send_lock_wait_total_us = 0;
         s_camera_ctx.send_sock_total_us = 0;
+        s_camera_ctx.frames_dropped = 0;
+        ws_camera_release_pending_locked();
+        ws_camera_drain_frame_signal();
         xSemaphoreGive(s_camera_ctx.lock);
     }
 }
 
 static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timestamp_ms, void *ctx) {
-    uint32_t seq = 0;
     uint16_t stream_id = 0;
     bool streaming = false;
-    bool first_frame = false;
-    ws_client_media_send_stats_t send_stats = {0};
-    uint32_t frames_sent = 0;
-    uint64_t send_total_us = 0;
-    uint64_t send_lock_wait_total_us = 0;
-    uint64_t send_sock_total_us = 0;
-    int send_ret = -1;
+    uint8_t *jpeg_copy = NULL;
 
-    (void)timestamp_ms;
     (void)ctx;
 
     if (!jpeg || size == 0) {
@@ -176,8 +347,6 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
     if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
         streaming = s_camera_ctx.streaming;
         stream_id = s_camera_ctx.current_stream_id;
-        seq = s_camera_ctx.next_seq++;
-        first_frame = (seq == 1);
         xSemaphoreGive(s_camera_ctx.lock);
     }
 
@@ -187,38 +356,29 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
     }
 
     if (streaming) {
-        send_ret = ws_send_video_frame(jpeg, size, stream_id, seq, first_frame);
-        ws_client_get_media_send_stats(&send_stats);
-        if (send_ret < 0) {
-            ESP_LOGW(TAG, "video frame upload failed: stream=%u seq=%lu size=%u",
-                     (unsigned int)stream_id,
-                     (unsigned long)seq,
-                     (unsigned int)size);
-        } else if (send_stats.valid && xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-            s_camera_ctx.frames_sent++;
-            s_camera_ctx.send_total_us += send_stats.total_us;
-            s_camera_ctx.send_lock_wait_total_us += send_stats.lock_wait_us;
-            s_camera_ctx.send_sock_total_us += send_stats.send_us;
-            frames_sent = s_camera_ctx.frames_sent;
-            send_total_us = s_camera_ctx.send_total_us;
-            send_lock_wait_total_us = s_camera_ctx.send_lock_wait_total_us;
-            send_sock_total_us = s_camera_ctx.send_sock_total_us;
-            xSemaphoreGive(s_camera_ctx.lock);
-            if ((frames_sent % 30U) == 0U) {
-                ESP_LOGI(TAG,
-                         "ws media timing stream=%u latest_us{total=%lu lock=%lu send=%lu payload=%u packet=%u} "
-                         "avg_us{total=%lu lock=%lu send=%lu} frames=%lu",
-                         (unsigned int)stream_id,
-                         (unsigned long)send_stats.total_us,
-                         (unsigned long)send_stats.lock_wait_us,
-                         (unsigned long)send_stats.send_us,
-                         (unsigned int)send_stats.payload_len,
-                         (unsigned int)send_stats.packet_len,
-                         (unsigned long)(send_total_us / frames_sent),
-                         (unsigned long)(send_lock_wait_total_us / frames_sent),
-                         (unsigned long)(send_sock_total_us / frames_sent),
-                         (unsigned long)frames_sent);
+        jpeg_copy = (uint8_t *)malloc(size);
+        if (jpeg_copy == NULL) {
+            ESP_LOGW(TAG, "camera frame drop: alloc failed size=%u", (unsigned int)size);
+            if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+                s_camera_ctx.frames_dropped++;
+                xSemaphoreGive(s_camera_ctx.lock);
             }
+            return;
+        }
+        memcpy(jpeg_copy, jpeg, size);
+
+        if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            if (s_camera_ctx.pending_jpeg != NULL) {
+                free(s_camera_ctx.pending_jpeg);
+                s_camera_ctx.frames_dropped++;
+            }
+            s_camera_ctx.pending_jpeg = jpeg_copy;
+            s_camera_ctx.pending_size = size;
+            s_camera_ctx.pending_timestamp_ms = timestamp_ms;
+            xSemaphoreGive(s_camera_ctx.lock);
+            xSemaphoreGive(s_camera_ctx.frame_ready_sem);
+        } else {
+            free(jpeg_copy);
         }
         return;
     }
@@ -234,6 +394,7 @@ static esp_err_t ws_camera_ensure_ready(void) {
     esp_err_t ret;
 
     ESP_RETURN_ON_ERROR(ws_camera_ensure_lock(), TAG, "camera ws lock init failed");
+    ESP_RETURN_ON_ERROR(ws_camera_ensure_upload_task(), TAG, "camera upload task init failed");
     ESP_RETURN_ON_ERROR(camera_service_init(), TAG, "camera service init failed");
 
     if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) != pdTRUE) {
