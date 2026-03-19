@@ -27,6 +27,23 @@
 #define HAL_CAMERA_DEFAULT_QUALITY 80
 
 typedef struct {
+    uint32_t invoke_call_us;
+    uint32_t wait_image_us;
+    uint32_t decode_us;
+    uint32_t capture_total_us;
+    uint32_t timestamp_total_us;
+} hal_camera_capture_timing_t;
+
+typedef struct {
+    uint32_t capture_total_us;
+    uint32_t invoke_call_us;
+    uint32_t wait_image_us;
+    uint32_t decode_us;
+    uint32_t callback_us;
+    uint32_t loop_total_us;
+} hal_camera_stream_timing_sample_t;
+
+typedef struct {
     int opt_id;
     int width;
     int height;
@@ -462,16 +479,25 @@ static void hal_camera_abort_capture(void) {
     }
 }
 
-static esp_err_t hal_camera_take_image_string(bool from_stream, char **image, int *image_size) {
+static esp_err_t hal_camera_take_image_string(bool from_stream, char **image, int *image_size,
+                                              hal_camera_capture_timing_t *timing) {
     esp_err_t ret;
+    int64_t invoke_start_us = 0;
+    int64_t invoke_return_us = 0;
+    int64_t image_ready_us = 0;
 
     ESP_RETURN_ON_FALSE(image != NULL && image_size != NULL, ESP_ERR_INVALID_ARG, TAG, "invalid image output");
     *image = NULL;
     *image_size = 0;
+    if (timing != NULL) {
+        memset(timing, 0, sizeof(*timing));
+    }
 
     ESP_RETURN_ON_ERROR(hal_camera_prepare_capture(from_stream), TAG, "prepare capture failed");
 
+    invoke_start_us = esp_timer_get_time();
     ret = sscma_client_invoke(s_ctx.client, 1, false, true);
+    invoke_return_us = esp_timer_get_time();
     if (ret != ESP_OK) {
         hal_camera_abort_capture();
         ESP_LOGE(TAG, "sscma invoke failed: %s", esp_err_to_name(ret));
@@ -483,6 +509,7 @@ static esp_err_t hal_camera_take_image_string(bool from_stream, char **image, in
         ESP_LOGW(TAG, "capture timed out after %d ms", HAL_CAMERA_CAPTURE_TIMEOUT_MS);
         return ESP_ERR_TIMEOUT;
     }
+    image_ready_us = esp_timer_get_time();
 
     if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
         return ESP_FAIL;
@@ -496,14 +523,23 @@ static esp_err_t hal_camera_take_image_string(bool from_stream, char **image, in
     s_ctx.capture_in_progress = false;
     xSemaphoreGive(s_ctx.lock);
 
+    if (timing != NULL) {
+        timing->invoke_call_us = (uint32_t)(invoke_return_us - invoke_start_us);
+        timing->wait_image_us = (uint32_t)(image_ready_us - invoke_return_us);
+    }
+
     return ret;
 }
 
 static esp_err_t hal_camera_capture_jpeg_internal(bool from_stream, uint8_t **jpeg, size_t *jpeg_size,
-                                                  uint32_t *timestamp_ms) {
+                                                  uint32_t *timestamp_ms, hal_camera_capture_timing_t *timing) {
     esp_err_t ret;
     char *image = NULL;
     int image_size = 0;
+    int64_t capture_start_us = 0;
+    int64_t decode_start_us = 0;
+    int64_t decode_done_us = 0;
+    int64_t capture_done_us = 0;
 
     ESP_RETURN_ON_FALSE(jpeg != NULL && jpeg_size != NULL && timestamp_ms != NULL, ESP_ERR_INVALID_ARG, TAG,
                         "invalid jpeg output");
@@ -511,15 +547,34 @@ static esp_err_t hal_camera_capture_jpeg_internal(bool from_stream, uint8_t **jp
     *jpeg = NULL;
     *jpeg_size = 0;
     *timestamp_ms = 0;
+    if (timing != NULL) {
+        memset(timing, 0, sizeof(*timing));
+    }
 
-    ret = hal_camera_take_image_string(from_stream, &image, &image_size);
+    capture_start_us = esp_timer_get_time();
+    ret = hal_camera_take_image_string(from_stream, &image, &image_size, timing);
     ESP_GOTO_ON_ERROR(ret, cleanup, TAG, "capture failed");
     ESP_GOTO_ON_FALSE(image != NULL && image_size > 0, ESP_ERR_INVALID_RESPONSE, cleanup, TAG, "capture image missing");
+    decode_start_us = esp_timer_get_time();
     ESP_GOTO_ON_ERROR(hal_camera_decode_image(image, jpeg, jpeg_size), cleanup, TAG, "image decode failed");
+    decode_done_us = esp_timer_get_time();
 
     *timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    capture_done_us = esp_timer_get_time();
 
 cleanup:
+    if (timing != NULL) {
+        if (decode_done_us > 0 && decode_start_us > 0) {
+            timing->decode_us = (uint32_t)(decode_done_us - decode_start_us);
+        }
+        if (capture_done_us == 0) {
+            capture_done_us = esp_timer_get_time();
+        }
+        if (capture_start_us > 0) {
+            timing->capture_total_us = (uint32_t)(capture_done_us - capture_start_us);
+            timing->timestamp_total_us = timing->capture_total_us;
+        }
+    }
     if (image != NULL) {
         free(image);
     }
@@ -528,6 +583,13 @@ cleanup:
 
 static void hal_camera_stream_task(void *arg) {
     (void)arg;
+    uint64_t capture_total_acc_us = 0;
+    uint64_t invoke_call_acc_us = 0;
+    uint64_t wait_image_acc_us = 0;
+    uint64_t decode_acc_us = 0;
+    uint64_t callback_acc_us = 0;
+    uint64_t loop_total_acc_us = 0;
+    uint32_t timing_count = 0;
 
     while (true) {
         uint64_t loop_start_us = (uint64_t)esp_timer_get_time();
@@ -540,6 +602,10 @@ static void hal_camera_stream_task(void *arg) {
         esp_err_t ret;
         uint32_t ok_count = 0;
         uint32_t err_count = 0;
+        hal_camera_capture_timing_t capture_timing = {0};
+        hal_camera_stream_timing_sample_t sample = {0};
+        int64_t callback_start_us = 0;
+        int64_t callback_done_us = 0;
 
         if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) != pdTRUE) {
             break;
@@ -561,10 +627,17 @@ static void hal_camera_stream_task(void *arg) {
         fps = s_ctx.stream_fps;
         xSemaphoreGive(s_ctx.lock);
 
-        ret = hal_camera_capture_jpeg_internal(true, &jpeg, &jpeg_size, &timestamp_ms);
+        ret = hal_camera_capture_jpeg_internal(true, &jpeg, &jpeg_size, &timestamp_ms, &capture_timing);
+        sample.capture_total_us = capture_timing.capture_total_us;
+        sample.invoke_call_us = capture_timing.invoke_call_us;
+        sample.wait_image_us = capture_timing.wait_image_us;
+        sample.decode_us = capture_timing.decode_us;
         if (ret == ESP_OK) {
             if (frame_cb != NULL) {
+                callback_start_us = esp_timer_get_time();
                 frame_cb(jpeg, jpeg_size, timestamp_ms, frame_ctx);
+                callback_done_us = esp_timer_get_time();
+                sample.callback_us = (uint32_t)(callback_done_us - callback_start_us);
             }
 
             if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
@@ -573,12 +646,36 @@ static void hal_camera_stream_task(void *arg) {
                 xSemaphoreGive(s_ctx.lock);
             }
 
+            sample.loop_total_us = (uint32_t)((uint64_t)esp_timer_get_time() - loop_start_us);
+            capture_total_acc_us += sample.capture_total_us;
+            invoke_call_acc_us += sample.invoke_call_us;
+            wait_image_acc_us += sample.wait_image_us;
+            decode_acc_us += sample.decode_us;
+            callback_acc_us += sample.callback_us;
+            loop_total_acc_us += sample.loop_total_us;
+            timing_count++;
+
             if (ok_count > 0 && (ok_count % HAL_CAMERA_STREAM_LOG_EVERY) == 0) {
-                ESP_LOGI(TAG, "stream frames ok=%lu err=%lu fps=%d last_jpeg=%u",
+                ESP_LOGI(TAG,
+                         "stream frames ok=%lu err=%lu fps=%d last_jpeg=%u timing_us latest{capture=%lu invoke=%lu "
+                         "wait=%lu decode=%lu callback=%lu loop=%lu} avg{capture=%lu invoke=%lu wait=%lu decode=%lu "
+                         "callback=%lu loop=%lu}",
                          (unsigned long)ok_count,
                          (unsigned long)s_ctx.stream_frames_err,
                          fps,
-                         (unsigned int)jpeg_size);
+                         (unsigned int)jpeg_size,
+                         (unsigned long)sample.capture_total_us,
+                         (unsigned long)sample.invoke_call_us,
+                         (unsigned long)sample.wait_image_us,
+                         (unsigned long)sample.decode_us,
+                         (unsigned long)sample.callback_us,
+                         (unsigned long)sample.loop_total_us,
+                         (unsigned long)(capture_total_acc_us / timing_count),
+                         (unsigned long)(invoke_call_acc_us / timing_count),
+                         (unsigned long)(wait_image_acc_us / timing_count),
+                         (unsigned long)(decode_acc_us / timing_count),
+                         (unsigned long)(callback_acc_us / timing_count),
+                         (unsigned long)(loop_total_acc_us / timing_count));
             }
         } else {
             if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
@@ -907,7 +1004,7 @@ esp_err_t hal_camera_capture_once(hal_camera_frame_cb_t cb, void *ctx) {
     esp_err_t ret;
 
     ESP_RETURN_ON_FALSE(cb != NULL, ESP_ERR_INVALID_ARG, TAG, "frame callback required");
-    ret = hal_camera_capture_jpeg_internal(false, &jpeg, &jpeg_size, &timestamp_ms);
+    ret = hal_camera_capture_jpeg_internal(false, &jpeg, &jpeg_size, &timestamp_ms, NULL);
     ESP_GOTO_ON_ERROR(ret, cleanup, TAG, "capture failed");
     cb(jpeg, jpeg_size, timestamp_ms, ctx);
 

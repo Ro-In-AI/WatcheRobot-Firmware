@@ -44,9 +44,13 @@ static int timeout_display_count = 0;                       /* Limit timeout dis
 static int64_t response_wait_start_time = 0;                /* Timestamp when response wait started */
 static char ws_server_url[WS_URL_MAX_LEN] = WS_DEFAULT_URL; /* Dynamic server URL */
 static SemaphoreHandle_t ws_send_lock = NULL;
+static ws_client_media_send_stats_t s_last_media_send_stats = {0};
 
 static int ws_client_lock_and_send(bool binary, const void *payload, int len) {
     int sent = -1;
+    int64_t start_us = 0;
+    int64_t lock_acquired_us = 0;
+    int64_t send_done_us = 0;
 
     if (!ws_client || !is_connected || payload == NULL || len < 0) {
         return -1;
@@ -60,15 +64,26 @@ static int ws_client_lock_and_send(bool binary, const void *payload, int len) {
         }
     }
 
+    start_us = esp_timer_get_time();
     if (xSemaphoreTake(ws_send_lock, pdMS_TO_TICKS(3000)) != pdTRUE) {
         ESP_LOGW(TAG, "ws send lock timeout");
         return -1;
     }
+    lock_acquired_us = esp_timer_get_time();
 
     sent = binary ? esp_websocket_client_send_bin(ws_client, (const char *)payload, len, pdMS_TO_TICKS(1000))
                   : esp_websocket_client_send_text(ws_client, (const char *)payload, len, pdMS_TO_TICKS(1000));
+    send_done_us = esp_timer_get_time();
 
     xSemaphoreGive(ws_send_lock);
+
+    s_last_media_send_stats.valid = false;
+    s_last_media_send_stats.binary = binary;
+    s_last_media_send_stats.lock_wait_us = (uint32_t)(lock_acquired_us - start_us);
+    s_last_media_send_stats.send_us = (uint32_t)(send_done_us - lock_acquired_us);
+    s_last_media_send_stats.total_us = (uint32_t)(send_done_us - start_us);
+    s_last_media_send_stats.timestamp_us = (uint64_t)send_done_us;
+
     return sent;
 }
 
@@ -273,6 +288,7 @@ static int ws_send_binary_packet(uint8_t frame_type, uint8_t flags, uint16_t str
     uint8_t *packet = NULL;
     size_t packet_len = WS_BINARY_HEADER_LEN + len;
     int sent;
+    bool ok;
 
     if (!ws_client || !is_connected) {
         return -1;
@@ -300,8 +316,14 @@ static int ws_send_binary_packet(uint8_t frame_type, uint8_t flags, uint16_t str
 
     sent = ws_client_send_binary(packet, (int)packet_len);
     free(packet);
+    ok = (sent == (int)packet_len);
 
-    if (sent != (int)packet_len) {
+    s_last_media_send_stats.valid = ok;
+    s_last_media_send_stats.frame_type = frame_type;
+    s_last_media_send_stats.payload_len = len;
+    s_last_media_send_stats.packet_len = (uint32_t)packet_len;
+
+    if (!ok) {
         ESP_LOGW(TAG, "binary packet send incomplete: %d/%u", sent, (unsigned int)packet_len);
         return -1;
     }
@@ -436,6 +458,14 @@ int ws_send_image_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id) {
                                  1,
                                  jpeg,
                                  len);
+}
+
+void ws_client_get_media_send_stats(ws_client_media_send_stats_t *stats) {
+    if (stats == NULL) {
+        return;
+    }
+
+    *stats = s_last_media_send_stats;
 }
 
 /* ------------------------------------------------------------------ */

@@ -35,6 +35,10 @@ typedef struct {
     int configured_width;
     int configured_height;
     int configured_quality;
+    uint32_t frames_sent;
+    uint64_t send_total_us;
+    uint64_t send_lock_wait_total_us;
+    uint64_t send_sock_total_us;
     char current_command_id[WS_COMMAND_ID_MAX];
 } ws_camera_context_t;
 
@@ -49,6 +53,10 @@ static ws_camera_context_t s_camera_ctx = {
     .configured_width = 0,
     .configured_height = 0,
     .configured_quality = WS_CAPTURE_DEFAULT_QUALITY,
+    .frames_sent = 0,
+    .send_total_us = 0,
+    .send_lock_wait_total_us = 0,
+    .send_sock_total_us = 0,
     .current_command_id = {0},
 };
 
@@ -84,6 +92,10 @@ static uint16_t ws_camera_begin_transfer(bool streaming, int fps, const char *co
         s_camera_ctx.target_fps = streaming ? fps : 0;
         s_camera_ctx.current_stream_id = ws_camera_allocate_stream_id_locked();
         s_camera_ctx.next_seq = 1;
+        s_camera_ctx.frames_sent = 0;
+        s_camera_ctx.send_total_us = 0;
+        s_camera_ctx.send_lock_wait_total_us = 0;
+        s_camera_ctx.send_sock_total_us = 0;
         stream_id = s_camera_ctx.current_stream_id;
         if (command_id) {
             strncpy(s_camera_ctx.current_command_id, command_id, sizeof(s_camera_ctx.current_command_id) - 1);
@@ -106,6 +118,10 @@ static void ws_camera_finish_one_shot(void) {
         s_camera_ctx.current_stream_id = 0;
         s_camera_ctx.next_seq = 1;
         s_camera_ctx.current_command_id[0] = '\0';
+        s_camera_ctx.frames_sent = 0;
+        s_camera_ctx.send_total_us = 0;
+        s_camera_ctx.send_lock_wait_total_us = 0;
+        s_camera_ctx.send_sock_total_us = 0;
         xSemaphoreGive(s_camera_ctx.lock);
     }
 }
@@ -126,6 +142,10 @@ static void ws_camera_reset_stream(bool keep_config) {
             s_camera_ctx.configured_height = 0;
             s_camera_ctx.configured_quality = WS_CAPTURE_DEFAULT_QUALITY;
         }
+        s_camera_ctx.frames_sent = 0;
+        s_camera_ctx.send_total_us = 0;
+        s_camera_ctx.send_lock_wait_total_us = 0;
+        s_camera_ctx.send_sock_total_us = 0;
         xSemaphoreGive(s_camera_ctx.lock);
     }
 }
@@ -135,6 +155,12 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
     uint16_t stream_id = 0;
     bool streaming = false;
     bool first_frame = false;
+    ws_client_media_send_stats_t send_stats = {0};
+    uint32_t frames_sent = 0;
+    uint64_t send_total_us = 0;
+    uint64_t send_lock_wait_total_us = 0;
+    uint64_t send_sock_total_us = 0;
+    int send_ret = -1;
 
     (void)timestamp_ms;
     (void)ctx;
@@ -161,11 +187,38 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
     }
 
     if (streaming) {
-        if (ws_send_video_frame(jpeg, size, stream_id, seq, first_frame) < 0) {
+        send_ret = ws_send_video_frame(jpeg, size, stream_id, seq, first_frame);
+        ws_client_get_media_send_stats(&send_stats);
+        if (send_ret < 0) {
             ESP_LOGW(TAG, "video frame upload failed: stream=%u seq=%lu size=%u",
                      (unsigned int)stream_id,
                      (unsigned long)seq,
                      (unsigned int)size);
+        } else if (send_stats.valid && xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+            s_camera_ctx.frames_sent++;
+            s_camera_ctx.send_total_us += send_stats.total_us;
+            s_camera_ctx.send_lock_wait_total_us += send_stats.lock_wait_us;
+            s_camera_ctx.send_sock_total_us += send_stats.send_us;
+            frames_sent = s_camera_ctx.frames_sent;
+            send_total_us = s_camera_ctx.send_total_us;
+            send_lock_wait_total_us = s_camera_ctx.send_lock_wait_total_us;
+            send_sock_total_us = s_camera_ctx.send_sock_total_us;
+            xSemaphoreGive(s_camera_ctx.lock);
+            if ((frames_sent % 30U) == 0U) {
+                ESP_LOGI(TAG,
+                         "ws media timing stream=%u latest_us{total=%lu lock=%lu send=%lu payload=%u packet=%u} "
+                         "avg_us{total=%lu lock=%lu send=%lu} frames=%lu",
+                         (unsigned int)stream_id,
+                         (unsigned long)send_stats.total_us,
+                         (unsigned long)send_stats.lock_wait_us,
+                         (unsigned long)send_stats.send_us,
+                         (unsigned int)send_stats.payload_len,
+                         (unsigned int)send_stats.packet_len,
+                         (unsigned long)(send_total_us / frames_sent),
+                         (unsigned long)(send_lock_wait_total_us / frames_sent),
+                         (unsigned long)(send_sock_total_us / frames_sent),
+                         (unsigned long)frames_sent);
+            }
         }
         return;
     }

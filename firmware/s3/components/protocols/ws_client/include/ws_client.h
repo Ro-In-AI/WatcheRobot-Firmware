@@ -10,6 +10,18 @@
  * @brief WebSocket client interface (Protocol v2.0)
  */
 
+typedef struct {
+    bool valid;
+    bool binary;
+    uint8_t frame_type;
+    size_t payload_len;
+    uint32_t packet_len;
+    uint32_t lock_wait_us;
+    uint32_t send_us;
+    uint32_t total_us;
+    uint64_t timestamp_us;
+} ws_client_media_send_stats_t;
+
 /**
  * Initialize WebSocket client
  */
@@ -87,6 +99,11 @@ int ws_send_video_end(uint16_t stream_id, uint32_t seq);
  * Send one JPEG image using the WSPK binary header.
  */
 int ws_send_image_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id);
+
+/**
+ * Get the most recent media send timing sample.
+ */
+void ws_client_get_media_send_stats(ws_client_media_send_stats_t *stats);
 
 /**
  * Send audio data via WebSocket (v2.0: raw PCM)
