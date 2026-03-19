@@ -5,8 +5,12 @@
  * Provides JPEG frame callback interface via SSCMA protocol.
  * Himax chip communicates with ESP32-S3 via UART/SPI SSCMA protocol.
  *
- * Phase 7 implementation: requires hardware verification of SSCMA frame rate.
- * Phase 1 (current): stub API.
+ * Current implementation supports:
+ * - SSCMA client initialization and connect wait
+ * - one-shot frame capture via hal_camera_capture_once()
+ * - continuous frame capture via hal_camera_start()/hal_camera_stop()
+ *
+ * Streaming is currently implemented as a paced one-shot INVOKE loop over SSCMA.
  */
 
 #ifndef HAL_CAMERA_H
@@ -35,6 +39,27 @@ typedef void (*hal_camera_frame_cb_t)(const uint8_t *jpeg, size_t size, uint32_t
  * @return ESP_OK on success, ESP_FAIL if SSCMA initialization fails
  */
 esp_err_t hal_camera_init(void);
+
+/**
+ * @brief Configure the active HX6538 camera sensor output profile.
+ *
+ * Supported profiles currently map to the sensor catalog reported by the coprocessor:
+ * - 240x240
+ * - 416x416
+ * - 480x480
+ * - 640x480
+ *
+ * Quality is accepted as a hint for upper layers, but the current SSCMA path
+ * does not expose a writable JPEG quality control.
+ *
+ * @param width          Requested output width
+ * @param height         Requested output height
+ * @param quality        Requested quality hint (stored for diagnostics only)
+ * @param applied_width  Optional: applied width on success
+ * @param applied_height Optional: applied height on success
+ * @return ESP_OK on success
+ */
+esp_err_t hal_camera_configure(int width, int height, int quality, int *applied_width, int *applied_height);
 
 /**
  * @brief Start continuous frame capture.

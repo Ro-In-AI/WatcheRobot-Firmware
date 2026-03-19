@@ -6,6 +6,8 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES "json" "esp_event"
     PRIV_REQUIRES
+        "camera_service"
+        "freertos"
         "hal_audio"
         "hal_servo"
         "voice_service"

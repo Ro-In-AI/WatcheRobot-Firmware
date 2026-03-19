@@ -1,12 +1,26 @@
 #ifndef WS_CLIENT_H
 #define WS_CLIENT_H
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /**
  * @file ws_client.h
  * @brief WebSocket client interface (Protocol v2.0)
  */
+
+typedef struct {
+    bool valid;
+    bool binary;
+    uint8_t frame_type;
+    size_t payload_len;
+    uint32_t packet_len;
+    uint32_t lock_wait_us;
+    uint32_t send_us;
+    uint32_t total_us;
+    uint64_t timestamp_us;
+} ws_client_media_send_stats_t;
 
 /**
  * Initialize WebSocket client
@@ -55,6 +69,41 @@ int ws_client_send_text(const char *text);
  * Check if WebSocket is connected
  */
 int ws_client_is_connected(void);
+
+/**
+ * Send sys.ack for an accepted control command.
+ */
+int ws_send_sys_ack(const char *command_id, const char *command_type, uint16_t stream_id, const char *message);
+
+/**
+ * Send sys.nack for a rejected control command.
+ */
+int ws_send_sys_nack(const char *command_id, const char *command_type, const char *reason);
+
+/**
+ * Send a camera state event.
+ */
+int ws_send_camera_state(const char *action, const char *state, uint16_t stream_id, int fps, const char *message);
+
+/**
+ * Send one MJPEG video frame using the WSPK binary header.
+ */
+int ws_send_video_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id, uint32_t seq, bool first_frame);
+
+/**
+ * Send the terminal marker of a video stream using a zero-payload WSPK frame.
+ */
+int ws_send_video_end(uint16_t stream_id, uint32_t seq);
+
+/**
+ * Send one JPEG image using the WSPK binary header.
+ */
+int ws_send_image_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id);
+
+/**
+ * Get the most recent media send timing sample.
+ */
+void ws_client_get_media_send_stats(ws_client_media_send_stats_t *stats);
 
 /**
  * Send audio data via WebSocket (v2.0: raw PCM)
