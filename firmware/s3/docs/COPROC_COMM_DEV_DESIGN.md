@@ -31,6 +31,7 @@
 
 - `docs/COMM_PROTOCOL_FREEZE.md`：对外网络协议
 - `docs/COPROC_COMM_PROTOCOL.md`：板内协处理器通信格式
+- `docs/COPROC_COMM_SSCMA_PTL_DUAL_PATH.md`：`SSCMA control + PTL binary media` 双通路方案
 - 本文：板内通信的实现路线与模块边界
 
 ## 2. 当前代码现实
