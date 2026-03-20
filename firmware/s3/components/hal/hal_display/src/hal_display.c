@@ -126,17 +126,6 @@ int hal_display_init(void) {
         }
     }
 
-    /* 1. Initialize SPIFFS and load emoji images */
-    if (emoji_spiffs_init() != 0) {
-        ESP_LOGW(TAG, "Failed to initialize SPIFFS, emoji animations disabled");
-    } else {
-        if (emoji_load_all_images() != 0) {
-            ESP_LOGW(TAG, "Failed to load emoji images");
-        } else {
-            ESP_LOGI(TAG, "Emoji images loaded successfully");
-        }
-    }
-
     /* 2. Get current active screen */
     lv_obj_t *scr = lv_disp_get_scr_act(NULL);
 
@@ -198,20 +187,6 @@ int hal_display_ui_init(void) {
     if (hal_display_minimal_init() != 0) {
         ESP_LOGE(TAG, "Failed minimal display init");
         return -1;
-    }
-
-    /* 2. Load emoji images if not already loaded by app_main boot sequence */
-    if (!emoji_images_loaded()) {
-        ESP_LOGI(TAG, "Loading emoji images (fallback)...");
-        if (emoji_spiffs_init() != 0) {
-            ESP_LOGW(TAG, "Failed to initialize SPIFFS, emoji animations disabled");
-        } else if (emoji_load_all_images() != 0) {
-            ESP_LOGW(TAG, "Failed to load emoji images");
-        } else {
-            ESP_LOGI(TAG, "Emoji images loaded successfully");
-        }
-    } else {
-        ESP_LOGI(TAG, "Emoji images already loaded");
     }
 
     /* 3. Get old boot screen before locking (for deferred deletion) */

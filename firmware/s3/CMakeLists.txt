@@ -30,5 +30,21 @@ set(EXTRA_COMPONENT_DIRS
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(WatcheRobot-S3)
 
+if(DEFINED CONFIG_WATCHER_ANIM_FPS)
+    set(ANIM_DEFAULT_FPS ${CONFIG_WATCHER_ANIM_FPS})
+else()
+    set(ANIM_DEFAULT_FPS 30)
+endif()
+
+add_custom_target(anim_assets_gen
+    COMMAND py -3 ${CMAKE_SOURCE_DIR}/tools/generate_anim_assets.py
+            --spiffs-dir ${CMAKE_SOURCE_DIR}/spiffs
+            --output-dir ${CMAKE_SOURCE_DIR}/spiffs/anim
+            --fps ${ANIM_DEFAULT_FPS}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    BYPRODUCTS
+        ${CMAKE_SOURCE_DIR}/spiffs/anim/anim_manifest.bin
+    COMMENT "Generating animation manifest and raw565 previews")
+
 # Create SPIFFS partition image from spiffs/ directory
-spiffs_create_partition_image(storage spiffs FLASH_IN_PROJECT)
+spiffs_create_partition_image(storage spiffs FLASH_IN_PROJECT DEPENDS anim_assets_gen)

@@ -53,10 +53,11 @@ menu "SenseCAP Watcher BSP Configuration"
 
         config LVGL_DRAW_BUFF_HEIGHT
             int "LVGL DRAW BUFF HEIGHT(ROWS)"
-            range 40 412
-            default 412
+            range 10 412
+            default 20
             help
-                "LVGL draw buffer height(rows)"
+                "LVGL draw buffer height(rows). Smaller values reduce SPI flush chunk size and
+                lower the temporary DMA pressure when LVGL draw buffers live in PSRAM."
 
         config LVGL_PORT_TASK_STACK_SIZE
             int "LVGL TASK STACK SIZE"

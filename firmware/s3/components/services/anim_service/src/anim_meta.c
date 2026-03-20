@@ -24,8 +24,19 @@ static anim_meta_t g_meta;
 static bool g_meta_loaded = false;
 
 /* Animation type names for JSON parsing */
-static const char *anim_type_names[] = {"greeting",  "detecting", "detected", "speaking",
-                                        "listening", "analyzing", "standby"};
+static const char *anim_type_names[EMOJI_ANIM_COUNT] = {
+    "boot",
+    "greeting",
+    "detecting",
+    "detected",
+    "speaking",
+    "listening",
+    "analyzing",
+    "standby",
+    "thinking",
+    "custom1",
+    "custom2",
+};
 
 static void set_defaults(void) {
     memset(&g_meta, 0, sizeof(g_meta));

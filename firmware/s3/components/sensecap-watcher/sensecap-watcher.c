@@ -766,6 +766,9 @@ lv_disp_t *bsp_lvgl_init(void) {
                                  .buff_dma = false,
                                  .buff_spiram = true,
                              }};
+    ESP_LOGI(TAG, "LVGL draw buffer: %d rows, %lu pixels, double=%d, psram=%d, dma_div=%d",
+             LVGL_DRAW_BUFF_HEIGHT, (unsigned long)cfg.buffer_size, cfg.double_buffer, cfg.flags.buff_spiram,
+             CONFIG_BSP_LCD_SPI_DMA_SIZE_DIV);
     cfg.lvgl_port_cfg.task_priority = CONFIG_LVGL_PORT_TASK_PRIORITY;
     cfg.lvgl_port_cfg.task_affinity = CONFIG_LVGL_PORT_TASK_AFFINITY;
     cfg.lvgl_port_cfg.task_stack = CONFIG_LVGL_PORT_TASK_STACK_SIZE;

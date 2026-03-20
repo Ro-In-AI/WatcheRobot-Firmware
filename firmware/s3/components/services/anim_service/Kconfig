@@ -11,11 +11,42 @@ menu "Watcher Animation Service"
 
     config WATCHER_ANIM_MAX_FRAMES_PER_TYPE
         int "Maximum frames per animation type"
-        default 18
-        range 1 30
+        default 24
+        range 1 48
         help
             Maximum number of frames per animation type.
-            Each frame uses approximately 332KB of PSRAM (412x412x2 bytes).
+            Each frame uses approximately 83KB of PSRAM at 206x206 RGB565.
+
+    config WATCHER_ANIM_WARM_BUDGET_KB
+        int "Warm cache budget (KB)"
+        default 1024
+        range 128 4096
+        help
+            Budget for always-on first-frame cache. 1024KB fits 10 states
+            at 206x206 RGB565 with some metadata headroom.
+
+    config WATCHER_ANIM_HOT_BUDGET_KB
+        int "Hot cache budget (KB)"
+        default 4096
+        range 1024 8192
+        help
+            Budget for active and inactive hot caches used for double-buffered
+            animation switching. 4096KB covers two 24-frame 206x206 animations.
+
+    config WATCHER_ANIM_SAFETY_MARGIN_KB
+        int "Animation safety margin (KB)"
+        default 512
+        range 128 2048
+        help
+            Reserved PSRAM that animation code should not consume, leaving room
+            for LVGL, voice, and networking workloads.
+
+    config WATCHER_ANIM_SWITCH_FADE_MS
+        int "Switch fade duration (ms)"
+        default 140
+        range 0 1000
+        help
+            Duration for the lightweight crossfade between animation states.
 
     config WATCHER_ANIM_LAZY_LOAD
         bool "Enable lazy loading of animation frames"
@@ -29,9 +60,8 @@ menu "Watcher Animation Service"
         bool "Enable RGB565 cache for fast frame switching"
         default y
         help
-            Decode PNG images to RGB565 format and cache in PSRAM.
-            Enables <1ms frame switching for smooth 30fps playback.
-            Disable to decode PNG on each frame (slower, uses less PSRAM).
+            Decode PNG images to RGB565-compatible LVGL image buffers and cache
+            them in PSRAM. Enables smooth playback and asynchronous switching.
 
     config WATCHER_ANIM_DEBUG_PERF
         bool "Enable animation performance logging"

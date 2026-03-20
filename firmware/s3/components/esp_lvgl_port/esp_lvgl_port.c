@@ -760,7 +760,12 @@ static void lvgl_port_flush_callback(lv_disp_drv_t *drv, const lv_area_t *area, 
     const int offsety1 = area->y1;
     const int offsety2 = area->y2;
     // copy a buffer's content to a specific area of the display
-    esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+    esp_err_t ret = esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1,
+                                              color_map);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Panel flush failed: %s", esp_err_to_name(ret));
+        lv_disp_flush_ready(drv);
+    }
 }
 
 static void lvgl_port_update_callback(lv_disp_drv_t *drv) {

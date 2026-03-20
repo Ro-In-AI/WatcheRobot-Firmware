@@ -1,5 +1,6 @@
 #include "sdkconfig.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
@@ -52,16 +53,6 @@ static void on_button_multi_click_restart(void) {
     esp_restart();
 }
 
-/* ------------------------------------------------------------------ */
-/* Emoji loading progress callback                                    */
-/* ------------------------------------------------------------------ */
-
-static void on_emoji_type_loaded(emoji_anim_type_t type, int types_done, int types_total) {
-    int progress = 5 + (types_done * 15) / types_total;
-    boot_anim_set_progress(progress);
-    boot_anim_set_text(emoji_type_name(type));
-}
-
 static void run_camera_boot_diag(void) {
 #if CONFIG_WATCHER_CAMERA_BOOT_DIAG
     esp_err_t ret;
@@ -83,6 +74,25 @@ static void run_camera_boot_diag(void) {
 #endif
 }
 
+static void log_heap_state(const char *stage) {
+    size_t free_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    size_t largest_8bit = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t largest_spiram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+
+    ESP_LOGI(TAG,
+             "Heap @ %s: 8bit=%u KB (largest %u KB), internal=%u KB (largest %u KB), psram=%u KB (largest %u KB)",
+             stage,
+             (unsigned)(free_8bit / 1024U),
+             (unsigned)(largest_8bit / 1024U),
+             (unsigned)(free_internal / 1024U),
+             (unsigned)(largest_internal / 1024U),
+             (unsigned)(free_spiram / 1024U),
+             (unsigned)(largest_spiram / 1024U));
+}
+
 /* ------------------------------------------------------------------ */
 /* Main Application                                                   */
 /* ------------------------------------------------------------------ */
@@ -101,15 +111,14 @@ void app_main(void) {
     boot_anim_set_text("Initializing...");
     boot_anim_set_progress(0);
 
-    /* 3. Load animation assets first so boot intro can play immediately */
+    /* 3. Initialize animation catalog and load boot assets only */
     boot_anim_set_text("Boot...");
-    if (emoji_spiffs_init() == 0) {
+    if (anim_catalog_init() == 0) {
         if (emoji_load_type(EMOJI_ANIM_BOOT) > 0) {
             /* Dedicated startup sequence: boot1.png ~ boot4.png */
             boot_anim_start_intro(EMOJI_ANIM_BOOT, 4, 120);
         }
-        boot_anim_set_text("Loading...");
-        emoji_load_all_images_with_cb(on_emoji_type_loaded);
+        boot_anim_set_text("Preparing...");
     } else {
         ESP_LOGW(TAG, "SPIFFS init failed (emoji disabled)");
     }
@@ -196,9 +205,13 @@ void app_main(void) {
     boot_anim_set_text("Ready!");
     vTaskDelay(pdMS_TO_TICKS(500));
     boot_anim_finish();
+    log_heap_state("before_ui_init");
     hal_display_ui_init();
-    run_camera_boot_diag();
+    log_heap_state("after_ui_init");
     ws_client_start();
+    log_heap_state("after_ws_start");
+    run_camera_boot_diag();
+    log_heap_state("after_camera_diag");
     /* Note: hal_display_ui_init() already sets "Ready" text and starts default animation.
      * Don't call display_update here as it would override the startup UI state. */
     ESP_LOGI(TAG, "WatcheRobot ready");

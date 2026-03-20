@@ -1,12 +1,6 @@
 /**
  * @file anim_storage.h
- * @brief Emoji PNG image loader and RGB565 cache system
- *
- * Loads PNG images from SPIFFS storage and provides:
- * 1. Raw PNG data via lv_img_dsc_t (for LVGL PNG decoder)
- * 2. Decoded RGB565 cache (for 30fps fast frame switching)
- *
- * Supports multiple emoji animation types with frame sequences.
+ * @brief Animation catalog, warm-cache, and hot-cache management.
  */
 
 #ifndef ANIM_STORAGE_H
@@ -20,7 +14,35 @@
 #ifdef CONFIG_WATCHER_ANIM_MAX_FRAMES_PER_TYPE
 #define MAX_EMOJI_IMAGES CONFIG_WATCHER_ANIM_MAX_FRAMES_PER_TYPE
 #else
-#define MAX_EMOJI_IMAGES 18
+#define MAX_EMOJI_IMAGES 24
+#endif
+
+#ifdef CONFIG_WATCHER_ANIM_WARM_BUDGET_KB
+#define WATCHER_ANIM_WARM_BUDGET_BYTES ((size_t)CONFIG_WATCHER_ANIM_WARM_BUDGET_KB * 1024U)
+#else
+#define WATCHER_ANIM_WARM_BUDGET_BYTES (1024U * 1024U)
+#endif
+
+#ifdef CONFIG_WATCHER_ANIM_HOT_BUDGET_KB
+#define WATCHER_ANIM_HOT_BUDGET_BYTES ((size_t)CONFIG_WATCHER_ANIM_HOT_BUDGET_KB * 1024U)
+#else
+#define WATCHER_ANIM_HOT_BUDGET_BYTES (4096U * 1024U)
+#endif
+
+#ifdef CONFIG_WATCHER_ANIM_SAFETY_MARGIN_KB
+#define WATCHER_ANIM_SAFETY_MARGIN_BYTES ((size_t)CONFIG_WATCHER_ANIM_SAFETY_MARGIN_KB * 1024U)
+#else
+#define WATCHER_ANIM_SAFETY_MARGIN_BYTES (512U * 1024U)
+#endif
+
+#define ANIM_MAX_PATH_LEN 96
+#define ANIM_MANIFEST_PATH "/spiffs/anim/anim_manifest.bin"
+#define ANIM_MANIFEST_FALLBACK_PATH "/spiffs/anim_manifest.bin"
+
+#ifdef CONFIG_WATCHER_ANIM_SWITCH_FADE_MS
+#define WATCHER_ANIM_SWITCH_FADE_MS CONFIG_WATCHER_ANIM_SWITCH_FADE_MS
+#else
+#define WATCHER_ANIM_SWITCH_FADE_MS 140
 #endif
 
 /* Emoji animation types */
@@ -33,9 +55,25 @@ typedef enum {
     EMOJI_ANIM_LISTENING,
     EMOJI_ANIM_ANALYZING,
     EMOJI_ANIM_STANDBY,
+    EMOJI_ANIM_THINKING,
+    EMOJI_ANIM_CUSTOM_1,
+    EMOJI_ANIM_CUSTOM_2,
     EMOJI_ANIM_COUNT,
     EMOJI_ANIM_NONE = -1
 } emoji_anim_type_t;
+
+typedef struct {
+    bool available;
+    emoji_anim_type_t type;
+    char name[24];
+    uint16_t width;
+    uint16_t height;
+    uint16_t fps;
+    bool loop;
+    uint16_t frame_count;
+    char first_frame_raw[ANIM_MAX_PATH_LEN];
+    char frame_paths[MAX_EMOJI_IMAGES][ANIM_MAX_PATH_LEN];
+} anim_catalog_type_info_t;
 
 /* ------------------------------------------------------------------ */
 /* Legacy PNG API (retained for compatibility)                        */
@@ -126,18 +164,19 @@ int emoji_load_all_images_with_cb(emoji_progress_cb_t cb);
 const char *emoji_type_name(emoji_anim_type_t type);
 
 /* ------------------------------------------------------------------ */
-/* RGB565 Cache API (for 30fps playback)                              */
+/* Animation catalog and cache API                                    */
 /* ------------------------------------------------------------------ */
 
 /**
  * @brief Cached RGB565 frame data
  */
 typedef struct {
-    uint8_t *img_data;    /**< Decoded image data in LVGL native format (PSRAM) */
-    size_t data_size;     /**< Size in bytes for the decoded image buffer */
-    int width;            /**< Image width */
-    int height;           /**< Image height */
-    lv_img_dsc_t img_dsc; /**< Persistent LVGL descriptor for this frame */
+    uint8_t *img_data;      /**< Decoded image data in LVGL native format (PSRAM) */
+    size_t data_size;       /**< Size in bytes for the decoded image buffer */
+    int width;              /**< Image width */
+    int height;             /**< Image height */
+    lv_img_cf_t color_format;
+    lv_img_dsc_t img_dsc;   /**< Persistent LVGL descriptor for this frame */
 } anim_cached_frame_t;
 
 /**
@@ -148,71 +187,84 @@ typedef struct {
     int frame_count;             /**< Number of cached frames */
     bool is_loaded;              /**< True if frames are valid */
     emoji_anim_type_t type;      /**< Animation type */
+    uint32_t generation_id;      /**< Request generation used to build the cache */
+    size_t total_bytes;          /**< Total bytes held by this cache */
 } anim_type_cache_t;
 
-/**
- * @brief Initialize RGB565 cache system
- *
- * Must be called before anim_cache_load_type().
- *
- * @return 0 on success, -1 on error
- */
-int anim_cache_init(void);
+typedef struct {
+    bool loaded;
+    emoji_anim_type_t type;
+    size_t data_size;
+    int width;
+    int height;
+    lv_img_cf_t color_format;
+    uint8_t *img_data;
+    lv_img_dsc_t img_dsc;
+} anim_warm_frame_t;
 
 /**
- * @brief Load and cache all frames for an animation type
- *
- * Decodes PNG files to RGB565 format and stores in PSRAM.
- * If another type is cached, it will be unloaded first.
- *
- * @param type Animation type to load
- * @return 0 on success, -1 on error
+ * @brief Initialize SPIFFS, metadata, and the animation catalog.
  */
-int anim_cache_load_type(emoji_anim_type_t type);
+int anim_catalog_init(void);
 
 /**
- * @brief Unload cached frames for an animation type
- *
- * Frees PSRAM memory used by cached frames.
- *
- * @param type Animation type to unload
+ * @brief Get manifest/catalog information for a type.
  */
-void anim_cache_unload_type(emoji_anim_type_t type);
+const anim_catalog_type_info_t *anim_catalog_get_type_info(emoji_anim_type_t type);
 
 /**
- * @brief Get cached RGB565 frame
- *
- * @param type Animation type
- * @param frame Frame index
- * @return Pointer to cached frame, or NULL if not cached/invalid
+ * @brief Return true if a type is available in the catalog.
  */
-anim_cached_frame_t *anim_cache_get_frame(emoji_anim_type_t type, int frame);
+bool anim_catalog_has_type(emoji_anim_type_t type);
 
 /**
- * @brief Check if animation type is cached
- *
- * @param type Animation type
- * @return true if type is loaded in cache
+ * @brief Initialize the warm cache for all runtime animation types.
  */
-bool anim_cache_is_type_loaded(emoji_anim_type_t type);
+int anim_warm_init_all_types(void);
 
 /**
- * @brief Get currently cached type
- *
- * @return Currently cached type, or EMOJI_ANIM_NONE if none
+ * @brief Get a warm-cached first frame for the requested type.
  */
-emoji_anim_type_t anim_cache_get_current_type(void);
+const lv_img_dsc_t *anim_warm_get_first_frame(emoji_anim_type_t type);
 
 /**
- * @brief Get cached frame count for current type
- *
- * @return Frame count, or 0 if no type cached
+ * @brief Prepare the inactive hot cache for a type.
  */
-int anim_cache_get_frame_count(void);
+int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id);
 
 /**
- * @brief Free all cached frames
+ * @brief Commit the prepared hot cache and make it active.
  */
-void anim_cache_free_all(void);
+int anim_hot_commit_prepared(emoji_anim_type_t type, uint32_t generation_id);
+
+/**
+ * @brief Drop any prepared-but-not-committed hot cache.
+ */
+void anim_hot_discard_prepared(void);
+
+/**
+ * @brief Check if the active hot cache already matches the type.
+ */
+bool anim_hot_is_active_type(emoji_anim_type_t type);
+
+/**
+ * @brief Get the currently active hot cache type.
+ */
+emoji_anim_type_t anim_hot_get_active_type(void);
+
+/**
+ * @brief Get the active hot cache frame count.
+ */
+int anim_hot_get_frame_count(void);
+
+/**
+ * @brief Get a frame from the active hot cache.
+ */
+anim_cached_frame_t *anim_hot_get_frame(emoji_anim_type_t type, int frame);
+
+/**
+ * @brief Free all hot-cache memory.
+ */
+void anim_hot_free_all(void);
 
 #endif /* ANIM_STORAGE_H */
