@@ -89,6 +89,20 @@ static int parse_announce(const char *json, server_info_t *info) {
         info->version[sizeof(info->version) - 1] = '\0';
     }
 
+    /* Extract protocol_version (optional, but strongly recommended) */
+    cJSON *protocol_version = cJSON_GetObjectItem(root, "protocol_version");
+    if (protocol_version && cJSON_IsString(protocol_version)) {
+        strncpy(info->protocol_version, protocol_version->valuestring, sizeof(info->protocol_version) - 1);
+        info->protocol_version[sizeof(info->protocol_version) - 1] = '\0';
+    }
+
+    /* Extract server name (optional) */
+    cJSON *server = cJSON_GetObjectItem(root, "server");
+    if (server && cJSON_IsString(server)) {
+        strncpy(info->server, server->valuestring, sizeof(info->server) - 1);
+        info->server[sizeof(info->server) - 1] = '\0';
+    }
+
     cJSON_Delete(root);
     info->discovered = true;
     return 0;
@@ -206,8 +220,12 @@ int discovery_start(server_info_t *info) {
 
             /* Parse response */
             if (parse_announce(rx_buf, &g_server_info) == 0) {
-                ESP_LOGI(TAG, "Discovered server: %s:%u (v%s)", g_server_info.ip, g_server_info.port,
-                         g_server_info.version);
+                ESP_LOGI(TAG, "Discovered server: %s:%u (v%s, protocol=%s, server=%s)",
+                         g_server_info.ip,
+                         g_server_info.port,
+                         g_server_info.version[0] ? g_server_info.version : "?",
+                         g_server_info.protocol_version[0] ? g_server_info.protocol_version : "?",
+                         g_server_info.server[0] ? g_server_info.server : "?");
 
                 if (info) {
                     memcpy(info, &g_server_info, sizeof(server_info_t));

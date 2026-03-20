@@ -22,6 +22,8 @@
 #include "ws_handlers.h"
 #include "ws_router.h"
 
+#include <stdlib.h>
+
 #define TAG "MAIN"
 
 /* Physical restart: click count to trigger reboot */
@@ -158,7 +160,17 @@ void app_main(void) {
         boot_anim_show_error("Server Not Found");
         return;
     }
-    ESP_LOGI(TAG, "Server: %s:%u", server_info.ip, server_info.port);
+    if (server_info.protocol_version[0] == '\0' ||
+        strcmp(server_info.protocol_version, WATCHER_PROTOCOL_VERSION) != 0) {
+        ESP_LOGE(TAG,
+                 "Protocol mismatch: server=%s expected=%s",
+                 server_info.protocol_version[0] != '\0' ? server_info.protocol_version : "<missing>",
+                 WATCHER_PROTOCOL_VERSION);
+        boot_anim_show_error("Protocol Mismatch");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Server: %s:%u protocol=%s", server_info.ip, server_info.port, server_info.protocol_version);
     boot_anim_set_progress(65);
     char *ws_url = discovery_get_ws_url(&server_info);
     if (ws_url) {
@@ -175,6 +187,7 @@ void app_main(void) {
     boot_anim_set_progress(92);
     boot_anim_set_text("Connecting...");
     ws_client_init();
+    ws_handlers_init();
     ws_router_t router = ws_handlers_get_router();
     ws_router_init(&router);
 

@@ -1,27 +1,30 @@
 /**
  * @file ws_handlers.c
- * @brief WebSocket message handlers implementation (Protocol v2.1)
+ * @brief WebSocket message handlers implementation (Watcher protocol v0.1.1)
  */
 
 #include "ws_handlers.h"
+
 #include "camera_service.h"
 #include "display_ui.h"
 #include "esp_check.h"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "hal_servo.h"
 #include "ws_client.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 #define TAG "WS_HANDLERS"
 
-/* Default servo movement duration (ms) */
 #define SERVO_DEFAULT_DURATION_MS 100
+#define SERVO_REPORT_INTERVAL_MS 50
+#define SERVO_REPORT_TASK_STACK 4096
+#define SERVO_REPORT_TASK_PRIORITY 4
 #define WS_CAPTURE_DEFAULT_FPS 5
 #define WS_CAPTURE_MAX_FPS 10
 #define WS_CAPTURE_DEFAULT_QUALITY 80
@@ -33,10 +36,8 @@ typedef struct {
     SemaphoreHandle_t frame_ready_sem;
     bool callback_registered;
     bool streaming;
-    bool upload_stop_requested;
-    uint16_t current_stream_id;
-    uint16_t next_stream_id;
-    uint32_t next_seq;
+    bool transfer_active;
+    bool video_first_frame_pending;
     int target_fps;
     int configured_width;
     int configured_height;
@@ -50,7 +51,6 @@ typedef struct {
     size_t pending_size;
     uint32_t pending_timestamp_ms;
     TaskHandle_t upload_task;
-    char current_command_id[WS_COMMAND_ID_MAX];
 } ws_camera_context_t;
 
 static ws_camera_context_t s_camera_ctx = {
@@ -58,10 +58,8 @@ static ws_camera_context_t s_camera_ctx = {
     .frame_ready_sem = NULL,
     .callback_registered = false,
     .streaming = false,
-    .upload_stop_requested = false,
-    .current_stream_id = 0,
-    .next_stream_id = 0,
-    .next_seq = 1,
+    .transfer_active = false,
+    .video_first_frame_pending = false,
     .target_fps = 0,
     .configured_width = 0,
     .configured_height = 0,
@@ -75,8 +73,9 @@ static ws_camera_context_t s_camera_ctx = {
     .pending_size = 0,
     .pending_timestamp_ms = 0,
     .upload_task = NULL,
-    .current_command_id = {0},
 };
+
+static TaskHandle_t s_servo_report_task = NULL;
 
 static esp_err_t ws_camera_ensure_lock(void) {
     if (s_camera_ctx.lock == NULL) {
@@ -114,6 +113,71 @@ static void ws_camera_release_pending_locked(void) {
     s_camera_ctx.pending_timestamp_ms = 0;
 }
 
+static void ws_camera_reset_stats_locked(void) {
+    s_camera_ctx.frames_sent = 0;
+    s_camera_ctx.send_total_us = 0;
+    s_camera_ctx.send_lock_wait_total_us = 0;
+    s_camera_ctx.send_sock_total_us = 0;
+    s_camera_ctx.frames_dropped = 0;
+}
+
+static esp_err_t ws_camera_begin_transfer(bool streaming, int fps) {
+    ESP_RETURN_ON_ERROR(ws_camera_ensure_lock(), TAG, "camera ws lock init failed");
+
+    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    s_camera_ctx.streaming = streaming;
+    s_camera_ctx.transfer_active = true;
+    s_camera_ctx.video_first_frame_pending = streaming;
+    s_camera_ctx.target_fps = streaming ? fps : 0;
+    ws_camera_reset_stats_locked();
+    ws_camera_release_pending_locked();
+    ws_camera_drain_frame_signal();
+    xSemaphoreGive(s_camera_ctx.lock);
+    return ESP_OK;
+}
+
+static void ws_camera_finish_one_shot(void) {
+    if (ws_camera_ensure_lock() != ESP_OK) {
+        return;
+    }
+
+    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+        s_camera_ctx.streaming = false;
+        s_camera_ctx.transfer_active = false;
+        s_camera_ctx.video_first_frame_pending = false;
+        s_camera_ctx.target_fps = 0;
+        ws_camera_reset_stats_locked();
+        ws_camera_release_pending_locked();
+        ws_camera_drain_frame_signal();
+        xSemaphoreGive(s_camera_ctx.lock);
+    }
+}
+
+static void ws_camera_reset_stream(bool keep_config) {
+    if (ws_camera_ensure_lock() != ESP_OK) {
+        return;
+    }
+
+    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
+        s_camera_ctx.streaming = false;
+        s_camera_ctx.transfer_active = false;
+        s_camera_ctx.video_first_frame_pending = false;
+        s_camera_ctx.target_fps = 0;
+        if (!keep_config) {
+            s_camera_ctx.configured_width = 0;
+            s_camera_ctx.configured_height = 0;
+            s_camera_ctx.configured_quality = WS_CAPTURE_DEFAULT_QUALITY;
+        }
+        ws_camera_reset_stats_locked();
+        ws_camera_release_pending_locked();
+        ws_camera_drain_frame_signal();
+        xSemaphoreGive(s_camera_ctx.lock);
+    }
+}
+
 static void ws_camera_upload_task(void *arg) {
     (void)arg;
 
@@ -121,13 +185,12 @@ static void ws_camera_upload_task(void *arg) {
         uint8_t *jpeg = NULL;
         size_t size = 0;
         uint32_t timestamp_ms = 0;
-        uint32_t seq = 0;
-        uint16_t stream_id = 0;
         bool first_frame = false;
         uint32_t frames_sent = 0;
         uint64_t send_total_us = 0;
         uint64_t send_lock_wait_total_us = 0;
         uint64_t send_sock_total_us = 0;
+        uint32_t frames_dropped = 0;
         ws_client_media_send_stats_t send_stats = {0};
         int send_ret;
 
@@ -139,16 +202,8 @@ static void ws_camera_upload_task(void *arg) {
             continue;
         }
 
-        if (s_camera_ctx.upload_stop_requested) {
-            ws_camera_release_pending_locked();
-            s_camera_ctx.upload_task = NULL;
-            s_camera_ctx.upload_stop_requested = false;
-            xSemaphoreGive(s_camera_ctx.lock);
-            break;
-        }
-
-        if (!s_camera_ctx.streaming || s_camera_ctx.current_stream_id == 0 || s_camera_ctx.pending_jpeg == NULL ||
-            s_camera_ctx.pending_size == 0) {
+        if (!s_camera_ctx.streaming || !s_camera_ctx.transfer_active || s_camera_ctx.pending_jpeg == NULL ||
+            s_camera_ctx.pending_size == 0U) {
             xSemaphoreGive(s_camera_ctx.lock);
             continue;
         }
@@ -156,21 +211,17 @@ static void ws_camera_upload_task(void *arg) {
         jpeg = s_camera_ctx.pending_jpeg;
         size = s_camera_ctx.pending_size;
         timestamp_ms = s_camera_ctx.pending_timestamp_ms;
+        first_frame = s_camera_ctx.video_first_frame_pending;
+        s_camera_ctx.video_first_frame_pending = false;
         s_camera_ctx.pending_jpeg = NULL;
         s_camera_ctx.pending_size = 0;
         s_camera_ctx.pending_timestamp_ms = 0;
-        stream_id = s_camera_ctx.current_stream_id;
-        seq = s_camera_ctx.next_seq++;
-        first_frame = (seq == 1);
         xSemaphoreGive(s_camera_ctx.lock);
 
-        send_ret = ws_send_video_frame(jpeg, size, stream_id, seq, first_frame);
+        send_ret = ws_send_video_frame(jpeg, size, first_frame);
         ws_client_get_media_send_stats(&send_stats);
         if (send_ret < 0) {
-            ESP_LOGW(TAG, "video frame upload failed: stream=%u seq=%lu size=%u",
-                     (unsigned int)stream_id,
-                     (unsigned long)seq,
-                     (unsigned int)size);
+            ESP_LOGW(TAG, "video frame upload failed: size=%u ts=%lu", (unsigned int)size, (unsigned long)timestamp_ms);
         } else if (send_stats.valid && xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
             s_camera_ctx.frames_sent++;
             s_camera_ctx.send_total_us += send_stats.total_us;
@@ -180,12 +231,13 @@ static void ws_camera_upload_task(void *arg) {
             send_total_us = s_camera_ctx.send_total_us;
             send_lock_wait_total_us = s_camera_ctx.send_lock_wait_total_us;
             send_sock_total_us = s_camera_ctx.send_sock_total_us;
+            frames_dropped = s_camera_ctx.frames_dropped;
             xSemaphoreGive(s_camera_ctx.lock);
+
             if ((frames_sent % 30U) == 0U) {
                 ESP_LOGI(TAG,
-                         "ws media timing stream=%u latest_us{total=%lu lock=%lu send=%lu payload=%u packet=%u ts=%lu} "
+                         "ws media timing latest_us{total=%lu lock=%lu send=%lu payload=%u packet=%u ts=%lu} "
                          "avg_us{total=%lu lock=%lu send=%lu} frames=%lu dropped=%lu",
-                         (unsigned int)stream_id,
                          (unsigned long)send_stats.total_us,
                          (unsigned long)send_stats.lock_wait_us,
                          (unsigned long)send_stats.send_us,
@@ -196,15 +248,12 @@ static void ws_camera_upload_task(void *arg) {
                          (unsigned long)(send_lock_wait_total_us / frames_sent),
                          (unsigned long)(send_sock_total_us / frames_sent),
                          (unsigned long)frames_sent,
-                         (unsigned long)s_camera_ctx.frames_dropped);
+                         (unsigned long)frames_dropped);
             }
         }
 
         free(jpeg);
     }
-
-    ESP_LOGI(TAG, "camera upload task exited");
-    vTaskDelete(NULL);
 }
 
 static esp_err_t ws_camera_ensure_upload_task(void) {
@@ -221,7 +270,6 @@ static esp_err_t ws_camera_ensure_upload_task(void) {
         return ESP_OK;
     }
 
-    s_camera_ctx.upload_stop_requested = false;
     xSemaphoreGive(s_camera_ctx.lock);
 
     task_ret = xTaskCreate(ws_camera_upload_task,
@@ -242,101 +290,14 @@ static esp_err_t ws_camera_ensure_upload_task(void) {
     return ESP_OK;
 }
 
-static uint16_t ws_camera_allocate_stream_id_locked(void) {
-    s_camera_ctx.next_stream_id++;
-    if (s_camera_ctx.next_stream_id == 0) {
-        s_camera_ctx.next_stream_id = 1;
-    }
-    return s_camera_ctx.next_stream_id;
-}
-
-static uint16_t ws_camera_begin_transfer(bool streaming, int fps, const char *command_id) {
-    uint16_t stream_id = 0;
-
-    if (ws_camera_ensure_lock() != ESP_OK) {
-        return 0;
-    }
-
-    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-        s_camera_ctx.streaming = streaming;
-        s_camera_ctx.target_fps = streaming ? fps : 0;
-        s_camera_ctx.current_stream_id = ws_camera_allocate_stream_id_locked();
-        s_camera_ctx.next_seq = 1;
-        s_camera_ctx.frames_sent = 0;
-        s_camera_ctx.send_total_us = 0;
-        s_camera_ctx.send_lock_wait_total_us = 0;
-        s_camera_ctx.send_sock_total_us = 0;
-        s_camera_ctx.frames_dropped = 0;
-        ws_camera_release_pending_locked();
-        ws_camera_drain_frame_signal();
-        stream_id = s_camera_ctx.current_stream_id;
-        if (command_id) {
-            strncpy(s_camera_ctx.current_command_id, command_id, sizeof(s_camera_ctx.current_command_id) - 1);
-            s_camera_ctx.current_command_id[sizeof(s_camera_ctx.current_command_id) - 1] = '\0';
-        } else {
-            s_camera_ctx.current_command_id[0] = '\0';
-        }
-        xSemaphoreGive(s_camera_ctx.lock);
-    }
-
-    return stream_id;
-}
-
-static void ws_camera_finish_one_shot(void) {
-    if (ws_camera_ensure_lock() != ESP_OK) {
-        return;
-    }
-
-    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-        s_camera_ctx.current_stream_id = 0;
-        s_camera_ctx.next_seq = 1;
-        s_camera_ctx.current_command_id[0] = '\0';
-        s_camera_ctx.frames_sent = 0;
-        s_camera_ctx.send_total_us = 0;
-        s_camera_ctx.send_lock_wait_total_us = 0;
-        s_camera_ctx.send_sock_total_us = 0;
-        s_camera_ctx.frames_dropped = 0;
-        ws_camera_release_pending_locked();
-        ws_camera_drain_frame_signal();
-        xSemaphoreGive(s_camera_ctx.lock);
-    }
-}
-
-static void ws_camera_reset_stream(bool keep_config) {
-    if (ws_camera_ensure_lock() != ESP_OK) {
-        return;
-    }
-
-    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-        s_camera_ctx.streaming = false;
-        s_camera_ctx.target_fps = 0;
-        s_camera_ctx.current_stream_id = 0;
-        s_camera_ctx.next_seq = 1;
-        s_camera_ctx.current_command_id[0] = '\0';
-        if (!keep_config) {
-            s_camera_ctx.configured_width = 0;
-            s_camera_ctx.configured_height = 0;
-            s_camera_ctx.configured_quality = WS_CAPTURE_DEFAULT_QUALITY;
-        }
-        s_camera_ctx.frames_sent = 0;
-        s_camera_ctx.send_total_us = 0;
-        s_camera_ctx.send_lock_wait_total_us = 0;
-        s_camera_ctx.send_sock_total_us = 0;
-        s_camera_ctx.frames_dropped = 0;
-        ws_camera_release_pending_locked();
-        ws_camera_drain_frame_signal();
-        xSemaphoreGive(s_camera_ctx.lock);
-    }
-}
-
 static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timestamp_ms, void *ctx) {
-    uint16_t stream_id = 0;
     bool streaming = false;
+    bool transfer_active = false;
     uint8_t *jpeg_copy = NULL;
 
     (void)ctx;
 
-    if (!jpeg || size == 0) {
+    if (jpeg == NULL || size == 0U) {
         return;
     }
 
@@ -346,12 +307,12 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
 
     if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
         streaming = s_camera_ctx.streaming;
-        stream_id = s_camera_ctx.current_stream_id;
+        transfer_active = s_camera_ctx.transfer_active;
         xSemaphoreGive(s_camera_ctx.lock);
     }
 
-    if (stream_id == 0) {
-        ESP_LOGW(TAG, "camera frame dropped: stream not initialized");
+    if (!transfer_active) {
+        ESP_LOGW(TAG, "camera frame dropped: transfer not active");
         return;
     }
 
@@ -365,8 +326,8 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
             }
             return;
         }
-        memcpy(jpeg_copy, jpeg, size);
 
+        memcpy(jpeg_copy, jpeg, size);
         if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
             if (s_camera_ctx.pending_jpeg != NULL) {
                 free(s_camera_ctx.pending_jpeg);
@@ -383,8 +344,11 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
         return;
     }
 
-    if (ws_send_image_frame(jpeg, size, stream_id) < 0) {
-        ESP_LOGW(TAG, "image frame upload failed: stream=%u size=%u", (unsigned int)stream_id, (unsigned int)size);
+    if (ws_send_image_frame(jpeg, size) < 0) {
+        ESP_LOGW(TAG, "image frame upload failed: size=%u", (unsigned int)size);
+        ws_send_camera_state("capture_image", "error", 0, "image_upload_failed");
+    } else {
+        ws_send_camera_state("capture_image", "completed", 0, NULL);
     }
 
     ws_camera_finish_one_shot();
@@ -415,10 +379,9 @@ static esp_err_t ws_camera_ensure_ready(void) {
 }
 
 static const char *ws_camera_command_type(const ws_capture_cmd_t *cmd) {
-    if (!cmd) {
+    if (cmd == NULL) {
         return "ctrl.camera.unknown";
     }
-
     if (strcasecmp(cmd->action, "config") == 0) {
         return "ctrl.camera.video_config";
     }
@@ -429,18 +392,6 @@ static const char *ws_camera_command_type(const ws_capture_cmd_t *cmd) {
         return "ctrl.camera.stop_video";
     }
     return "ctrl.camera.capture_image";
-}
-
-static void ws_camera_set_streaming(bool streaming, int fps) {
-    if (ws_camera_ensure_lock() != ESP_OK) {
-        return;
-    }
-
-    if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-        s_camera_ctx.streaming = streaming;
-        s_camera_ctx.target_fps = streaming ? fps : 0;
-        xSemaphoreGive(s_camera_ctx.lock);
-    }
 }
 
 static void ws_camera_get_cached_config(int *width, int *height, int *fps, int *quality) {
@@ -478,113 +429,203 @@ static void ws_camera_get_cached_config(int *width, int *height, int *fps, int *
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Helper: Parse status data to determine emoji                       */
-/* ------------------------------------------------------------------ */
+static bool ws_contains_nocase(const char *haystack, const char *needle) {
+    size_t needle_len;
 
-const char *ws_status_data_to_emoji(const char *data) {
-    if (!data || data[0] == '\0') {
-        return NULL; /* No change */
+    if (haystack == NULL || needle == NULL || needle[0] == '\0') {
+        return false;
     }
 
-    /* Check for status indicators in data string */
+    needle_len = strlen(needle);
+    while (*haystack != '\0') {
+        if (strncasecmp(haystack, needle, needle_len) == 0) {
+            return true;
+        }
+        haystack++;
+    }
 
-    /* AI processing states - show analyzing animation */
-    if (strstr(data, "processing") != NULL) {
+    return false;
+}
+
+static void ws_servo_report_task(void *arg) {
+    bool session_ready_seen = false;
+    bool motion_active = false;
+    bool final_report_sent = false;
+    int last_observed_x = -1;
+    int last_observed_y = -1;
+    int last_reported_x = -1;
+    int last_reported_y = -1;
+
+    (void)arg;
+
+    while (true) {
+        int x_deg;
+        int y_deg;
+
+        if (!ws_client_is_session_ready()) {
+            session_ready_seen = false;
+            motion_active = false;
+            final_report_sent = false;
+            last_observed_x = -1;
+            last_observed_y = -1;
+            last_reported_x = -1;
+            last_reported_y = -1;
+            vTaskDelay(pdMS_TO_TICKS(SERVO_REPORT_INTERVAL_MS));
+            continue;
+        }
+
+        x_deg = hal_servo_get_angle(SERVO_AXIS_X);
+        y_deg = hal_servo_get_angle(SERVO_AXIS_Y);
+        if (x_deg < 0 || y_deg < 0) {
+            vTaskDelay(pdMS_TO_TICKS(SERVO_REPORT_INTERVAL_MS));
+            continue;
+        }
+
+        if (!session_ready_seen) {
+            ws_send_servo_position((float)x_deg, (float)y_deg);
+            session_ready_seen = true;
+            motion_active = false;
+            final_report_sent = true;
+            last_observed_x = x_deg;
+            last_observed_y = y_deg;
+            last_reported_x = x_deg;
+            last_reported_y = y_deg;
+            vTaskDelay(pdMS_TO_TICKS(SERVO_REPORT_INTERVAL_MS));
+            continue;
+        }
+
+        if (x_deg != last_observed_x || y_deg != last_observed_y) {
+            motion_active = true;
+            final_report_sent = false;
+            last_observed_x = x_deg;
+            last_observed_y = y_deg;
+            if (x_deg != last_reported_x || y_deg != last_reported_y) {
+                ws_send_servo_position((float)x_deg, (float)y_deg);
+                last_reported_x = x_deg;
+                last_reported_y = y_deg;
+            }
+        } else if (motion_active && !final_report_sent) {
+            ws_send_servo_position((float)x_deg, (float)y_deg);
+            motion_active = false;
+            final_report_sent = true;
+            last_reported_x = x_deg;
+            last_reported_y = y_deg;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(SERVO_REPORT_INTERVAL_MS));
+    }
+}
+
+void ws_handlers_init(void) {
+    if (s_servo_report_task == NULL) {
+        if (xTaskCreate(ws_servo_report_task,
+                        "ws_servo_report",
+                        SERVO_REPORT_TASK_STACK,
+                        NULL,
+                        SERVO_REPORT_TASK_PRIORITY,
+                        &s_servo_report_task) != pdPASS) {
+            s_servo_report_task = NULL;
+            ESP_LOGE(TAG, "servo report task create failed");
+        }
+    }
+}
+
+const char *ws_ai_status_to_emoji(const char *status, const char *message) {
+    if (ws_contains_nocase(status, "thinking") || ws_contains_nocase(status, "processing") ||
+        ws_contains_nocase(status, "analyzing") || ws_contains_nocase(message, "thinking") ||
+        ws_contains_nocase(message, "processing") || ws_contains_nocase(message, "analyzing")) {
         return "analyzing";
     }
-    if (strstr(data, "thinking") != NULL) {
-        return "analyzing";
-    }
-    if (strstr(data, "[thinking]") != NULL) {
-        return "analyzing";
-    }
-
-    /* Speaking state - show speaking animation */
-    if (strstr(data, "speaking") != NULL) {
+    if (ws_contains_nocase(status, "speaking") || ws_contains_nocase(message, "speaking")) {
         return "speaking";
     }
-
-    /* Idle/done states - return to standby */
-    if (strstr(data, "idle") != NULL) {
+    if (ws_contains_nocase(status, "idle") || ws_contains_nocase(message, "idle")) {
         return "standby";
     }
-    if (strstr(data, "done") != NULL) {
+    if (ws_contains_nocase(status, "done") || ws_contains_nocase(status, "completed") ||
+        ws_contains_nocase(message, "done") || ws_contains_nocase(message, "completed")) {
         return "happy";
     }
-
-    /* Error states */
-    if (strstr(data, "error") != NULL) {
+    if (ws_contains_nocase(status, "error") || ws_contains_nocase(status, "fail") ||
+        ws_contains_nocase(message, "error") || ws_contains_nocase(message, "fail")) {
         return "sad";
     }
-
-    /* Servo animation status - no change */
-    if (strstr(data, "舵机动画") != NULL) {
-        return NULL;
-    }
-
-    /* Default: no change */
     return NULL;
 }
 
-/* ------------------------------------------------------------------ */
-/* Handler: Servo Command (v2.1 format)                               */
-/* ------------------------------------------------------------------ */
+void on_sys_ack_handler(const ws_sys_ack_t *msg) {
+    if (msg == NULL) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "sys.ack: type=%s command_id=%s code=%d message=%s", msg->type, msg->command_id, msg->code,
+             msg->message);
+    if (strcmp(msg->type, "sys.client.hello") == 0) {
+        ws_client_mark_hello_acked();
+    }
+}
+
+void on_sys_nack_handler(const ws_sys_nack_t *msg) {
+    if (msg == NULL) {
+        return;
+    }
+
+    ESP_LOGW(TAG, "sys.nack: type=%s command_id=%s code=%d reason=%s", msg->type, msg->command_id, msg->code,
+             msg->reason);
+    if (strcmp(msg->type, "sys.client.hello") == 0) {
+        display_update(msg->reason[0] != '\0' ? msg->reason : "Hello Rejected", "sad", 0, NULL);
+    } else if (msg->reason[0] != '\0') {
+        display_update(msg->reason, "sad", 0, NULL);
+    }
+}
+
+void on_sys_ping_handler(void) {
+    ws_send_sys_pong();
+}
+
+void on_sys_pong_handler(void) {
+    ESP_LOGD(TAG, "sys.pong received");
+}
+
+void on_session_resume_handler(void) {
+    ESP_LOGW(TAG, "sys.session.resume ignored");
+}
 
 void on_servo_handler(const ws_servo_cmd_t *cmd) {
-    if (!cmd) {
+    esp_err_t ret;
+    int x_deg;
+    int y_deg;
+    int duration_ms;
+
+    if (cmd == NULL) {
         return;
     }
 
-    /* Use ESP_LOGD to avoid flooding logs with high-frequency servo commands */
-    ESP_LOGI(TAG, "Servo command: id=%s, angle=%d, time=%d", cmd->id, cmd->angle, cmd->time_ms);
-
-    /* Send single servo command via HAL */
-    hal_servo_send_cmd(cmd->id, cmd->angle, cmd->time_ms);
-}
-
-/* ------------------------------------------------------------------ */
-/* Handler: Display Command                                           */
-/* ------------------------------------------------------------------ */
-
-void on_display_handler(const ws_display_cmd_t *cmd) {
-    if (!cmd) {
+    if (!cmd->has_x || !cmd->has_y) {
+        ws_send_sys_nack("ctrl.servo.angle", NULL, "invalid_servo_payload");
         return;
     }
 
-    /* Get emoji, use "normal" if empty */
-    const char *emoji = cmd->emoji;
-    if (!emoji || emoji[0] == '\0') {
-        emoji = "normal";
+    x_deg = (int)(cmd->x_deg + 0.5f);
+    y_deg = (int)(cmd->y_deg + 0.5f);
+    duration_ms = cmd->duration_ms;
+    if (duration_ms <= 0) {
+        ws_send_sys_nack("ctrl.servo.angle", NULL, "invalid_duration_ms");
+        return;
     }
-
-    /* Update display */
-    display_update(cmd->text, emoji, cmd->size, NULL);
-}
-
-/* ------------------------------------------------------------------ */
-/* Handler: Status Command (v2.0)                                     */
-/* ------------------------------------------------------------------ */
-
-void on_status_handler(const ws_status_cmd_t *cmd) {
-    if (!cmd) {
+    if (x_deg < 0 || x_deg > 180 || y_deg < 0 || y_deg > 180) {
+        ws_send_sys_nack("ctrl.servo.angle", NULL, "angle_out_of_range");
         return;
     }
 
-    ESP_LOGI(TAG, "Status: %s", cmd->data);
-
-    /* Map status data to emoji */
-    const char *emoji = ws_status_data_to_emoji(cmd->data);
-
-    /* Update display with status data and appropriate emoji */
-    if (emoji) {
-        display_update(cmd->data, emoji, 0, NULL);
+    ESP_LOGI(TAG, "servo command: x=%d y=%d duration_ms=%d", x_deg, y_deg, duration_ms);
+    ret = hal_servo_move_sync(x_deg, y_deg, duration_ms);
+    if (ret == ESP_OK) {
+        ws_send_sys_ack("ctrl.servo.angle", NULL);
+    } else {
+        ws_send_sys_nack("ctrl.servo.angle", NULL, "servo_move_failed");
     }
 }
-
-/* ------------------------------------------------------------------ */
-/* Handler: Capture Command                                           */
-/* ------------------------------------------------------------------ */
 
 void on_capture_handler(const ws_capture_cmd_t *cmd) {
     esp_err_t ret;
@@ -595,17 +636,16 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
     int applied_width = 0;
     int applied_height = 0;
     int cached_fps = 0;
-    uint16_t stream_id = 0;
     const char *command_type;
     char config_message[96];
 
-    if (!cmd) {
+    if (cmd == NULL) {
         return;
     }
 
     command_type = ws_camera_command_type(cmd);
     ESP_LOGI(TAG,
-             "Camera command: type=%s command_id=%s action=%s width=%d height=%d fps=%d quality=%d",
+             "camera command: type=%s command_id=%s action=%s width=%d height=%d fps=%d quality=%d",
              command_type,
              cmd->command_id,
              cmd->action,
@@ -613,16 +653,16 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
              cmd->height,
              cmd->fps,
              cmd->quality);
+
     ret = ws_camera_ensure_ready();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "camera path not ready: %s", esp_err_to_name(ret));
-        ws_send_sys_nack(cmd->command_id, command_type, "camera_init_failed");
+        ws_send_sys_nack(command_type, cmd->command_id, "camera_init_failed");
         return;
     }
 
     if (strcasecmp(cmd->action, "config") == 0) {
         ws_camera_get_cached_config(&requested_width, &requested_height, &cached_fps, &requested_quality);
-
         if (cmd->width > 0) {
             requested_width = cmd->width;
         }
@@ -634,21 +674,21 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
         }
 
         if ((requested_width > 0) != (requested_height > 0)) {
-            ws_send_sys_nack(cmd->command_id, command_type, "width_height_must_be_paired");
+            ws_send_sys_nack(command_type, cmd->command_id, "width_height_must_be_paired");
             return;
         }
 
         if (requested_width > 0 && requested_height > 0) {
-            ret = camera_service_configure(requested_width, requested_height, requested_quality,
-                                           &applied_width, &applied_height);
+            ret = camera_service_configure(requested_width, requested_height, requested_quality, &applied_width,
+                                           &applied_height);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "camera config failed: %s", esp_err_to_name(ret));
                 if (ret == ESP_ERR_NOT_SUPPORTED) {
-                    ws_send_sys_nack(cmd->command_id, command_type, "unsupported_resolution");
+                    ws_send_sys_nack(command_type, cmd->command_id, "unsupported_resolution");
                 } else if (ret == ESP_ERR_INVALID_STATE) {
-                    ws_send_sys_nack(cmd->command_id, command_type, "camera_busy");
+                    ws_send_sys_nack(command_type, cmd->command_id, "camera_busy");
                 } else {
-                    ws_send_sys_nack(cmd->command_id, command_type, "camera_config_failed");
+                    ws_send_sys_nack(command_type, cmd->command_id, "camera_config_failed");
                 }
                 return;
             }
@@ -672,22 +712,24 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
         }
 
         if (applied_width > 0 && applied_height > 0) {
-            snprintf(config_message, sizeof(config_message), "applied=%dx%d quality_hint=%d",
-                     applied_width, applied_height, requested_quality);
+            snprintf(config_message, sizeof(config_message), "applied=%dx%d quality_hint=%d", applied_width,
+                     applied_height, requested_quality);
         } else {
-            snprintf(config_message, sizeof(config_message), "fps=%d quality_hint=%d resolution_unchanged",
+            snprintf(config_message,
+                     sizeof(config_message),
+                     "fps=%d quality_hint=%d resolution_unchanged",
                      cmd->fps > 0 ? cmd->fps : cached_fps,
                      requested_quality);
         }
 
-        ws_send_sys_ack(cmd->command_id, command_type, 0, "accepted");
-        ws_send_camera_state("video_config", "accepted", 0, cmd->fps, config_message);
+        ws_send_sys_ack(command_type, cmd->command_id);
+        ws_send_camera_state("video_config", "accepted", cmd->fps > 0 ? cmd->fps : cached_fps, config_message);
         return;
     }
 
     if (strcasecmp(cmd->action, "start") == 0) {
         if (camera_service_is_streaming()) {
-            ws_send_sys_nack(cmd->command_id, command_type, "already_streaming");
+            ws_send_sys_nack(command_type, cmd->command_id, "already_streaming");
             return;
         }
 
@@ -707,164 +749,131 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
             fps = WS_CAPTURE_DEFAULT_FPS;
         }
 
-        stream_id = ws_camera_begin_transfer(true, fps, cmd->command_id);
-        if (stream_id == 0) {
-            ws_send_sys_nack(cmd->command_id, command_type, "stream_id_alloc_failed");
+        if (ws_camera_begin_transfer(true, fps) != ESP_OK) {
+            ws_send_sys_nack(command_type, cmd->command_id, "camera_state_unavailable");
             return;
         }
 
-        ws_send_sys_ack(cmd->command_id, command_type, stream_id, "accepted");
+        ws_send_sys_ack(command_type, cmd->command_id);
         ret = camera_service_start_stream(fps);
         if (ret == ESP_OK) {
-            ws_camera_set_streaming(true, fps);
-            ws_send_camera_state("start_video", "started", stream_id, fps, "format=mjpeg");
+            ws_send_camera_state("start_video", "started", fps, "format=mjpeg");
             return;
         }
 
         ESP_LOGE(TAG, "camera stream start failed: %s", esp_err_to_name(ret));
         ws_camera_reset_stream(true);
-        ws_send_camera_state("start_video", "error", stream_id, fps, "stream_start_failed");
+        ws_send_camera_state("start_video", "error", fps, "stream_start_failed");
         return;
     }
 
     if (strcasecmp(cmd->action, "stop") == 0) {
-        uint32_t eos_seq = 1;
-        uint16_t eos_stream_id = 0;
+        if (!camera_service_is_streaming()) {
+            ws_send_sys_nack(command_type, cmd->command_id, "not_streaming");
+            return;
+        }
 
         if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-            eos_stream_id = s_camera_ctx.current_stream_id;
             fps = s_camera_ctx.target_fps;
             xSemaphoreGive(s_camera_ctx.lock);
         }
 
-        ws_send_sys_ack(cmd->command_id, command_type, eos_stream_id, "accepted");
+        ws_send_sys_ack(command_type, cmd->command_id);
         ret = camera_service_stop_stream();
         if (ret == ESP_OK) {
-            if (xSemaphoreTake(s_camera_ctx.lock, portMAX_DELAY) == pdTRUE) {
-                if (s_camera_ctx.current_stream_id != 0) {
-                    eos_stream_id = s_camera_ctx.current_stream_id;
-                }
-                eos_seq = s_camera_ctx.next_seq;
-                fps = s_camera_ctx.target_fps;
-                xSemaphoreGive(s_camera_ctx.lock);
-            }
-            if (eos_stream_id != 0) {
-                ws_send_video_end(eos_stream_id, eos_seq);
-            }
-            ws_send_camera_state("stop_video", "stopped", eos_stream_id, fps, NULL);
+            ws_send_video_end();
+            ws_send_camera_state("stop_video", "stopped", fps, NULL);
             ws_camera_reset_stream(true);
         } else {
             ESP_LOGE(TAG, "camera stream stop failed: %s", esp_err_to_name(ret));
-            ws_send_camera_state("stop_video", "error", eos_stream_id, fps, "stream_stop_failed");
+            ws_send_camera_state("stop_video", "error", fps, "stream_stop_failed");
         }
         return;
     }
 
-    stream_id = ws_camera_begin_transfer(false, 0, cmd->command_id);
-    if (stream_id == 0) {
-        ws_send_sys_nack(cmd->command_id, command_type, "stream_id_alloc_failed");
+    if (ws_camera_begin_transfer(false, 0) != ESP_OK) {
+        ws_send_sys_nack(command_type, cmd->command_id, "camera_state_unavailable");
         return;
     }
 
-    ws_send_sys_ack(cmd->command_id, command_type, stream_id, "accepted");
+    ws_send_sys_ack(command_type, cmd->command_id);
     ret = camera_service_capture_once();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "camera single capture failed: %s", esp_err_to_name(ret));
-        ws_send_camera_state("capture_image", "error", stream_id, 0, "capture_failed");
+        ws_send_camera_state("capture_image", "error", 0, "capture_failed");
         ws_camera_finish_one_shot();
+    }
+}
+
+void on_asr_result_handler(const ws_text_event_t *event) {
+    if (event == NULL) {
         return;
     }
 
-    ws_send_camera_state("capture_image", "completed", stream_id, 0, NULL);
+    ESP_LOGI(TAG, "ASR result: %s", event->text);
+    display_update(event->text[0] != '\0' ? event->text : "Listening...", "analyzing", 0, NULL);
 }
 
-/* ------------------------------------------------------------------ */
-/* Handler: Reboot Command                                            */
-/* ------------------------------------------------------------------ */
+void on_ai_status_handler(const ws_ai_status_t *event) {
+    const char *emoji;
+    const char *text;
 
-void on_reboot_handler(void) {
-    ESP_LOGI(TAG, "Reboot command received");
-    esp_restart();
-}
-
-/* ------------------------------------------------------------------ */
-/* Handler: ASR Result (v2.0)                                         */
-/* ------------------------------------------------------------------ */
-
-void on_asr_result_handler(const ws_asr_result_cmd_t *cmd) {
-    if (!cmd) {
+    if (event == NULL) {
         return;
     }
 
-    ESP_LOGI(TAG, "ASR result: %s", cmd->text);
-
-    /* Handle empty ASR result - show placeholder text */
-    if (cmd->text[0] == 0) {
-        display_update("Listening...", "listening", 0, NULL);
-    } else {
-        /* Display recognized text with analyzing animation */
-        display_update(cmd->text, "analyzing", 0, NULL);
+    ESP_LOGI(TAG, "AI status: status=%s message=%s", event->status, event->message);
+    emoji = ws_ai_status_to_emoji(event->status, event->message);
+    text = event->message[0] != '\0' ? event->message : event->status;
+    if (text[0] != '\0' || emoji != NULL) {
+        display_update(text[0] != '\0' ? text : NULL, emoji, 0, NULL);
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Handler: Bot Reply (v2.0)                                          */
-/* ------------------------------------------------------------------ */
-
-void on_bot_reply_handler(const ws_bot_reply_cmd_t *cmd) {
-    if (!cmd) {
+void on_ai_thinking_handler(const ws_ai_thinking_t *event) {
+    if (event == NULL) {
         return;
     }
 
-    ESP_LOGI(TAG, "Bot reply: %s", cmd->text);
-
-    /* Optional: Display bot reply text */
-    /* The TTS audio will follow, so we don't change animation here */
+    ESP_LOGI(TAG, "AI thinking: kind=%s content=%s", event->kind, event->content);
+    if (event->content[0] != '\0') {
+        display_update(event->content, "analyzing", 0, NULL);
+    }
 }
 
-/* ------------------------------------------------------------------ */
-/* Handler: TTS End (v2.0)                                           */
-/* ------------------------------------------------------------------ */
-
-void on_tts_end_handler(void) {
-    ESP_LOGI(TAG, "TTS end received");
-
-    /* Complete TTS playback and switch to happy */
-    ws_tts_complete();
-}
-
-/* ------------------------------------------------------------------ */
-/* Handler: Error Message (v2.0)                                      */
-/* ------------------------------------------------------------------ */
-
-void on_error_handler(const ws_error_cmd_t *cmd) {
-    if (!cmd) {
+void on_ai_reply_handler(const ws_text_event_t *event) {
+    if (event == NULL) {
         return;
     }
 
-    ESP_LOGE(TAG, "Error (code %d): %s", cmd->code, cmd->message);
-
-    /* Display error state */
-    display_update(cmd->message, "sad", 0, NULL);
+    ESP_LOGI(TAG, "AI reply: %s", event->text);
 }
 
-/* ------------------------------------------------------------------ */
-/* Convenience: Get Router with All Handlers                          */
-/* ------------------------------------------------------------------ */
+void on_transfer_handler(const ws_transfer_cmd_t *cmd) {
+    if (cmd == NULL) {
+        return;
+    }
+
+    ESP_LOGW(TAG, "transfer not supported: type=%s transfer_id=%s", cmd->message_type, cmd->transfer_id);
+    ws_send_sys_nack(cmd->message_type,
+                     cmd->transfer_id[0] != '\0' ? cmd->transfer_id : NULL,
+                     "not_supported");
+}
 
 ws_router_t ws_handlers_get_router(void) {
     ws_router_t router = {
+        .on_sys_ack = on_sys_ack_handler,
+        .on_sys_nack = on_sys_nack_handler,
+        .on_sys_ping = on_sys_ping_handler,
+        .on_sys_pong = on_sys_pong_handler,
+        .on_session_resume = on_session_resume_handler,
         .on_servo = on_servo_handler,
-        .on_display = on_display_handler,
-        .on_status = on_status_handler,
         .on_capture = on_capture_handler,
-        .on_reboot = on_reboot_handler,
-
-        /* New handlers - v2.0 */
         .on_asr_result = on_asr_result_handler,
-        .on_bot_reply = on_bot_reply_handler,
-        .on_tts_end = on_tts_end_handler,
-        .on_error = on_error_handler,
+        .on_ai_status = on_ai_status_handler,
+        .on_ai_thinking = on_ai_thinking_handler,
+        .on_ai_reply = on_ai_reply_handler,
+        .on_transfer = on_transfer_handler,
     };
     return router;
 }

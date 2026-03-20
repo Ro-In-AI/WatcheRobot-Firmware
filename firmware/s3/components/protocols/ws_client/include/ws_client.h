@@ -7,8 +7,23 @@
 
 /**
  * @file ws_client.h
- * @brief WebSocket client interface (Protocol v2.0)
+ * @brief WebSocket client interface (Watcher protocol v0.1.1)
  */
+
+typedef enum {
+    WS_FRAME_TYPE_AUDIO = 1,
+    WS_FRAME_TYPE_VIDEO = 2,
+    WS_FRAME_TYPE_IMAGE = 3,
+    WS_FRAME_TYPE_OTA = 4,
+} ws_frame_type_t;
+
+typedef enum {
+    WS_FRAME_FLAG_NONE = 0,
+    WS_FRAME_FLAG_FIRST = 1 << 0,
+    WS_FRAME_FLAG_LAST = 1 << 1,
+    WS_FRAME_FLAG_KEYFRAME = 1 << 2,
+    WS_FRAME_FLAG_FRAGMENT = 1 << 3,
+} ws_frame_flag_t;
 
 typedef struct {
     bool valid;
@@ -71,34 +86,64 @@ int ws_client_send_text(const char *text);
 int ws_client_is_connected(void);
 
 /**
+ * Check if the WebSocket session is ready for business traffic.
+ */
+int ws_client_is_session_ready(void);
+
+/**
+ * Mark that the server has responded to the current voice session.
+ */
+void ws_client_mark_server_response(void);
+
+/**
+ * Mark the hello handshake as acknowledged.
+ */
+void ws_client_mark_hello_acked(void);
+
+/**
+ * Send sys.pong in response to a server ping.
+ */
+int ws_send_sys_pong(void);
+
+/**
  * Send sys.ack for an accepted control command.
  */
-int ws_send_sys_ack(const char *command_id, const char *command_type, uint16_t stream_id, const char *message);
+int ws_send_sys_ack(const char *message_type, const char *command_id);
 
 /**
  * Send sys.nack for a rejected control command.
  */
-int ws_send_sys_nack(const char *command_id, const char *command_type, const char *reason);
+int ws_send_sys_nack(const char *message_type, const char *command_id, const char *reason);
+
+/**
+ * Send the current device firmware metadata.
+ */
+int ws_send_device_firmware(void);
+
+/**
+ * Send the current servo position.
+ */
+int ws_send_servo_position(float x_deg, float y_deg);
 
 /**
  * Send a camera state event.
  */
-int ws_send_camera_state(const char *action, const char *state, uint16_t stream_id, int fps, const char *message);
+int ws_send_camera_state(const char *action, const char *state, int fps, const char *message);
 
 /**
  * Send one MJPEG video frame using the WSPK binary header.
  */
-int ws_send_video_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id, uint32_t seq, bool first_frame);
+int ws_send_video_frame(const uint8_t *jpeg, size_t len, bool first_frame);
 
 /**
  * Send the terminal marker of a video stream using a zero-payload WSPK frame.
  */
-int ws_send_video_end(uint16_t stream_id, uint32_t seq);
+int ws_send_video_end(void);
 
 /**
  * Send one JPEG image using the WSPK binary header.
  */
-int ws_send_image_frame(const uint8_t *jpeg, size_t len, uint16_t stream_id);
+int ws_send_image_frame(const uint8_t *jpeg, size_t len);
 
 /**
  * Get the most recent media send timing sample.

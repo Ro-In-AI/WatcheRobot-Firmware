@@ -4,7 +4,9 @@
  *
  * Protocol:
  *   ESP32 broadcasts: {"cmd":"DISCOVER","device_id":"xxx","mac":"xx:xx:xx:xx:xx:xx"}
- *   Server responds:  {"cmd":"ANNOUNCE","ip":"x.x.x.x","port":8765,"version":"1.0.0"}
+ *   Server responds:
+ *   {"cmd":"ANNOUNCE","ip":"x.x.x.x","port":8765,"version":"1.0.0",
+ *    "protocol_version":"0.1.1","server":"watcher-server"}
  */
 
 #ifndef DISCOVERY_CLIENT_H
@@ -12,6 +14,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#define WATCHER_PROTOCOL_VERSION "0.1.1"
 
 /* Discovery configuration */
 #define DISCOVERY_PORT 37020
@@ -24,6 +28,8 @@ typedef struct {
     char ip[16];      /* Server IP address */
     uint16_t port;    /* WebSocket port */
     char version[16]; /* Server version */
+    char protocol_version[16]; /* Protocol version from discovery */
+    char server[32];           /* Server name */
     bool discovered;  /* Discovery successful flag */
 } server_info_t;
 

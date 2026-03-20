@@ -7,9 +7,11 @@ idf_component_register(
     REQUIRES "json" "esp_event"
     PRIV_REQUIRES
         "camera_service"
+        "esp_wifi"
         "freertos"
         "hal_audio"
         "hal_servo"
+        "ota_service"
         "voice_service"
         "anim_service"
 
