@@ -25,6 +25,10 @@
 #define DEFAULT_USE_CACHE false
 #endif
 
+#define ANIM_SOURCE_FRAME_SIZE 206
+#define ANIM_SOURCE_FRAME_PIVOT (ANIM_SOURCE_FRAME_SIZE / 2)
+#define ANIM_DISPLAY_ZOOM_2X (LV_IMG_ZOOM_NONE * 2)
+
 typedef enum {
     ANIM_PLAYER_IDLE = 0,
     ANIM_PLAYER_PLAYING,
@@ -66,6 +70,16 @@ static void anim_service_timer_cb(lv_timer_t *timer);
 
 static void set_obj_opa(void *obj, int32_t value) {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)value, 0);
+}
+
+static void configure_anim_layer(lv_obj_t *img_obj) {
+    if (img_obj == NULL) {
+        return;
+    }
+
+    lv_img_set_pivot(img_obj, ANIM_SOURCE_FRAME_PIVOT, ANIM_SOURCE_FRAME_PIVOT);
+    lv_img_set_zoom(img_obj, ANIM_DISPLAY_ZOOM_2X);
+    lv_img_set_antialias(img_obj, false);
 }
 
 static void hide_preview_layer(void) {
@@ -316,6 +330,7 @@ int emoji_anim_init(lv_obj_t *img_obj) {
     anim_meta_init();
 
     g_front_img = img_obj;
+    configure_anim_layer(g_front_img);
     g_current_type = EMOJI_ANIM_NONE;
     g_requested_type = EMOJI_ANIM_NONE;
     g_current_frame = 0;
@@ -327,6 +342,7 @@ int emoji_anim_init(lv_obj_t *img_obj) {
     if (g_back_img == NULL && parent != NULL) {
         g_back_img = lv_img_create(parent);
         lv_obj_set_pos(g_back_img, lv_obj_get_x(img_obj), lv_obj_get_y(img_obj));
+        configure_anim_layer(g_back_img);
         lv_obj_add_flag(g_back_img, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_style_opa(g_back_img, LV_OPA_TRANSP, 0);
     }
