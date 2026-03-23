@@ -34,6 +34,7 @@
 #define WS_RESPONSE_TIMEOUT_MS 30000
 #define WS_BINARY_HEADER_LEN 14
 #define WS_BINARY_MAGIC "WSPK"
+#define WS_DEVICE_ERROR_CODE_GENERIC 1501
 
 static esp_websocket_client_handle_t s_ws_client = NULL;
 static bool s_socket_connected = false;
@@ -392,6 +393,8 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
         ESP_LOGW(TAG, "OTA binary frame not supported");
         if (!s_ota_binary_nacked) {
             s_ota_binary_nacked = true;
+            ws_send_ota_progress(0, "rejected", "not_supported");
+            ws_send_device_error(WS_DEVICE_ERROR_CODE_GENERIC, "ota_binary_not_supported");
             ws_send_sys_nack("xfer.ota.handshake", NULL, "not_supported");
         }
         break;
@@ -631,6 +634,60 @@ int ws_send_device_firmware(void) {
     return ws_send_json_envelope("evt.device.firmware", 0, data, false);
 }
 
+int ws_send_device_error(int code, const char *message) {
+    cJSON *data = cJSON_CreateObject();
+
+    if (data == NULL || message == NULL || message[0] == '\0') {
+        cJSON_Delete(data);
+        return -1;
+    }
+
+    cJSON_AddStringToObject(data, "message", message);
+    return ws_send_json_envelope("evt.device.error", code > 0 ? code : WS_DEVICE_ERROR_CODE_GENERIC, data, false);
+}
+
+int ws_send_ota_progress(int progress, const char *state, const char *message) {
+    cJSON *data = cJSON_CreateObject();
+
+    if (data == NULL) {
+        return -1;
+    }
+
+    cJSON_AddNumberToObject(data, "progress", progress);
+    if (state != NULL && state[0] != '\0') {
+        cJSON_AddStringToObject(data, "state", state);
+    }
+    if (message != NULL && message[0] != '\0') {
+        cJSON_AddStringToObject(data, "message", message);
+    }
+
+    return ws_send_json_envelope("evt.ota.progress", 0, data, false);
+}
+
+int ws_send_ota_handshake(const char *transfer_id, const char *status) {
+    cJSON *data = cJSON_CreateObject();
+    char mac[18];
+
+    if (data == NULL) {
+        return -1;
+    }
+
+    ws_get_mac_string(mac, sizeof(mac));
+    if (transfer_id != NULL && transfer_id[0] != '\0') {
+        cJSON_AddStringToObject(data, "transfer_id", transfer_id);
+    }
+    cJSON_AddStringToObject(data, "fw_version", ota_service_get_fw_version());
+    cJSON_AddStringToObject(data, "board_model", "WatcheRobot-S3");
+    if (status != NULL && status[0] != '\0') {
+        cJSON_AddStringToObject(data, "status", status);
+    }
+    if (mac[0] != '\0') {
+        cJSON_AddStringToObject(data, "mac", mac);
+    }
+
+    return ws_send_json_envelope("xfer.ota.handshake", 0, data, false);
+}
+
 int ws_send_servo_position(float x_deg, float y_deg) {
     cJSON *data = cJSON_CreateObject();
 
@@ -790,7 +847,7 @@ void ws_tts_timeout_check(void) {
             ESP_LOGW(TAG, "response timeout (%lld ms), resuming wake word detection", elapsed_ms);
             s_waiting_for_response = false;
             voice_recorder_resume_wake_word();
-            display_update("Timeout", "sad", 0, NULL);
+            display_update("Timeout", "error", 0, NULL);
             s_timeout_display_count++;
         }
     }

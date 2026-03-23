@@ -58,13 +58,16 @@ emoji_anim_prefetch_type(EMOJI_ANIM_LISTENING);
 
 | Type | Description | File Prefix |
 |------|-------------|-------------|
-| `EMOJI_ANIM_GREETING` | Startup greeting | `greeting*.png` |
-| `EMOJI_ANIM_DETECTING` | Person detection | `detecting*.png` |
-| `EMOJI_ANIM_DETECTED` | Person found | `detected*.png` |
+| `EMOJI_ANIM_HAPPY` | Positive / ready feedback | `happy*.png` |
+| `EMOJI_ANIM_ERROR` | Error / failure feedback | `error*.png` |
 | `EMOJI_ANIM_SPEAKING` | TTS playback | `speaking*.png` |
 | `EMOJI_ANIM_LISTENING` | Voice recording | `listening*.png` |
-| `EMOJI_ANIM_ANALYZING` | AI processing | `analyzing*.png` |
+| `EMOJI_ANIM_PROCESSING` | AI/task processing | `processing*.png` |
 | `EMOJI_ANIM_STANDBY` | Idle state | `standby*.png` |
+| `EMOJI_ANIM_THINKING` | Transitional thinking state | `thinking*.png` |
+| `EMOJI_ANIM_CUSTOM_1` | Reserved custom state | `custom1*.png` |
+| `EMOJI_ANIM_CUSTOM_2` | Reserved custom state | `custom2*.png` |
+| `EMOJI_ANIM_CUSTOM_3` | Reserved custom state | `custom3*.png` |
 
 ## Configuration
 

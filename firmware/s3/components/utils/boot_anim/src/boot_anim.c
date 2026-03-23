@@ -209,7 +209,7 @@ void boot_anim_show_error(const char *error_msg) {
 
     /* Load sad emoji image */
     if (error_img) {
-        lv_img_dsc_t *sad_img = emoji_get_image(EMOJI_ANIM_DETECTED, 0); /* sad/error face */
+        lv_img_dsc_t *sad_img = emoji_get_image(EMOJI_ANIM_ERROR, 0); /* error face */
         if (sad_img) {
             lv_img_set_src(error_img, sad_img);
             lv_obj_clear_flag(error_img, LV_OBJ_FLAG_HIDDEN);

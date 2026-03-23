@@ -123,14 +123,6 @@ static bool vad_process_frame(int rms) {
 void voice_recorder_init(void) {
     g_state = VOICE_STATE_IDLE;
     memset(&g_stats, 0, sizeof(g_stats));
-
-#ifdef CONFIG_ENABLE_WAKE_WORD
-    /* Start audio immediately for wake word detection */
-    ESP_LOGI(TAG, "Wake word enabled, starting audio for continuous detection");
-    if (hal_audio_start() != 0) {
-        ESP_LOGE(TAG, "Failed to start audio for wake word detection");
-    }
-#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -373,7 +365,11 @@ static void button_callback(bool pressed) {
             ESP_LOGI(TAG, "Button PRESSED - starting recording");
             g_recording_triggered_by_wake_word = false;
             voice_recorder_process_event(VOICE_EVENT_BUTTON_PRESS);
-            display_update("Recording...", "listening", 0, NULL);
+            if (g_state == VOICE_STATE_RECORDING) {
+                display_update("Recording...", "listening", 0, NULL);
+            } else {
+                display_update("Mic Unavailable", "error", 0, NULL);
+            }
         } else if (g_state == VOICE_STATE_RECORDING) {
             /* Already recording (wake word mode) - short press to stop */
             ESP_LOGI(TAG, "Button PRESSED (short) - stopping recording (wake word mode)");
@@ -470,17 +466,11 @@ static void wake_word_cleanup(void) {
 
 int voice_recorder_start(void) {
 #ifdef CONFIG_ENABLE_WAKE_WORD
-    /* Initialize wake word detector */
-    if (wake_word_setup() != 0) {
-        ESP_LOGW(TAG, "Wake word setup failed, continuing without wake word");
-    }
-
-    /* Start audio for wake word detection - must be running to feed AFE */
-    ESP_LOGI(TAG, "Starting audio for wake word detection");
-    if (hal_audio_start() != 0) {
-        ESP_LOGE(TAG, "Audio start failed");
-        return -1;
-    }
+    /* Avoid reserving audio DMA at boot. On S3 this can starve UI/WS/camera
+     * of internal heap and lead to resets before the user even starts
+     * recording. Keep the system in button-triggered mode and only request
+     * audio when an actual recording begins. */
+    ESP_LOGW(TAG, "Wake word boot activation disabled; audio will start on demand");
 #endif
 
     /* Initialize button via IO expander */

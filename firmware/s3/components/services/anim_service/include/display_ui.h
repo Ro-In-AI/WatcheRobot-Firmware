@@ -4,16 +4,18 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Supported emoji types - maps to SPIFFS animations */
+/* Supported UI emoji types - mapped to unified animation names */
 typedef enum {
     EMOJI_STANDBY = 0, /* standby - idle/default state */
-    EMOJI_HAPPY,       /* greeting - success/happy */
-    EMOJI_SAD,         /* detected - error/sad */
-    EMOJI_SURPRISED,   /* detecting - surprised (legacy) */
-    EMOJI_ANGRY,       /* analyzing - angry (legacy) */
+    EMOJI_HAPPY,       /* happy */
     EMOJI_LISTENING,   /* listening - recording user voice */
-    EMOJI_ANALYZING,   /* analyzing - AI processing */
+    EMOJI_THINKING,    /* thinking - short transitional state */
+    EMOJI_PROCESSING,  /* processing - AI/task execution */
     EMOJI_SPEAKING,    /* speaking - TTS playback */
+    EMOJI_ERROR,       /* error - failure/interruption */
+    EMOJI_CUSTOM_1,    /* reserved custom state */
+    EMOJI_CUSTOM_2,    /* reserved custom state */
+    EMOJI_CUSTOM_3,    /* reserved custom state */
     EMOJI_COUNT,       /* Sentinel */
     EMOJI_UNKNOWN = -1,
 } emoji_type_t;
@@ -32,7 +34,7 @@ void display_ui_init(void);
 
 /**
  * Map emoji string to enum
- * @param emoji_str String like "happy", "sad", etc.
+ * @param emoji_str String like "happy", "processing", "error", etc.
  * @return Emoji type enum, or EMOJI_UNKNOWN if invalid
  */
 emoji_type_t display_emoji_from_string(const char *emoji_str);
@@ -40,7 +42,7 @@ emoji_type_t display_emoji_from_string(const char *emoji_str);
 /**
  * Update display with text and optional emoji
  * @param text Text to display (can be NULL)
- * @param emoji Emoji string like "happy", "sad" (can be NULL)
+ * @param emoji Emoji string like "happy", "processing", "error" (can be NULL)
  * @param font_size Font size (0 for default)
  * @param out_result Output result (can be NULL)
  * @return 0 on success, -1 on error

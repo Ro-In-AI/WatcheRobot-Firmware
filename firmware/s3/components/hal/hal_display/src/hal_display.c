@@ -28,30 +28,29 @@ static lv_obj_t *img_emoji = NULL;
 static bool minimal_initialized = false;
 static bool is_initialized = false;
 
-/* Map display_ui emoji_type to emoji_png emoji_anim_type */
+/* Map display_ui emoji_type to unified internal animation types. */
 static emoji_anim_type_t map_emoji_type(int ui_emoji_id) {
-    /* display_ui.h: 0=standby, 1=happy, 2=sad, 3=surprised, 4=angry,
-     *              5=listening, 6=analyzing, 7=speaking */
-    /* emoji_png.h: 0=greeting, 1=detecting, 2=detected, 3=speaking,
-     *              4=listening, 5=analyzing, 6=standby */
-    /* Map display_ui emoji types to animation types */
     switch (ui_emoji_id) {
     case 0:                          /* EMOJI_STANDBY */
         return EMOJI_ANIM_STANDBY;   /* standby */
     case 1:                          /* EMOJI_HAPPY */
-        return EMOJI_ANIM_GREETING;  /* greeting */
-    case 2:                          /* EMOJI_SAD */
-        return EMOJI_ANIM_DETECTED;  /* detected */
-    case 3:                          /* EMOJI_SURPRISED */
-        return EMOJI_ANIM_ANALYZING; /* thinking */
-    case 4:                          /* EMOJI_ANGRY */
-        return EMOJI_ANIM_ANALYZING; /* analyzing */
-    case 5:                          /* EMOJI_LISTENING */
+        return EMOJI_ANIM_HAPPY;     /* happy */
+    case 2:                          /* EMOJI_LISTENING */
         return EMOJI_ANIM_LISTENING; /* listening */
-    case 6:                          /* EMOJI_ANALYZING */
-        return EMOJI_ANIM_ANALYZING; /* analyzing */
-    case 7:                          /* EMOJI_SPEAKING */
+    case 3:                          /* EMOJI_THINKING */
+        return EMOJI_ANIM_THINKING;  /* thinking */
+    case 4:                          /* EMOJI_PROCESSING */
+        return EMOJI_ANIM_PROCESSING; /* processing */
+    case 5:                          /* EMOJI_SPEAKING */
         return EMOJI_ANIM_SPEAKING;  /* speaking */
+    case 6:                          /* EMOJI_ERROR */
+        return EMOJI_ANIM_ERROR;     /* error */
+    case 7:                          /* EMOJI_CUSTOM_1 */
+        return EMOJI_ANIM_CUSTOM_1;  /* custom1 */
+    case 8:                          /* EMOJI_CUSTOM_2 */
+        return EMOJI_ANIM_CUSTOM_2;  /* custom2 */
+    case 9:                          /* EMOJI_CUSTOM_3 */
+        return EMOJI_ANIM_CUSTOM_3;  /* custom3 */
     default:
         return EMOJI_ANIM_STANDBY;
     }
@@ -160,9 +159,9 @@ int hal_display_init(void) {
 
     /* 9. Initialize animation system */
     if (emoji_anim_init(img_emoji) == 0) {
-        /* Start with greeting animation */
+        /* Start with happy animation */
         lvgl_port_lock(0);
-        emoji_anim_start(EMOJI_ANIM_GREETING);
+        emoji_anim_start(EMOJI_ANIM_HAPPY);
         lvgl_port_unlock();
     }
 
@@ -235,15 +234,15 @@ int hal_display_ui_init(void) {
     /* Give LVGL time to refresh the screen before loading animation */
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    /* 6. Initialize animation system and start default greeting animation.
+    /* 6. Initialize animation system and start default happy animation.
      * Boot sequence is already handled by boot_anim during early startup. */
     ESP_LOGI(TAG, "Initializing animation system...");
     if (emoji_anim_init(img_emoji) == 0) {
-        ESP_LOGI(TAG, "Starting greeting animation...");
+        ESP_LOGI(TAG, "Starting happy animation...");
         lvgl_port_lock(0);
-        emoji_anim_start(EMOJI_ANIM_GREETING);
+        emoji_anim_start(EMOJI_ANIM_HAPPY);
         lvgl_port_unlock();
-        ESP_LOGI(TAG, "Greeting animation started");
+        ESP_LOGI(TAG, "Happy animation started");
     } else {
         ESP_LOGW(TAG, "Failed to initialize animation system");
     }
@@ -311,22 +310,28 @@ int hal_display_set_emoji(int emoji_id) {
         emoji_name = "happy";
         break;
     case 2:
-        emoji_name = "sad";
-        break;
-    case 3:
-        emoji_name = "surprised";
-        break;
-    case 4:
-        emoji_name = "angry";
-        break;
-    case 5:
         emoji_name = "listening";
         break;
+    case 3:
+        emoji_name = "thinking";
+        break;
+    case 4:
+        emoji_name = "processing";
+        break;
+    case 5:
+        emoji_name = "speaking";
+        break;
     case 6:
-        emoji_name = "analyzing";
+        emoji_name = "error";
         break;
     case 7:
-        emoji_name = "speaking";
+        emoji_name = "custom1";
+        break;
+    case 8:
+        emoji_name = "custom2";
+        break;
+    case 9:
+        emoji_name = "custom3";
         break;
     }
 
@@ -359,7 +364,7 @@ int hal_display_start_analyzing(void) {
     if (!is_initialized)
         return -1;
     lvgl_port_lock(0);
-    int ret = emoji_anim_start(EMOJI_ANIM_ANALYZING);
+    int ret = emoji_anim_start(EMOJI_ANIM_PROCESSING);
     lvgl_port_unlock();
     return ret;
 }

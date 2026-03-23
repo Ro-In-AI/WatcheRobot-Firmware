@@ -48,16 +48,16 @@
 /* Emoji animation types */
 typedef enum {
     EMOJI_ANIM_BOOT = 0, /* Boot animation (first play) */
-    EMOJI_ANIM_GREETING,
-    EMOJI_ANIM_DETECTING,
-    EMOJI_ANIM_DETECTED,
+    EMOJI_ANIM_HAPPY,
+    EMOJI_ANIM_ERROR,
     EMOJI_ANIM_SPEAKING,
     EMOJI_ANIM_LISTENING,
-    EMOJI_ANIM_ANALYZING,
+    EMOJI_ANIM_PROCESSING,
     EMOJI_ANIM_STANDBY,
     EMOJI_ANIM_THINKING,
     EMOJI_ANIM_CUSTOM_1,
     EMOJI_ANIM_CUSTOM_2,
+    EMOJI_ANIM_CUSTOM_3,
     EMOJI_ANIM_COUNT,
     EMOJI_ANIM_NONE = -1
 } emoji_anim_type_t;
@@ -93,13 +93,16 @@ int emoji_spiffs_init(void);
  * @brief Load all emoji images from SPIFFS (PNG format)
  *
  * Scans /spiffs directory for PNG files with specific prefixes:
- * - greeting*.png
- * - detecting*.png
- * - detected*.png
+ * - happy*.png
+ * - error*.png
  * - speaking*.png
  * - listening*.png
- * - analyzing*.png
+ * - processing*.png
  * - standby*.png
+ * - thinking*.png
+ * - custom1*.png
+ * - custom2*.png
+ * - custom3*.png
  *
  * @return 0 on success, -1 on error
  */

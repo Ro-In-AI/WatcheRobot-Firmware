@@ -43,12 +43,12 @@ static void on_button_long_press(void) {
 static void on_button_long_release(void) {
     ESP_LOGI(TAG, "Button LONG RELEASE - stop recording");
     voice_recorder_process_event(VOICE_EVENT_BUTTON_RELEASE);
-    display_update("Processing...", "analyzing", 0, NULL);
+    display_update("Processing...", "processing", 0, NULL);
 }
 
 static void on_button_multi_click_restart(void) {
     ESP_LOGW(TAG, "Button %d-click - REBOOTING!", RESTART_CLICK_COUNT);
-    display_update("Rebooting...", "sad", 0, NULL);
+    display_update("Rebooting...", "error", 0, NULL);
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
 }

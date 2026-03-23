@@ -21,16 +21,16 @@ except ImportError as exc:  # pragma: no cover - runtime dependency check
 
 ANIM_TYPES = [
     "boot",
-    "greeting",
-    "detecting",
-    "detected",
+    "happy",
+    "error",
     "speaking",
     "listening",
-    "analyzing",
+    "processing",
     "standby",
     "thinking",
     "custom1",
     "custom2",
+    "custom3",
 ]
 
 MAX_FRAMES = 24

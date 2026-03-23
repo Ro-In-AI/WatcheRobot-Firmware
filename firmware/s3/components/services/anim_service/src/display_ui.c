@@ -53,43 +53,43 @@ emoji_type_t display_emoji_from_string(const char *emoji_str) {
         return EMOJI_UNKNOWN;
     }
 
-    /* Success/Happy states */
-    if (strcasecmp_local(emoji_str, "happy") == 0 || strcasecmp_local(emoji_str, "success") == 0) {
-        return EMOJI_HAPPY;
-    }
-
-    /* Error/Sad states */
-    if (strcasecmp_local(emoji_str, "sad") == 0 || strcasecmp_local(emoji_str, "error") == 0) {
-        return EMOJI_SAD;
-    }
-
-    /* Thinking/Processing states */
-    if (strcasecmp_local(emoji_str, "thinking") == 0 || strcasecmp_local(emoji_str, "analyzing") == 0) {
-        return EMOJI_ANALYZING;
-    }
-
-    /* Listening/Recording states */
-    if (strcasecmp_local(emoji_str, "listening") == 0) {
-        return EMOJI_LISTENING;
-    }
-
-    /* Speaking/TTS states */
-    if (strcasecmp_local(emoji_str, "speaking") == 0) {
-        return EMOJI_SPEAKING;
-    }
-
-    /* Standby/Idle states */
     if (strcasecmp_local(emoji_str, "standby") == 0 || strcasecmp_local(emoji_str, "idle") == 0 ||
         strcasecmp_local(emoji_str, "normal") == 0) {
         return EMOJI_STANDBY;
     }
 
-    /* Legacy mappings (kept for compatibility) */
-    if (strcasecmp_local(emoji_str, "surprised") == 0) {
-        return EMOJI_SURPRISED;
+    if (strcasecmp_local(emoji_str, "happy") == 0 || strcasecmp_local(emoji_str, "success") == 0) {
+        return EMOJI_HAPPY;
     }
-    if (strcasecmp_local(emoji_str, "angry") == 0) {
-        return EMOJI_ANGRY;
+
+    if (strcasecmp_local(emoji_str, "listening") == 0) {
+        return EMOJI_LISTENING;
+    }
+
+    if (strcasecmp_local(emoji_str, "thinking") == 0) {
+        return EMOJI_THINKING;
+    }
+
+    if (strcasecmp_local(emoji_str, "processing") == 0 || strcasecmp_local(emoji_str, "analyzing") == 0) {
+        return EMOJI_PROCESSING;
+    }
+
+    if (strcasecmp_local(emoji_str, "speaking") == 0) {
+        return EMOJI_SPEAKING;
+    }
+
+    if (strcasecmp_local(emoji_str, "error") == 0) {
+        return EMOJI_ERROR;
+    }
+
+    if (strcasecmp_local(emoji_str, "custom1") == 0) {
+        return EMOJI_CUSTOM_1;
+    }
+    if (strcasecmp_local(emoji_str, "custom2") == 0) {
+        return EMOJI_CUSTOM_2;
+    }
+    if (strcasecmp_local(emoji_str, "custom3") == 0) {
+        return EMOJI_CUSTOM_3;
     }
 
     return EMOJI_UNKNOWN;

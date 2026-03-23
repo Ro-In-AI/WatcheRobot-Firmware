@@ -9,6 +9,8 @@
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "esp_spiffs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "lvgl.h"
 
 #include <dirent.h>
@@ -51,16 +53,16 @@ typedef struct __attribute__((packed)) {
 static const uint8_t PNG_HEADER[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
 static const char *emoji_names[EMOJI_ANIM_COUNT] = {
     "boot",
-    "greeting",
-    "detecting",
-    "detected",
+    "happy",
+    "error",
     "speaking",
     "listening",
-    "analyzing",
+    "processing",
     "standby",
     "thinking",
     "custom1",
     "custom2",
+    "custom3",
 };
 
 lv_img_dsc_t *g_emoji_images[EMOJI_ANIM_COUNT][MAX_EMOJI_IMAGES];
@@ -75,6 +77,29 @@ static anim_warm_frame_t g_warm_frames[EMOJI_ANIM_COUNT];
 static size_t g_warm_bytes = 0;
 static anim_type_cache_t g_active_cache = {0};
 static anim_type_cache_t g_prepared_cache = {0};
+static SemaphoreHandle_t g_hot_cache_mutex = NULL;
+
+static bool hot_cache_lock(void) {
+    if (g_hot_cache_mutex == NULL) {
+        g_hot_cache_mutex = xSemaphoreCreateMutex();
+        if (g_hot_cache_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create hot cache mutex");
+            return false;
+        }
+    }
+
+    if (xSemaphoreTake(g_hot_cache_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to lock hot cache mutex");
+        return false;
+    }
+    return true;
+}
+
+static void hot_cache_unlock(void) {
+    if (g_hot_cache_mutex != NULL) {
+        xSemaphoreGive(g_hot_cache_mutex);
+    }
+}
 
 static void reset_catalog(void) {
     memset(g_catalog, 0, sizeof(g_catalog));
@@ -217,6 +242,10 @@ static int find_animation_files(const char *prefix, sorted_file_t *files, int ma
     return file_count;
 }
 
+static int find_animation_files_for_type(emoji_anim_type_t type, sorted_file_t *files, int max_files) {
+    return find_animation_files(emoji_names[type], files, max_files);
+}
+
 static int load_manifest_from_path(const char *manifest_path) {
     FILE *f = fopen(manifest_path, "rb");
     if (f == NULL) {
@@ -282,7 +311,7 @@ static int scan_catalog_from_fs(void) {
         default_first_frame_path((emoji_anim_type_t)type, info->first_frame_raw, sizeof(info->first_frame_raw));
 
         sorted_file_t files[MAX_EMOJI_IMAGES] = {0};
-        int count = find_animation_files(emoji_names[type], files, MAX_EMOJI_IMAGES);
+        int count = find_animation_files_for_type((emoji_anim_type_t)type, files, MAX_EMOJI_IMAGES);
         if (count <= 0) {
             continue;
         }
@@ -675,14 +704,20 @@ int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id) {
     }
 
     const anim_catalog_type_info_t *info = anim_catalog_get_type_info(type);
+    size_t active_bytes = 0;
+    if (!hot_cache_lock()) {
+        return -1;
+    }
     free_hot_cache(&g_prepared_cache);
+    active_bytes = g_active_cache.total_bytes;
+    hot_cache_unlock();
 
     size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     size_t estimated_bytes = 0;
     if (info->width > 0 && info->height > 0) {
         estimated_bytes = (size_t)info->width * info->height * 2U * info->frame_count;
     }
-    if (estimated_bytes > 0 && (estimated_bytes + g_active_cache.total_bytes > WATCHER_ANIM_HOT_BUDGET_BYTES ||
+    if (estimated_bytes > 0 && (estimated_bytes + active_bytes > WATCHER_ANIM_HOT_BUDGET_BYTES ||
                                 free_spiram <= estimated_bytes + WATCHER_ANIM_SAFETY_MARGIN_BYTES)) {
         ESP_LOGW(TAG, "Insufficient PSRAM headroom for %s hot cache", emoji_type_name(type));
         return -1;
@@ -722,7 +757,7 @@ int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id) {
         cache.total_bytes += data_size;
     }
 
-    if (cache.total_bytes + g_active_cache.total_bytes > WATCHER_ANIM_HOT_BUDGET_BYTES) {
+    if (cache.total_bytes + active_bytes > WATCHER_ANIM_HOT_BUDGET_BYTES) {
         ESP_LOGW(TAG, "Hot cache budget exceeded for %s (%u KB)", emoji_type_name(type),
                  (unsigned)(cache.total_bytes / 1024U));
         free_hot_cache(&cache);
@@ -730,23 +765,38 @@ int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id) {
     }
 
     cache.is_loaded = true;
+    if (!hot_cache_lock()) {
+        free_hot_cache(&cache);
+        return -1;
+    }
+    free_hot_cache(&g_prepared_cache);
     g_prepared_cache = cache;
+    hot_cache_unlock();
     return 0;
 }
 
 int anim_hot_commit_prepared(emoji_anim_type_t type, uint32_t generation_id) {
+    if (!hot_cache_lock()) {
+        return -1;
+    }
     if (!g_prepared_cache.is_loaded || g_prepared_cache.type != type || g_prepared_cache.generation_id != generation_id) {
+        hot_cache_unlock();
         return -1;
     }
 
     free_hot_cache(&g_active_cache);
     g_active_cache = g_prepared_cache;
     memset(&g_prepared_cache, 0, sizeof(g_prepared_cache));
+    hot_cache_unlock();
     return 0;
 }
 
 void anim_hot_discard_prepared(void) {
+    if (!hot_cache_lock()) {
+        return;
+    }
     free_hot_cache(&g_prepared_cache);
+    hot_cache_unlock();
 }
 
 bool anim_hot_is_active_type(emoji_anim_type_t type) {
@@ -769,8 +819,12 @@ anim_cached_frame_t *anim_hot_get_frame(emoji_anim_type_t type, int frame) {
 }
 
 void anim_hot_free_all(void) {
+    if (!hot_cache_lock()) {
+        return;
+    }
     free_hot_cache(&g_active_cache);
     free_hot_cache(&g_prepared_cache);
+    hot_cache_unlock();
 }
 
 int emoji_load_all_images(void) {

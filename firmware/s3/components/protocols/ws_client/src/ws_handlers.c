@@ -21,7 +21,6 @@
 
 #define TAG "WS_HANDLERS"
 
-#define SERVO_DEFAULT_DURATION_MS 100
 #define SERVO_REPORT_INTERVAL_MS 50
 #define SERVO_REPORT_TASK_STACK 4096
 #define SERVO_REPORT_TASK_PRIORITY 4
@@ -30,6 +29,9 @@
 #define WS_CAPTURE_DEFAULT_QUALITY 80
 #define WS_CAMERA_UPLOAD_TASK_STACK 6144
 #define WS_CAMERA_UPLOAD_TASK_PRIORITY 5
+#define WS_DEVICE_ERROR_CODE_CAMERA 1502
+#define WS_DEVICE_ERROR_CODE_SERVO 1503
+#define WS_DEVICE_ERROR_CODE_OTA 1504
 
 typedef struct {
     SemaphoreHandle_t lock;
@@ -346,6 +348,7 @@ static void ws_camera_frame_cb(const uint8_t *jpeg, size_t size, uint32_t timest
 
     if (ws_send_image_frame(jpeg, size) < 0) {
         ESP_LOGW(TAG, "image frame upload failed: size=%u", (unsigned int)size);
+        ws_send_device_error(WS_DEVICE_ERROR_CODE_CAMERA, "image_upload_failed");
         ws_send_camera_state("capture_image", "error", 0, "image_upload_failed");
     } else {
         ws_send_camera_state("capture_image", "completed", 0, NULL);
@@ -531,10 +534,12 @@ void ws_handlers_init(void) {
 }
 
 const char *ws_ai_status_to_emoji(const char *status, const char *message) {
-    if (ws_contains_nocase(status, "thinking") || ws_contains_nocase(status, "processing") ||
-        ws_contains_nocase(status, "analyzing") || ws_contains_nocase(message, "thinking") ||
+    if (ws_contains_nocase(status, "thinking") || ws_contains_nocase(message, "thinking")) {
+        return "thinking";
+    }
+    if (ws_contains_nocase(status, "processing") || ws_contains_nocase(status, "analyzing") ||
         ws_contains_nocase(message, "processing") || ws_contains_nocase(message, "analyzing")) {
-        return "analyzing";
+        return "processing";
     }
     if (ws_contains_nocase(status, "speaking") || ws_contains_nocase(message, "speaking")) {
         return "speaking";
@@ -548,7 +553,7 @@ const char *ws_ai_status_to_emoji(const char *status, const char *message) {
     }
     if (ws_contains_nocase(status, "error") || ws_contains_nocase(status, "fail") ||
         ws_contains_nocase(message, "error") || ws_contains_nocase(message, "fail")) {
-        return "sad";
+        return "error";
     }
     return NULL;
 }
@@ -573,9 +578,9 @@ void on_sys_nack_handler(const ws_sys_nack_t *msg) {
     ESP_LOGW(TAG, "sys.nack: type=%s command_id=%s code=%d reason=%s", msg->type, msg->command_id, msg->code,
              msg->reason);
     if (strcmp(msg->type, "sys.client.hello") == 0) {
-        display_update(msg->reason[0] != '\0' ? msg->reason : "Hello Rejected", "sad", 0, NULL);
+        display_update(msg->reason[0] != '\0' ? msg->reason : "Hello Rejected", "error", 0, NULL);
     } else if (msg->reason[0] != '\0') {
-        display_update(msg->reason, "sad", 0, NULL);
+        display_update(msg->reason, "error", 0, NULL);
     }
 }
 
@@ -623,6 +628,7 @@ void on_servo_handler(const ws_servo_cmd_t *cmd) {
     if (ret == ESP_OK) {
         ws_send_sys_ack("ctrl.servo.angle", NULL);
     } else {
+        ws_send_device_error(WS_DEVICE_ERROR_CODE_SERVO, "servo_move_failed");
         ws_send_sys_nack("ctrl.servo.angle", NULL, "servo_move_failed");
     }
 }
@@ -657,6 +663,7 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
     ret = ws_camera_ensure_ready();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "camera path not ready: %s", esp_err_to_name(ret));
+        ws_send_device_error(WS_DEVICE_ERROR_CODE_CAMERA, "camera_init_failed");
         ws_send_sys_nack(command_type, cmd->command_id, "camera_init_failed");
         return;
     }
@@ -686,8 +693,10 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
                 if (ret == ESP_ERR_NOT_SUPPORTED) {
                     ws_send_sys_nack(command_type, cmd->command_id, "unsupported_resolution");
                 } else if (ret == ESP_ERR_INVALID_STATE) {
+                    ws_send_device_error(WS_DEVICE_ERROR_CODE_CAMERA, "camera_busy");
                     ws_send_sys_nack(command_type, cmd->command_id, "camera_busy");
                 } else {
+                    ws_send_device_error(WS_DEVICE_ERROR_CODE_CAMERA, "camera_config_failed");
                     ws_send_sys_nack(command_type, cmd->command_id, "camera_config_failed");
                 }
                 return;
@@ -763,6 +772,7 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
 
         ESP_LOGE(TAG, "camera stream start failed: %s", esp_err_to_name(ret));
         ws_camera_reset_stream(true);
+        ws_send_device_error(WS_DEVICE_ERROR_CODE_CAMERA, "stream_start_failed");
         ws_send_camera_state("start_video", "error", fps, "stream_start_failed");
         return;
     }
@@ -786,6 +796,7 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
             ws_camera_reset_stream(true);
         } else {
             ESP_LOGE(TAG, "camera stream stop failed: %s", esp_err_to_name(ret));
+            ws_send_device_error(WS_DEVICE_ERROR_CODE_CAMERA, "stream_stop_failed");
             ws_send_camera_state("stop_video", "error", fps, "stream_stop_failed");
         }
         return;
@@ -800,6 +811,7 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
     ret = camera_service_capture_once();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "camera single capture failed: %s", esp_err_to_name(ret));
+        ws_send_device_error(WS_DEVICE_ERROR_CODE_CAMERA, "capture_failed");
         ws_send_camera_state("capture_image", "error", 0, "capture_failed");
         ws_camera_finish_one_shot();
     }
@@ -811,7 +823,7 @@ void on_asr_result_handler(const ws_text_event_t *event) {
     }
 
     ESP_LOGI(TAG, "ASR result: %s", event->text);
-    display_update(event->text[0] != '\0' ? event->text : "Listening...", "analyzing", 0, NULL);
+    display_update(event->text[0] != '\0' ? event->text : "Listening...", "processing", 0, NULL);
 }
 
 void on_ai_status_handler(const ws_ai_status_t *event) {
@@ -837,7 +849,7 @@ void on_ai_thinking_handler(const ws_ai_thinking_t *event) {
 
     ESP_LOGI(TAG, "AI thinking: kind=%s content=%s", event->kind, event->content);
     if (event->content[0] != '\0') {
-        display_update(event->content, "analyzing", 0, NULL);
+        display_update(event->content, "thinking", 0, NULL);
     }
 }
 
@@ -855,6 +867,11 @@ void on_transfer_handler(const ws_transfer_cmd_t *cmd) {
     }
 
     ESP_LOGW(TAG, "transfer not supported: type=%s transfer_id=%s", cmd->message_type, cmd->transfer_id);
+    if (strcmp(cmd->message_type, "xfer.ota.handshake") == 0) {
+        ws_send_ota_handshake(cmd->transfer_id[0] != '\0' ? cmd->transfer_id : NULL, "not_supported");
+    }
+    ws_send_ota_progress(0, "rejected", "not_supported");
+    ws_send_device_error(WS_DEVICE_ERROR_CODE_OTA, "ota_not_supported");
     ws_send_sys_nack(cmd->message_type,
                      cmd->transfer_id[0] != '\0' ? cmd->transfer_id : NULL,
                      "not_supported");
