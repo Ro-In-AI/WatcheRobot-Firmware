@@ -6,7 +6,7 @@
 #include "ws_handlers.h"
 
 #include "camera_service.h"
-#include "display_ui.h"
+#include "behavior_state_service.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -578,9 +578,9 @@ void on_sys_nack_handler(const ws_sys_nack_t *msg) {
     ESP_LOGW(TAG, "sys.nack: type=%s command_id=%s code=%d reason=%s", msg->type, msg->command_id, msg->code,
              msg->reason);
     if (strcmp(msg->type, "sys.client.hello") == 0) {
-        display_update(msg->reason[0] != '\0' ? msg->reason : "Hello Rejected", "error", 0, NULL);
+        behavior_state_set_with_text("error", msg->reason[0] != '\0' ? msg->reason : "Hello Rejected", 0);
     } else if (msg->reason[0] != '\0') {
-        display_update(msg->reason, "error", 0, NULL);
+        behavior_state_set_with_text("error", msg->reason, 0);
     }
 }
 
@@ -630,6 +630,24 @@ void on_servo_handler(const ws_servo_cmd_t *cmd) {
     } else {
         ws_send_device_error(WS_DEVICE_ERROR_CODE_SERVO, "servo_move_failed");
         ws_send_sys_nack("ctrl.servo.angle", NULL, "servo_move_failed");
+    }
+}
+
+void on_state_set_handler(const ws_state_cmd_t *cmd) {
+    esp_err_t ret;
+
+    if (cmd == NULL || cmd->state_id[0] == '\0') {
+        ws_send_sys_nack("ctrl.robot.state.set", cmd != NULL ? cmd->command_id : NULL, "invalid_state_payload");
+        return;
+    }
+
+    ret = behavior_state_set(cmd->state_id);
+    if (ret == ESP_OK) {
+        ws_send_sys_ack("ctrl.robot.state.set", cmd->command_id);
+    } else if (ret == ESP_ERR_NOT_FOUND) {
+        ws_send_sys_nack("ctrl.robot.state.set", cmd->command_id, "unknown_state_id");
+    } else {
+        ws_send_sys_nack("ctrl.robot.state.set", cmd->command_id, "state_set_failed");
     }
 }
 
@@ -823,7 +841,7 @@ void on_asr_result_handler(const ws_text_event_t *event) {
     }
 
     ESP_LOGI(TAG, "ASR result: %s", event->text);
-    display_update(event->text[0] != '\0' ? event->text : "Listening...", "processing", 0, NULL);
+    behavior_state_set_with_text("processing", event->text[0] != '\0' ? event->text : "Listening...", 0);
 }
 
 void on_ai_status_handler(const ws_ai_status_t *event) {
@@ -837,8 +855,10 @@ void on_ai_status_handler(const ws_ai_status_t *event) {
     ESP_LOGI(TAG, "AI status: status=%s message=%s", event->status, event->message);
     emoji = ws_ai_status_to_emoji(event->status, event->message);
     text = event->message[0] != '\0' ? event->message : event->status;
-    if (text[0] != '\0' || emoji != NULL) {
-        display_update(text[0] != '\0' ? text : NULL, emoji, 0, NULL);
+    if (emoji != NULL) {
+        behavior_state_set_with_text(emoji, text[0] != '\0' ? text : NULL, 0);
+    } else if (text[0] != '\0') {
+        behavior_state_set_text(text, 0);
     }
 }
 
@@ -849,7 +869,7 @@ void on_ai_thinking_handler(const ws_ai_thinking_t *event) {
 
     ESP_LOGI(TAG, "AI thinking: kind=%s content=%s", event->kind, event->content);
     if (event->content[0] != '\0') {
-        display_update(event->content, "thinking", 0, NULL);
+        behavior_state_set_with_text("thinking", event->content, 0);
     }
 }
 
@@ -885,6 +905,7 @@ ws_router_t ws_handlers_get_router(void) {
         .on_sys_pong = on_sys_pong_handler,
         .on_session_resume = on_session_resume_handler,
         .on_servo = on_servo_handler,
+        .on_state_set = on_state_set_handler,
         .on_capture = on_capture_handler,
         .on_asr_result = on_asr_result_handler,
         .on_ai_status = on_ai_status_handler,

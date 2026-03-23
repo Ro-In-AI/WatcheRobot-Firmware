@@ -511,6 +511,20 @@ static void free_warm_frame(anim_warm_frame_t *frame) {
     memset(frame, 0, sizeof(*frame));
 }
 
+#if LV_COLOR_DEPTH == 16 && LV_COLOR_16_SWAP
+static void swap_rgb565_bytes_in_place(uint8_t *data, size_t data_size) {
+    if (data == NULL || (data_size & 0x1U) != 0U) {
+        return;
+    }
+
+    for (size_t i = 0; i < data_size; i += 2U) {
+        uint8_t tmp = data[i];
+        data[i] = data[i + 1U];
+        data[i + 1U] = tmp;
+    }
+}
+#endif
+
 static int load_raw565_frame(const anim_catalog_type_info_t *info, anim_warm_frame_t *frame) {
     FILE *f = fopen(info->first_frame_raw, "rb");
     if (f == NULL) {
@@ -530,6 +544,11 @@ static int load_raw565_frame(const anim_catalog_type_info_t *info, anim_warm_fra
         heap_caps_free(data);
         return -1;
     }
+
+#if LV_COLOR_DEPTH == 16 && LV_COLOR_16_SWAP
+    /* Raw previews are stored as plain RGB565; swap to LVGL native 16-bit order on load. */
+    swap_rgb565_bytes_in_place(data, expected_size);
+#endif
 
     frame->loaded = true;
     frame->type = info->type;

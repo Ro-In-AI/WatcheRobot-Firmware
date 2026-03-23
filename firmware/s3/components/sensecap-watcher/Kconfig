@@ -53,7 +53,7 @@ menu "SenseCAP Watcher BSP Configuration"
 
         config LVGL_DRAW_BUFF_HEIGHT
             int "LVGL DRAW BUFF HEIGHT(ROWS)"
-            range 10 412
+            range 4 412
             default 20
             help
                 "LVGL draw buffer height(rows). Smaller values reduce SPI flush chunk size and

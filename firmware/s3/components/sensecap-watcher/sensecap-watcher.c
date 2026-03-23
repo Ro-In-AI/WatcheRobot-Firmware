@@ -938,10 +938,19 @@ const audio_codec_data_if_t *bsp_audio_get_codec_itf(void) {
 esp_codec_dev_handle_t bsp_audio_codec_speaker_init(void) {
     const audio_codec_data_if_t *i2s_data_if = bsp_audio_get_codec_itf();
     if (i2s_data_if == NULL) {
+        esp_err_t ret;
         /* Initilize I2C */
-        BSP_ERROR_CHECK_RETURN_NULL(bsp_i2c_bus_init());
+        ret = bsp_i2c_bus_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "speaker init: i2c init failed: %s", esp_err_to_name(ret));
+            return NULL;
+        }
         /* Configure I2S peripheral and Power Amplifier */
-        BSP_ERROR_CHECK_RETURN_NULL(bsp_audio_init(NULL));
+        ret = bsp_audio_init(NULL);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "speaker init: audio init failed: %s", esp_err_to_name(ret));
+            return NULL;
+        }
         i2s_data_if = bsp_audio_get_codec_itf();
     }
     assert(i2s_data_if);
@@ -988,10 +997,19 @@ esp_codec_dev_handle_t bsp_audio_codec_microphone_init(void) {
     const audio_codec_data_if_t *i2s_data_if = bsp_audio_get_codec_itf();
     const audio_codec_if_t *es7243_dev = NULL;
     if (i2s_data_if == NULL) {
+        esp_err_t ret;
         /* Initilize I2C */
-        BSP_ERROR_CHECK_RETURN_NULL(bsp_i2c_bus_init());
+        ret = bsp_i2c_bus_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "microphone init: i2c init failed: %s", esp_err_to_name(ret));
+            return NULL;
+        }
         /* Configure I2S peripheral and Power Amplifier */
-        BSP_ERROR_CHECK_RETURN_NULL(bsp_audio_init(NULL));
+        ret = bsp_audio_init(NULL);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "microphone init: audio init failed: %s", esp_err_to_name(ret));
+            return NULL;
+        }
         i2s_data_if = bsp_audio_get_codec_itf();
     }
     assert(i2s_data_if);

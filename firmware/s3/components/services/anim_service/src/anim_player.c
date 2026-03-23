@@ -5,6 +5,7 @@
 
 #include "anim_player.h"
 #include "anim_meta.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -28,6 +29,10 @@
 #define ANIM_SOURCE_FRAME_SIZE 206
 #define ANIM_SOURCE_FRAME_PIVOT (ANIM_SOURCE_FRAME_SIZE / 2)
 #define ANIM_DISPLAY_ZOOM_2X (LV_IMG_ZOOM_NONE * 2)
+#define ANIM_PREVIEW_ONLY_INTERNAL_HEAP_THRESHOLD (40U * 1024U)
+#define ANIM_PREVIEW_ONLY_INTERNAL_LARGEST_BLOCK_THRESHOLD (24U * 1024U)
+#define ANIM_PREVIEW_ONLY_DMA_HEAP_THRESHOLD (24U * 1024U)
+#define ANIM_PREVIEW_ONLY_DMA_LARGEST_BLOCK_THRESHOLD (16U * 1024U)
 
 typedef enum {
     ANIM_PLAYER_IDLE = 0,
@@ -64,9 +69,60 @@ static bool g_use_cache = DEFAULT_USE_CACHE;
 static volatile uint32_t g_latest_generation = 0;
 static int64_t g_anim_start_us = 0;
 
+typedef struct {
+    size_t free_internal;
+    size_t largest_internal;
+    size_t free_dma;
+    size_t largest_dma;
+} anim_heap_snapshot_t;
+
 static void anim_worker_task(void *param);
 static void anim_frame_timer_cb(lv_timer_t *timer);
 static void anim_service_timer_cb(lv_timer_t *timer);
+static void hide_preview_layer(void);
+
+static anim_heap_snapshot_t capture_heap_snapshot(void) {
+    anim_heap_snapshot_t snapshot = {
+        .free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+        .largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+        .free_dma = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
+        .largest_dma = heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
+    };
+    return snapshot;
+}
+
+static bool should_use_preview_only_mode(const anim_heap_snapshot_t *snapshot) {
+    if (snapshot == NULL) {
+        return false;
+    }
+
+    bool internal_low = (snapshot->free_internal > 0 && snapshot->free_internal < ANIM_PREVIEW_ONLY_INTERNAL_HEAP_THRESHOLD) ||
+                        (snapshot->largest_internal > 0 &&
+                         snapshot->largest_internal < ANIM_PREVIEW_ONLY_INTERNAL_LARGEST_BLOCK_THRESHOLD);
+    bool dma_low = (snapshot->free_dma > 0 && snapshot->free_dma < ANIM_PREVIEW_ONLY_DMA_HEAP_THRESHOLD) ||
+                   (snapshot->largest_dma > 0 && snapshot->largest_dma < ANIM_PREVIEW_ONLY_DMA_LARGEST_BLOCK_THRESHOLD);
+    return internal_low || dma_low;
+}
+
+static void activate_preview_only(emoji_anim_type_t type, const lv_img_dsc_t *preview) {
+    if (g_front_img == NULL || preview == NULL) {
+        return;
+    }
+
+    lv_img_set_src(g_front_img, preview);
+    lv_obj_set_style_opa(g_front_img, LV_OPA_COVER, 0);
+    hide_preview_layer();
+
+    g_current_type = type;
+    g_requested_type = type;
+    g_current_frame = 0;
+    g_state = ANIM_PLAYER_PLAYING;
+    g_anim_start_us = esp_timer_get_time();
+
+    if (g_frame_timer != NULL) {
+        lv_timer_pause(g_frame_timer);
+    }
+}
 
 static void set_obj_opa(void *obj, int32_t value) {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)value, 0);
@@ -406,6 +462,22 @@ int emoji_anim_start(emoji_anim_type_t type) {
         g_state = ANIM_PLAYER_PLAYING;
         g_anim_start_us = esp_timer_get_time();
         resume_frame_timer_if_needed(type);
+        return 0;
+    }
+
+    anim_heap_snapshot_t heap_snapshot = capture_heap_snapshot();
+    if (!g_use_cache || should_use_preview_only_mode(&heap_snapshot)) {
+        if (g_use_cache) {
+            ESP_LOGW(TAG,
+                     "Low heap headroom, using preview-only animation for %s "
+                     "(internal=%u/%u bytes, dma=%u/%u bytes)",
+                     emoji_type_name(type),
+                     (unsigned)heap_snapshot.free_internal,
+                     (unsigned)heap_snapshot.largest_internal,
+                     (unsigned)heap_snapshot.free_dma,
+                     (unsigned)heap_snapshot.largest_dma);
+        }
+        activate_preview_only(type, preview);
         return 0;
     }
 

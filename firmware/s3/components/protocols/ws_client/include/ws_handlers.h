@@ -16,6 +16,7 @@ void on_sys_ping_handler(void);
 void on_sys_pong_handler(void);
 void on_session_resume_handler(void);
 void on_servo_handler(const ws_servo_cmd_t *cmd);
+void on_state_set_handler(const ws_state_cmd_t *cmd);
 void on_capture_handler(const ws_capture_cmd_t *cmd);
 void on_asr_result_handler(const ws_text_event_t *event);
 void on_ai_status_handler(const ws_ai_status_t *event);

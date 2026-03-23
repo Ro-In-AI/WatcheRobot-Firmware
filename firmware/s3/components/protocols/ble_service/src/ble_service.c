@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "behavior_state_service.h"
+#include "cJSON.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
@@ -235,6 +237,44 @@ static esp_err_t ble_process_line(const char *line) {
     return ESP_ERR_NOT_SUPPORTED;
 }
 
+static const char *ble_skip_whitespace(const char *text) {
+    while (text != NULL && *text != '\0' && isspace((unsigned char)*text)) {
+        text++;
+    }
+    return text;
+}
+
+static esp_err_t ble_process_state_json(const char *json_text) {
+    cJSON *root = NULL;
+    cJSON *data = NULL;
+    cJSON *type_item = NULL;
+    cJSON *state_item = NULL;
+    esp_err_t ret = ESP_FAIL;
+
+    root = cJSON_Parse(json_text);
+    if (root == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    type_item = cJSON_GetObjectItem(root, "type");
+    data = cJSON_GetObjectItem(root, "data");
+    if (type_item == NULL || !cJSON_IsString(type_item) || strcmp(type_item->valuestring, "ctrl.robot.state.set") != 0 ||
+        data == NULL || !cJSON_IsObject(data)) {
+        cJSON_Delete(root);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    state_item = cJSON_GetObjectItem(data, "state_id");
+    if (state_item == NULL || !cJSON_IsString(state_item) || state_item->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ret = behavior_state_set(state_item->valuestring);
+    cJSON_Delete(root);
+    return ret;
+}
+
 static esp_err_t ble_process_payload(const uint8_t *data, uint16_t len) {
     if (!data || len == 0) {
         return ESP_ERR_INVALID_ARG;
@@ -244,6 +284,10 @@ static esp_err_t ble_process_payload(const uint8_t *data, uint16_t len) {
     size_t copy_len = (len < GATTS_CHAR_VAL_LEN_MAX) ? len : GATTS_CHAR_VAL_LEN_MAX;
     memcpy(buffer, data, copy_len);
     buffer[copy_len] = '\0';
+
+    if (ble_skip_whitespace(buffer)[0] == '{') {
+        return ble_process_state_json(ble_skip_whitespace(buffer));
+    }
 
     char *ptr = buffer;
     char *line = buffer;

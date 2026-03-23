@@ -1,5 +1,8 @@
-#include "display_ui.h"
+#include "anim_player.h"
+#include "behavior_state_service.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_lvgl_port.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal_audio.h"
@@ -39,6 +42,19 @@ static bool g_recording_triggered_by_wake_word = false;
 #define PCM_FRAME_SIZE 1920
 
 static uint8_t g_pcm_buf[PCM_FRAME_SIZE];
+
+static void log_internal_heap_state(const char *stage) {
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ESP_LOGI(TAG, "Internal heap @ %s: free=%u KB, largest=%u KB", stage, (unsigned)(free_internal / 1024U),
+             (unsigned)(largest_internal / 1024U));
+}
+
+static void freeze_current_animation(void) {
+    lvgl_port_lock(0);
+    emoji_anim_stop();
+    lvgl_port_unlock();
+}
 
 /* ------------------------------------------------------------------ */
 /* Private: VAD (Voice Activity Detection)                             */
@@ -161,6 +177,9 @@ void voice_recorder_get_stats(voice_stats_t *out_stats) {
 /* ------------------------------------------------------------------ */
 
 static int start_recording(void) {
+    log_internal_heap_state("before_recording");
+    freeze_current_animation();
+
     ESP_LOGI(TAG, "start_recording: calling hal_audio_start()");
     if (hal_audio_start() != 0) {
         ESP_LOGE(TAG, "start_recording: hal_audio_start failed");
@@ -185,6 +204,7 @@ static int start_recording(void) {
 #endif
 
     g_state = VOICE_STATE_RECORDING;
+    log_internal_heap_state("after_recording");
     ESP_LOGI(TAG, "start_recording: state -> RECORDING");
     return 0;
 }
@@ -334,7 +354,7 @@ int voice_recorder_tick(void) {
         ESP_LOGI(TAG, "VAD triggered stop - silence timeout");
         /* Stop recording due to silence timeout */
         voice_recorder_process_event(VOICE_EVENT_TIMEOUT);
-        display_update("Processing...", "thinking", 0, NULL);
+        behavior_state_set_with_text("processing", "Processing...", 0);
         return 0; /* Recording stopped, don't send this frame */
     }
 #endif
@@ -366,22 +386,22 @@ static void button_callback(bool pressed) {
             g_recording_triggered_by_wake_word = false;
             voice_recorder_process_event(VOICE_EVENT_BUTTON_PRESS);
             if (g_state == VOICE_STATE_RECORDING) {
-                display_update("Recording...", "listening", 0, NULL);
+                behavior_state_set_with_text("listening", "Listening...", 0);
             } else {
-                display_update("Mic Unavailable", "error", 0, NULL);
+                behavior_state_set_with_text("error", "Mic Unavailable", 0);
             }
         } else if (g_state == VOICE_STATE_RECORDING) {
             /* Already recording (wake word mode) - short press to stop */
             ESP_LOGI(TAG, "Button PRESSED (short) - stopping recording (wake word mode)");
             voice_recorder_process_event(VOICE_EVENT_BUTTON_RELEASE);
-            display_update("Processing...", "thinking", 0, NULL);
+            behavior_state_set_with_text("processing", "Processing...", 0);
         }
     } else {
         /* Button RELEASED - only stop if triggered by button (long press mode) */
         if (g_state == VOICE_STATE_RECORDING && !g_recording_triggered_by_wake_word) {
             ESP_LOGI(TAG, "Button RELEASED - stopping recording");
             voice_recorder_process_event(VOICE_EVENT_BUTTON_RELEASE);
-            display_update("Processing...", "thinking", 0, NULL);
+            behavior_state_set_with_text("processing", "Processing...", 0);
         }
         /* If wake word triggered, ignore release (already stopped by short press) */
     }
@@ -422,7 +442,7 @@ static void voice_recorder_task(void *arg) {
 static void on_wake_word_detected(const char *wake_word, void *user_data) {
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word);
     g_recording_triggered_by_wake_word = true; /* Mark as wake word triggered */
-    display_update("Listening...", "listening", 0, NULL);
+    behavior_state_set_with_text("listening", "Listening...", 0);
     voice_recorder_process_event(VOICE_EVENT_WAKE_WORD);
 }
 

@@ -1,4 +1,4 @@
-# WatcheRobot S3 通讯协议冻结基线（2026-03-17）
+# WatcheRobot S3 通讯协议冻结基线（2026-03-23）
 
 ## 1. 目标与范围
 - 目标：给当前可运行固件定义一套可联调、可回归的“冻结协议基线”。
@@ -37,36 +37,46 @@
 ### FZ-04 WebSocket 控制消息（JSON）协议
 - 顶层统一字段：`type`（必需），`code`（可选），`data`（按类型变化）。
 - 设备需支持的下行消息类型：
-  - `servo`
-  - `display`
-  - `status`
-  - `asr_result`
-  - `bot_reply`
-  - `tts_end`
-  - `error`
+  - `ctrl.servo.angle`
+  - `ctrl.robot.state.set`
   - `ctrl.camera.video_config`
   - `ctrl.camera.capture_image`
   - `ctrl.camera.start_video`
   - `ctrl.camera.stop_video`
-  - `reboot`
+  - `evt.asr.result`
+  - `evt.ai.status`
+  - `evt.ai.thinking`
+  - `evt.ai.reply`
+  - `sys.ping`
 - 设备当前支持的上行控制/状态类型：
   - `sys.ack`
   - `sys.nack`
+  - `sys.pong`
+  - `evt.device.firmware`
+  - `evt.device.error`
   - `evt.camera.state`
-- `servo` 字段冻结：
-  - `data.id`: `"x"` / `"y"`（大小写兼容）
-  - `data.angle`: `0..180`（兼容 `angle`/`Angle`）
-  - `data.time`: ms，默认 `100`
-  - 当 `angle` 缺失时默认 `90`
-- `display` 字段冻结：
-  - `data.text`: 最长按协议层接收 128
-  - `data.emoji`: 最长 16
-  - `data.size`: 可选，默认 UI 自定
+  - `evt.servo.position`
+- `ctrl.servo.angle` 字段冻结：
+  - `data.x_deg`: `0..180`
+  - `data.y_deg`: `0..180`
+  - `data.duration_ms`: 必填，`>0`
+- `ctrl.robot.state.set` 字段冻结：
+  - `data.command_id`: 可选
+  - `data.state_id`: 必填
+  - 当前板端内置状态集合：`boot / standby / listening / thinking / processing / speaking / happy / error / custom1 / custom2 / custom3`
+  - 状态只下发 `state_id`，完整动作序列、表情动画与音效时间轴由嵌入式端从 `/spiffs/behavior/states.json` 本地执行
+- `evt.ai.status` 兼容映射冻结：
+  - `idle -> standby`
+  - `thinking -> thinking`
+  - `processing/analyzing -> processing`
+  - `speaking -> speaking`
+  - `done/completed -> happy`
+  - `error/fail -> error`
 - 文本类字段上限冻结：
-  - `status.data`：256
-  - `asr_result.data`：256
-  - `bot_reply.data`：256
-  - `error.data`：256
+  - `evt.asr.result.data.text`：256
+  - `evt.ai.status.data.message`：256
+  - `evt.ai.thinking.data.content`：256
+  - `evt.ai.reply.data.text`：256
 - `ctrl.camera.video_config` 字段冻结：
   - `data.command_id`: 必填
   - `data.width`: 可选，期望宽度
@@ -77,18 +87,22 @@
   - `data.command_id`: 必填
 - `sys.ack` / `sys.nack`：
   - `data.command_id`: 回指控制命令
-  - `data.command_type`: 原始命令类型
-  - `data.stream_id`: 当命令涉及媒体流时返回
+  - `data.type`: 原始命令类型
   - `data.reason`: 仅 `sys.nack` 使用
 
 ### FZ-05 WebSocket 音频流协议
 - 上行（设备 -> 服务端）：
-  - 二进制帧：裸 `PCM`，`16-bit`，`16kHz`，`mono`
+  - 二进制帧：`WSPK` 帧头 + 裸 `PCM`
+  - `frame_type = 1`
+  - `payload`: `16-bit`，`16kHz`，`mono`
   - 当前发送周期：约 `60ms/帧`（典型 `1920 bytes`）
-  - 录音结束标记：文本帧 `"over"`
+  - 录音结束标记：发送 `frame_type = 1` 且 `LAST` 置位的零负载包
 - 下行（服务端 -> 设备）：
-  - 二进制帧：裸 `PCM`，`16-bit`，`24kHz`，`mono`
-  - 结束标记：JSON `{"type":"tts_end", ...}`
+  - 二进制帧：`WSPK` 帧头 + 裸 `PCM`
+  - `frame_type = 1`
+  - `payload`: `16-bit`，`24kHz`，`mono`
+  - TTS 结束标记：发送 `LAST` 置位的最后一个音频包，不再使用 `"over"` / `tts_end`
+  - 本地音效与云端 TTS 互斥；若 TTS 正在播放，状态脚本中的本地音效轨会被跳过
 
 ### FZ-06 WebSocket 视频协议
 - camera media 详细定义以 [SERVER_GATEWAY_CAMERA_MEDIA_PROTOCOL.md](D:\GithubRep\WatcheRobot-Firmware\firmware\s3\docs\SERVER_GATEWAY_CAMERA_MEDIA_PROTOCOL.md) 为准。
@@ -135,17 +149,18 @@
 - 现状存在 `v2.0` 与 `v2.1` 注释混用。
 - 建议本轮统一对外标识为：`Watcher-WS-Protocol v2.1.0`。
 - 向后兼容要求（冻结）：
-  - `servo` 同时接受 `angle` 与 `Angle`
-  - 保持 `"over"` + `"tts_end"` 结束语义不变
+  - BLE 继续兼容旧文本舵机命令：`X:` / `Y:` / `SET_SERVO:` / `SERVO_MOVE:` / `PING`
+  - `evt.ai.status` 继续接受历史状态词：`analyzing` / `completed` / `fail`
 
 ## 6. 联调验收最小用例（建议）
 1. Discovery 成功：设备 30s 内拿到 `ANNOUNCE` 并建立 WS。
-2. Servo：`x/y`、`angle/Angle`、默认值路径都可执行。
-3. 语音上行：持续发送二进制 PCM，结束后发送 `"over"`。
-4. TTS 下行：收到二进制 PCM 播放，收到 `tts_end` 正确收尾。
-5. Capture single：收到 `ctrl.camera.capture_image` 后，设备返回 `sys.ack`，并上行 1 个 `frame_type=3` 的 `WSPK + JPEG` 图片帧。
-6. Capture stream：收到 `ctrl.camera.start_video` 后，设备返回 `sys.ack` 与 `evt.camera.state(started)`，随后持续上行 `frame_type=2` 的 `WSPK + JPEG` 视频帧；收到 `ctrl.camera.stop_video` 后发送结束包并上报 `evt.camera.state(stopped)`。
-7. Display/Status/Error：表情映射与文本截断行为一致。
+2. Servo：`ctrl.servo.angle` 的 `x_deg/y_deg/duration_ms` 路径可执行。
+3. 状态控制：收到 `ctrl.robot.state.set` 后，板端按本地 `states.json` 同步执行动作序列与表情动画。
+4. 语音上行：持续发送 `WSPK + PCM`，结束后发送 `LAST` 音频包。
+5. TTS 下行：收到 `WSPK + PCM` 播放，收到 `LAST` 音频包后正确收尾。
+6. Capture single：收到 `ctrl.camera.capture_image` 后，设备返回 `sys.ack`，并上行 1 个 `frame_type=3` 的 `WSPK + JPEG` 图片帧。
+7. Capture stream：收到 `ctrl.camera.start_video` 后，设备返回 `sys.ack` 与 `evt.camera.state(started)`，随后持续上行 `frame_type=2` 的 `WSPK + JPEG` 视频帧；收到 `ctrl.camera.stop_video` 后发送结束包并上报 `evt.camera.state(stopped)`。
+8. BLE 兼容：旧文本舵机命令与新的 JSON `ctrl.robot.state.set` 都能正确执行。
 
 ## 7. 风险记录（不阻塞本次冻结）
 - Discovery 与 WS 目前均未做链路鉴权/加密。

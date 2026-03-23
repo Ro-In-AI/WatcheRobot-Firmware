@@ -5,9 +5,9 @@
 
 #include "ws_client.h"
 
+#include "behavior_state_service.h"
 #include "camera_service.h"
 #include "cJSON.h"
-#include "display_ui.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
@@ -17,6 +17,7 @@
 #include "freertos/task.h"
 #include "hal_audio.h"
 #include "ota_service.h"
+#include "sfx_service.h"
 #include "voice_service.h"
 #include "ws_router.h"
 
@@ -66,6 +67,7 @@ static void ws_reset_media_state(void) {
     memset(&s_last_media_send_stats, 0, sizeof(s_last_media_send_stats));
     s_audio_upload_active = false;
     s_ota_binary_nacked = false;
+    sfx_service_set_cloud_audio_busy(false);
 }
 
 static void ws_reset_session_state(void) {
@@ -88,6 +90,7 @@ static void ws_abort_tts_playback(void) {
     s_waiting_for_response = false;
 
     if (!s_tts_playing) {
+        sfx_service_set_cloud_audio_busy(false);
         ws_resume_wake_word_after_tts();
         return;
     }
@@ -96,6 +99,7 @@ static void ws_abort_tts_playback(void) {
     hal_audio_set_playback_mode(false);
     hal_audio_set_sample_rate(16000);
     s_tts_playing = false;
+    sfx_service_set_cloud_audio_busy(false);
     ws_resume_wake_word_after_tts();
 }
 
@@ -432,7 +436,7 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
         }
         ws_abort_tts_playback();
         ws_reset_session_state();
-        display_update("Disconnected", "standby", 0, NULL);
+        behavior_state_set_with_text("standby", "Disconnected", 0);
         break;
 
     case WEBSOCKET_EVENT_DATA:
@@ -571,7 +575,7 @@ void ws_client_mark_hello_acked(void) {
     }
 
     s_hello_acknowledged = true;
-    display_update(NULL, "happy", 0, NULL);
+    behavior_state_set("happy");
     if (ws_send_device_firmware() < 0) {
         ESP_LOGW(TAG, "failed to send evt.device.firmware");
     }
@@ -804,7 +808,9 @@ void ws_handle_tts_binary(const uint8_t *data, int len) {
     if (!s_tts_playing) {
         ESP_LOGI(TAG, "TTS started, first chunk: %d bytes", len);
         s_waiting_for_response = false;
-        display_update("", "speaking", 0, NULL);
+        sfx_service_set_cloud_audio_busy(true);
+        sfx_service_stop();
+        behavior_state_set("speaking");
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
         voice_recorder_pause_wake_word();
@@ -832,10 +838,11 @@ void ws_tts_complete(void) {
         hal_audio_set_playback_mode(false);
         vTaskDelay(pdMS_TO_TICKS(1000));
         hal_audio_set_sample_rate(16000);
-        display_update(NULL, "happy", 0, NULL);
+        behavior_state_set("happy");
         s_tts_playing = false;
     }
 
+    sfx_service_set_cloud_audio_busy(false);
     ws_resume_wake_word_after_tts();
 }
 
@@ -847,7 +854,7 @@ void ws_tts_timeout_check(void) {
             ESP_LOGW(TAG, "response timeout (%lld ms), resuming wake word detection", elapsed_ms);
             s_waiting_for_response = false;
             voice_recorder_resume_wake_word();
-            display_update("Timeout", "error", 0, NULL);
+            behavior_state_set_with_text("error", "Timeout", 0);
             s_timeout_display_count++;
         }
     }

@@ -8,6 +8,7 @@ idf_component_register(
         "sensecap-watcher"
         "esp_timer"
         "ws_client"
+        "behavior_state_service"
         "anim_service"
 
 )

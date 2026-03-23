@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 
 #include "anim_storage.h"
+#include "behavior_state_service.h"
 #include "ble_service.h"
 #include "boot_anim.h"
 #include "bsp_watcher.h"
@@ -34,21 +35,9 @@
 /* Button Callbacks (using SDK's bsp_set_btn_* interface)             */
 /* ------------------------------------------------------------------ */
 
-static void on_button_long_press(void) {
-    ESP_LOGI(TAG, "Button LONG PRESS - start recording");
-    voice_recorder_process_event(VOICE_EVENT_BUTTON_PRESS);
-    display_update("Listening...", "listening", 0, NULL);
-}
-
-static void on_button_long_release(void) {
-    ESP_LOGI(TAG, "Button LONG RELEASE - stop recording");
-    voice_recorder_process_event(VOICE_EVENT_BUTTON_RELEASE);
-    display_update("Processing...", "processing", 0, NULL);
-}
-
 static void on_button_multi_click_restart(void) {
     ESP_LOGW(TAG, "Button %d-click - REBOOTING!", RESTART_CLICK_COUNT);
-    display_update("Rebooting...", "error", 0, NULL);
+    behavior_state_set_with_text("error", "Rebooting...", 0);
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
 }
@@ -132,6 +121,7 @@ void app_main(void) {
     boot_anim_set_progress(30);
     boot_anim_set_text("Voice...");
     voice_recorder_init();
+    behavior_state_init();
 
     /* 5.5 BLE motion control (optional, no provisioning in this iteration) */
     boot_anim_set_progress(35);
@@ -146,9 +136,9 @@ void app_main(void) {
         ESP_LOGW(TAG, "BLE init failed: %s", esp_err_to_name(ble_ret));
     }
 
-    /* 6. Register button callbacks */
-    bsp_set_btn_long_press_cb(on_button_long_press);
-    bsp_set_btn_long_release_cb(on_button_long_release);
+    /* 6. Register BSP-level button callbacks.
+     * Voice record start/stop is owned by voice_service's hal_button polling path.
+     * Keep only the multi-click reboot callback here to avoid duplicate UI/audio actions. */
     bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
 
     /* 7. WiFi */
@@ -207,6 +197,7 @@ void app_main(void) {
     boot_anim_finish();
     log_heap_state("before_ui_init");
     hal_display_ui_init();
+    behavior_state_set_with_text("standby", "Ready!", 0);
     log_heap_state("after_ui_init");
     ws_client_start();
     log_heap_state("after_ws_start");

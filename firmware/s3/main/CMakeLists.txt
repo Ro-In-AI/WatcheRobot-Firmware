@@ -14,6 +14,7 @@ idf_component_register(
         ble_service
         # Services
         voice_service
+        behavior_state_service
         anim_service
         camera_service
         ota_service

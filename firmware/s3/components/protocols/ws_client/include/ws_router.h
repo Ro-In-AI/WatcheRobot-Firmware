@@ -11,6 +11,7 @@ typedef enum {
     WS_MSG_SYS_PONG,
     WS_MSG_SYS_SESSION_RESUME,
     WS_MSG_CTRL_SERVO_ANGLE,
+    WS_MSG_CTRL_ROBOT_STATE_SET,
     WS_MSG_CTRL_CAMERA_VIDEO_CONFIG,
     WS_MSG_CTRL_CAMERA_CAPTURE_IMAGE,
     WS_MSG_CTRL_CAMERA_START_VIDEO,
@@ -31,6 +32,7 @@ typedef enum {
 #define WS_CAPTURE_ACTION_MAX 16
 #define WS_TRANSFER_ID_MAX 64
 #define WS_SHA256_MAX 80
+#define WS_STATE_ID_MAX 32
 
 typedef struct {
     char type[WS_MESSAGE_TYPE_MAX];
@@ -53,6 +55,11 @@ typedef struct {
     float y_deg;
     int duration_ms;
 } ws_servo_cmd_t;
+
+typedef struct {
+    char command_id[WS_COMMAND_ID_MAX];
+    char state_id[WS_STATE_ID_MAX];
+} ws_state_cmd_t;
 
 typedef struct {
     char text[WS_TEXT_DATA_MAX];
@@ -87,6 +94,7 @@ typedef void (*ws_sys_ack_handler_t)(const ws_sys_ack_t *msg);
 typedef void (*ws_sys_nack_handler_t)(const ws_sys_nack_t *msg);
 typedef void (*ws_sys_void_handler_t)(void);
 typedef void (*ws_servo_handler_t)(const ws_servo_cmd_t *cmd);
+typedef void (*ws_state_handler_t)(const ws_state_cmd_t *cmd);
 typedef void (*ws_text_event_handler_t)(const ws_text_event_t *event);
 typedef void (*ws_ai_status_handler_t)(const ws_ai_status_t *event);
 typedef void (*ws_ai_thinking_handler_t)(const ws_ai_thinking_t *event);
@@ -100,6 +108,7 @@ typedef struct {
     ws_sys_void_handler_t on_sys_pong;
     ws_sys_void_handler_t on_session_resume;
     ws_servo_handler_t on_servo;
+    ws_state_handler_t on_state_set;
     ws_capture_handler_t on_capture;
     ws_text_event_handler_t on_asr_result;
     ws_ai_status_handler_t on_ai_status;

@@ -12,6 +12,8 @@ idf_component_register(
         "hal_audio"
         "hal_servo"
         "ota_service"
+        "behavior_state_service"
+        "sfx_service"
         "voice_service"
         "anim_service"
 

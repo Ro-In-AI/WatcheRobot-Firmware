@@ -108,6 +108,16 @@ static void fill_servo_cmd(cJSON *root, ws_servo_cmd_t *cmd) {
     cmd->duration_ms = get_int(data, "duration_ms", 100);
 }
 
+static void fill_state_cmd(cJSON *root, ws_state_cmd_t *cmd) {
+    cJSON *data = get_object(root, "data");
+
+    memset(cmd, 0, sizeof(*cmd));
+    if (data != NULL) {
+        copy_string(cmd->command_id, sizeof(cmd->command_id), get_string(data, "command_id"));
+        copy_string(cmd->state_id, sizeof(cmd->state_id), get_string(data, "state_id"));
+    }
+}
+
 static void fill_text_event(cJSON *root, ws_text_event_t *event) {
     cJSON *data = get_object(root, "data");
 
@@ -225,6 +235,13 @@ ws_msg_type_t ws_route_message(const char *json_str) {
             ws_servo_cmd_t cmd;
             fill_servo_cmd(root, &cmd);
             g_router.on_servo(&cmd);
+        }
+    } else if (strcmp(type, "ctrl.robot.state.set") == 0) {
+        msg_type = WS_MSG_CTRL_ROBOT_STATE_SET;
+        if (g_router.on_state_set) {
+            ws_state_cmd_t cmd;
+            fill_state_cmd(root, &cmd);
+            g_router.on_state_set(&cmd);
         }
     } else if (strcmp(type, "ctrl.camera.video_config") == 0) {
         msg_type = WS_MSG_CTRL_CAMERA_VIDEO_CONFIG;

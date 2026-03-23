@@ -19,8 +19,10 @@ set(EXTRA_COMPONENT_DIRS
     "components/protocols/ws_client"
     # Services
     "components/services/anim_service"
+    "components/services/behavior_state_service"
     "components/services/camera_service"
     "components/services/ota_service"
+    "components/services/sfx_service"
     "components/services/voice_service"
     # Utils
     "components/utils/boot_anim"
@@ -36,15 +38,8 @@ else()
     set(ANIM_DEFAULT_FPS 30)
 endif()
 
-if(DEFINED PYTHON)
-    set(ANIM_ASSET_PYTHON ${PYTHON})
-else()
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    set(ANIM_ASSET_PYTHON ${Python3_EXECUTABLE})
-endif()
-
 add_custom_target(anim_assets_gen
-    COMMAND ${ANIM_ASSET_PYTHON} ${CMAKE_SOURCE_DIR}/tools/generate_anim_assets.py
+    COMMAND py -3 ${CMAKE_SOURCE_DIR}/tools/generate_anim_assets.py
             --spiffs-dir ${CMAKE_SOURCE_DIR}/spiffs
             --output-dir ${CMAKE_SOURCE_DIR}/spiffs/anim
             --fps ${ANIM_DEFAULT_FPS}

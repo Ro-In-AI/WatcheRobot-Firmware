@@ -1,0 +1,132 @@
+{
+  "version": "1.0",
+  "default_state": "standby",
+  "states": {
+    "boot": {
+      "loop": false,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 200 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "happy", "text": "Booting...", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "standby": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 300 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "standby", "text": "", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "listening": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 86, "y_deg": 116, "duration_ms": 260 },
+        { "at_ms": 500, "x_deg": 94, "y_deg": 124, "duration_ms": 260 },
+        { "at_ms": 1000, "x_deg": 90, "y_deg": 120, "duration_ms": 220 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "listening", "text": "Listening...", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "thinking": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 82, "y_deg": 120, "duration_ms": 320 },
+        { "at_ms": 550, "x_deg": 98, "y_deg": 112, "duration_ms": 320 },
+        { "at_ms": 1100, "x_deg": 92, "y_deg": 126, "duration_ms": 320 },
+        { "at_ms": 1650, "x_deg": 90, "y_deg": 120, "duration_ms": 280 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "thinking", "text": "Thinking...", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "processing": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 108, "duration_ms": 280 },
+        { "at_ms": 450, "x_deg": 90, "y_deg": 128, "duration_ms": 280 },
+        { "at_ms": 900, "x_deg": 90, "y_deg": 120, "duration_ms": 220 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "processing", "text": "Processing...", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "speaking": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 86, "y_deg": 120, "duration_ms": 180 },
+        { "at_ms": 260, "x_deg": 94, "y_deg": 120, "duration_ms": 180 },
+        { "at_ms": 520, "x_deg": 88, "y_deg": 118, "duration_ms": 180 },
+        { "at_ms": 780, "x_deg": 92, "y_deg": 122, "duration_ms": 180 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "speaking", "text": "", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "happy": {
+      "loop": false,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 180 },
+        { "at_ms": 220, "x_deg": 76, "y_deg": 108, "duration_ms": 220 },
+        { "at_ms": 520, "x_deg": 104, "y_deg": 108, "duration_ms": 220 },
+        { "at_ms": 840, "x_deg": 90, "y_deg": 120, "duration_ms": 220 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "happy", "text": "", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "error": {
+      "loop": false,
+      "motion": [
+        { "at_ms": 0, "x_deg": 78, "y_deg": 120, "duration_ms": 180 },
+        { "at_ms": 220, "x_deg": 102, "y_deg": 120, "duration_ms": 180 },
+        { "at_ms": 440, "x_deg": 82, "y_deg": 120, "duration_ms": 180 },
+        { "at_ms": 660, "x_deg": 90, "y_deg": 120, "duration_ms": 220 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "error", "text": "", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "custom1": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 300 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "custom1", "text": "", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "custom2": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 300 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "custom2", "text": "", "font_size": 24 }
+      ],
+      "sound": []
+    },
+    "custom3": {
+      "loop": true,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 300 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "custom3", "text": "", "font_size": 24 }
+      ],
+      "sound": []
+    }
+  }
+}

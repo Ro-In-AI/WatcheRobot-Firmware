@@ -121,6 +121,21 @@ int ws_send_sys_nack(const char *message_type, const char *command_id, const cha
 int ws_send_device_firmware(void);
 
 /**
+ * Send a device error event to desktop observers.
+ */
+int ws_send_device_error(int code, const char *message);
+
+/**
+ * Send OTA progress to desktop observers.
+ */
+int ws_send_ota_progress(int progress, const char *state, const char *message);
+
+/**
+ * Send OTA handshake metadata for the current firmware.
+ */
+int ws_send_ota_handshake(const char *transfer_id, const char *status);
+
+/**
  * Send the current servo position.
  */
 int ws_send_servo_position(float x_deg, float y_deg);
@@ -151,35 +166,34 @@ int ws_send_image_frame(const uint8_t *jpeg, size_t len);
 void ws_client_get_media_send_stats(ws_client_media_send_stats_t *stats);
 
 /**
- * Send audio data via WebSocket (v2.0: raw PCM)
- * @param data Audio data (PCM 16-bit, 16kHz, mono)
+ * Send audio data via WebSocket using WSPK audio frames.
+ * @param data Audio data (PCM 16-bit, 16kHz, mono, LE)
  * @param len Data length
  * @return 0 on success, -1 on error
  */
 int ws_send_audio(const uint8_t *data, int len);
 
 /**
- * Send audio end marker via WebSocket (v2.0: "over")
+ * Send audio end marker via WebSocket using a zero-payload LAST audio frame.
  * @return 0 on success, -1 on error
  */
 int ws_send_audio_end(void);
 
 /**
- * Handle TTS binary frame from WebSocket (v2.0: raw PCM)
- * @param data Binary frame data (PCM 16-bit, 24kHz, mono)
+ * Handle TTS binary frame from WebSocket.
+ * @param data Binary frame data (PCM 16-bit, 24kHz, mono, LE)
  * @param len Frame length
  */
 void ws_handle_tts_binary(const uint8_t *data, int len);
 
 /**
  * Signal TTS playback complete
- * Call this when tts_end message is received
+ * Call this when the LAST audio frame is received.
  */
 void ws_tts_complete(void);
 
 /**
- * Check TTS timeout and auto-complete if needed
- * Note: In v2.0, this is a no-op (tts_end message is used instead)
+ * Check response timeout and recover wake-word mode if needed.
  */
 void ws_tts_timeout_check(void);
 
