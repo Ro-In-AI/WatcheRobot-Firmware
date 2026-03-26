@@ -43,6 +43,8 @@ docs/api/
 tools/output/
 *.rgba
 *.bin.tmp
+firmware/s3/monitor-*.log
+firmware/s3/flash-session-com*.log
 
 # IDF Component Manager local config
 idf_component_manager.yml
