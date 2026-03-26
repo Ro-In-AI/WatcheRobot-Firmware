@@ -10,6 +10,8 @@
 
 static const char *TAG = "BSP";
 
+#define WATCHER_LCD_SAFE_TRANS_QUEUE_DEPTH 1
+
 static led_strip_handle_t rgb_led_handle = NULL;
 static esp_io_expander_handle_t io_exp_handle = NULL;
 
@@ -32,6 +34,32 @@ static SemaphoreHandle_t codec_mutex = NULL;
 static i2s_chan_handle_t i2s_tx_chan = NULL;
 static i2s_chan_handle_t i2s_rx_chan = NULL;
 static const audio_codec_data_if_t *i2s_data_if = NULL;
+
+static size_t bsp_lcd_max_transfer_bytes(void) {
+    size_t max_transfer =
+        DRV_LCD_H_RES * DRV_LCD_V_RES * DRV_LCD_BITS_PER_PIXEL / 8 / CONFIG_BSP_LCD_SPI_DMA_SIZE_DIV;
+    return max_transfer > 0 ? max_transfer : (DRV_LCD_H_RES * DRV_LCD_BITS_PER_PIXEL / 8);
+}
+
+static size_t bsp_lcd_effective_draw_rows(size_t requested_rows) {
+    const size_t bytes_per_row = DRV_LCD_H_RES * DRV_LCD_BITS_PER_PIXEL / 8;
+    size_t max_rows = bsp_lcd_max_transfer_bytes() / bytes_per_row;
+    if (max_rows == 0) {
+        max_rows = 1;
+    }
+    return requested_rows > max_rows ? max_rows : requested_rows;
+}
+
+static int bsp_lcd_effective_trans_queue_depth(void) {
+    if (CONFIG_BSP_LCD_PANEL_SPI_TRANS_Q_DEPTH > WATCHER_LCD_SAFE_TRANS_QUEUE_DEPTH) {
+        ESP_LOGW(TAG,
+                 "Clamping LCD trans queue depth from %d to %d to reduce internal DMA pressure",
+                 CONFIG_BSP_LCD_PANEL_SPI_TRANS_Q_DEPTH,
+                 WATCHER_LCD_SAFE_TRANS_QUEUE_DEPTH);
+        return WATCHER_LCD_SAFE_TRANS_QUEUE_DEPTH;
+    }
+    return CONFIG_BSP_LCD_PANEL_SPI_TRANS_Q_DEPTH;
+}
 
 void bsp_lvgl_rounder_cb(struct _lv_disp_drv_t *disp_drv, lv_area_t *area) {
     uint16_t x1 = area->x1;
@@ -223,7 +251,7 @@ esp_err_t bsp_spi_bus_init(void) {
         .data2_io_num = BSP_SPI3_HOST_DATA2,
         .data3_io_num = BSP_SPI3_HOST_DATA3,
         .isr_cpu_id = CONFIG_LVGL_PORT_TASK_AFFINITY + 1,
-        .max_transfer_sz = DRV_LCD_H_RES * DRV_LCD_V_RES * DRV_LCD_BITS_PER_PIXEL / 8 / CONFIG_BSP_LCD_SPI_DMA_SIZE_DIV,
+        .max_transfer_sz = bsp_lcd_max_transfer_bytes(),
     };
 
     BSP_ERROR_CHECK_RETURN_ERR(spi_bus_initialize(SPI3_HOST, &qspi_cfg, SPI_DMA_CH_AUTO));
@@ -590,7 +618,7 @@ static esp_err_t bsp_lcd_pannel_init(esp_lcd_panel_handle_t *ret_panel, esp_lcd_
         .dc_gpio_num = -1,
         .spi_mode = 3,
         .pclk_hz = DRV_LCD_PIXEL_CLK_HZ,
-        .trans_queue_depth = CONFIG_BSP_LCD_PANEL_SPI_TRANS_Q_DEPTH,
+        .trans_queue_depth = bsp_lcd_effective_trans_queue_depth(),
         .lcd_cmd_bits = DRV_LCD_CMD_BITS,
         .lcd_param_bits = DRV_LCD_PARAM_BITS,
         .flags =
@@ -759,16 +787,32 @@ lv_disp_t *bsp_lvgl_init(void) {
 #ifdef CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS
     BSP_ERROR_CHECK_RETURN_NULL(heap_caps_register_failed_alloc_callback(heap_caps_alloc_failed_hook));
 #endif
+    const size_t requested_rows = LVGL_DRAW_BUFF_HEIGHT;
+    const size_t effective_rows = bsp_lcd_effective_draw_rows(requested_rows);
     bsp_display_cfg_t cfg = {.lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
-                             .buffer_size = DRV_LCD_H_RES * LVGL_DRAW_BUFF_HEIGHT,
+                             .buffer_size = DRV_LCD_H_RES * effective_rows,
                              .double_buffer = LVGL_DRAW_BUFF_DOUBLE,
                              .flags = {
                                  .buff_dma = false,
                                  .buff_spiram = true,
                              }};
-    ESP_LOGI(TAG, "LVGL draw buffer: %d rows, %lu pixels, double=%d, psram=%d, dma_div=%d",
-             LVGL_DRAW_BUFF_HEIGHT, (unsigned long)cfg.buffer_size, cfg.double_buffer, cfg.flags.buff_spiram,
-             CONFIG_BSP_LCD_SPI_DMA_SIZE_DIV);
+    if (effective_rows != requested_rows) {
+        ESP_LOGW(TAG,
+                 "Clamping LVGL draw buffer from %u rows to %u rows so each flush fits SPI max_transfer_sz=%u bytes",
+                 (unsigned)requested_rows,
+                 (unsigned)effective_rows,
+                 (unsigned)bsp_lcd_max_transfer_bytes());
+    }
+    ESP_LOGI(TAG,
+             "LVGL draw buffer: requested=%u rows, effective=%u rows, %lu pixels, double=%d, psram=%d, dma_div=%d, "
+             "trans_q=%d",
+             (unsigned)requested_rows,
+             (unsigned)effective_rows,
+             (unsigned long)cfg.buffer_size,
+             cfg.double_buffer,
+             cfg.flags.buff_spiram,
+             CONFIG_BSP_LCD_SPI_DMA_SIZE_DIV,
+             bsp_lcd_effective_trans_queue_depth());
     cfg.lvgl_port_cfg.task_priority = CONFIG_LVGL_PORT_TASK_PRIORITY;
     cfg.lvgl_port_cfg.task_affinity = CONFIG_LVGL_PORT_TASK_AFFINITY;
     cfg.lvgl_port_cfg.task_stack = CONFIG_LVGL_PORT_TASK_STACK_SIZE;
