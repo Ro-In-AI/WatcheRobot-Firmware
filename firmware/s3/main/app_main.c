@@ -31,6 +31,51 @@
 /* Physical restart: click count to trigger reboot */
 #define RESTART_CLICK_COUNT 5
 
+static bool s_waiting_for_wifi_provision = false;
+static bool s_ble_only_mode = false;
+
+static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const char *ip_addr) {
+    switch (status) {
+    case WIFI_STATUS_CONNECTED:
+        ESP_LOGI(TAG, "WiFi provisioning success: ssid=%s ip=%s", ssid ? ssid : "<unknown>",
+                 ip_addr ? ip_addr : "<no-ip>");
+        if (s_waiting_for_wifi_provision) {
+            boot_anim_set_text("WiFi Connected");
+        } else if (s_ble_only_mode) {
+            behavior_state_set_with_text("happy", ip_addr ? ip_addr : "WiFi Connected", 0);
+        }
+        break;
+
+    case WIFI_STATUS_CONNECTING:
+        ESP_LOGI(TAG, "WiFi connecting: ssid=%s", ssid ? ssid : "<unknown>");
+        if (s_waiting_for_wifi_provision) {
+            boot_anim_set_text("Connecting WiFi...");
+        } else if (s_ble_only_mode) {
+            behavior_state_set_with_text("processing", ssid ? ssid : "Connecting WiFi...", 0);
+        }
+        break;
+
+    case WIFI_STATUS_DISCONNECTED:
+        ESP_LOGW(TAG, "WiFi connect failed or disconnected: ssid=%s", ssid ? ssid : "<unknown>");
+        if (s_waiting_for_wifi_provision) {
+            boot_anim_set_text("WiFi Failed, Retry");
+        } else if (s_ble_only_mode) {
+            behavior_state_set_with_text("error", "WiFi Failed, Retry", 0);
+        }
+        break;
+
+    case WIFI_STATUS_UNCONFIGURED:
+    default:
+        ESP_LOGI(TAG, "WiFi unconfigured, waiting for BLE provisioning");
+        if (s_waiting_for_wifi_provision) {
+            boot_anim_set_text("Open APP Set WiFi");
+        } else if (s_ble_only_mode) {
+            behavior_state_set_with_text("standby", "Open APP Set WiFi", 0);
+        }
+        break;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Button Callbacks (using SDK's bsp_set_btn_* interface)             */
 /* ------------------------------------------------------------------ */
@@ -88,6 +133,7 @@ static void log_heap_state(const char *stage) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "WatcheRobot S3 v2.0 starting");
+    bool cloud_ready = false;
 
     /* 1. Minimal display init for boot animation */
     if (hal_display_minimal_init() != 0) {
@@ -123,7 +169,7 @@ void app_main(void) {
     voice_recorder_init();
     behavior_state_init();
 
-    /* 5.5 BLE motion control (optional, no provisioning in this iteration) */
+    /* 5.5 BLE control + provisioning */
     boot_anim_set_progress(35);
     boot_anim_set_text("BLE...");
     esp_err_t ble_ret = ble_service_init();
@@ -145,9 +191,16 @@ void app_main(void) {
     boot_anim_set_progress(40);
     boot_anim_set_text("WiFi...");
     wifi_init();
+    wifi_register_status_callback(on_wifi_status_changed);
     if (wifi_connect() != 0) {
-        boot_anim_show_error("WiFi Error");
-        return;
+        s_waiting_for_wifi_provision = true;
+        boot_anim_set_text("Open APP Set WiFi");
+        ESP_LOGI(TAG, "Waiting for WiFi credentials via BLE provisioning");
+        if (wifi_wait_for_connection(-1) != 0) {
+            ESP_LOGE(TAG, "Waiting for WiFi connection failed");
+            return;
+        }
+        s_waiting_for_wifi_provision = false;
     }
     boot_anim_set_progress(55);
 
@@ -155,57 +208,68 @@ void app_main(void) {
     boot_anim_set_text("Discovering...");
     discovery_init();
     server_info_t server_info = {0};
-    if (discovery_start(&server_info) != 0) {
-        boot_anim_show_error("Server Not Found");
-        return;
-    }
-    if (server_info.protocol_version[0] == '\0' ||
-        strcmp(server_info.protocol_version, WATCHER_PROTOCOL_VERSION) != 0) {
-        ESP_LOGE(TAG,
-                 "Protocol mismatch: server=%s expected=%s",
-                 server_info.protocol_version[0] != '\0' ? server_info.protocol_version : "<missing>",
-                 WATCHER_PROTOCOL_VERSION);
-        boot_anim_show_error("Protocol Mismatch");
-        return;
+    if (discovery_start(&server_info) == 0) {
+        if (server_info.protocol_version[0] == '\0' ||
+            strcmp(server_info.protocol_version, WATCHER_PROTOCOL_VERSION) != 0) {
+            ESP_LOGE(TAG, "Protocol mismatch: server=%s expected=%s",
+                     server_info.protocol_version[0] != '\0' ? server_info.protocol_version : "<missing>",
+                     WATCHER_PROTOCOL_VERSION);
+            boot_anim_show_error("Protocol Mismatch");
+            return;
+        }
+
+        ESP_LOGI(TAG, "Server: %s:%u protocol=%s", server_info.ip, server_info.port, server_info.protocol_version);
+        boot_anim_set_progress(65);
+        char *ws_url = discovery_get_ws_url(&server_info);
+        if (ws_url) {
+            ws_client_set_server_url(ws_url);
+            free(ws_url);
+            cloud_ready = true;
+        }
+    } else {
+        ESP_LOGW(TAG, "Discovery failed, continuing in BLE-only mode");
     }
 
-    ESP_LOGI(TAG, "Server: %s:%u protocol=%s", server_info.ip, server_info.port, server_info.protocol_version);
-    boot_anim_set_progress(65);
-    char *ws_url = discovery_get_ws_url(&server_info);
-    if (ws_url) {
-        ws_client_set_server_url(ws_url);
-        free(ws_url);
-    }
+    if (cloud_ready) {
+        /* 9. Start voice recorder */
+        if (voice_recorder_start() != 0) {
+            ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
+        }
 
-    /* 9. Start voice recorder */
-    if (voice_recorder_start() != 0) {
-        ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
+        /* 10. WebSocket client */
+        boot_anim_set_progress(92);
+        boot_anim_set_text("Connecting...");
+        ws_client_init();
+        ws_handlers_init();
+        ws_router_t router = ws_handlers_get_router();
+        ws_router_init(&router);
+    } else {
+        boot_anim_set_progress(100);
+        boot_anim_set_text("BLE Ready");
+        s_ble_only_mode = true;
     }
-
-    /* 10. WebSocket client */
-    boot_anim_set_progress(92);
-    boot_anim_set_text("Connecting...");
-    ws_client_init();
-    ws_handlers_init();
-    ws_router_t router = ws_handlers_get_router();
-    ws_router_init(&router);
 
     /* 11. Ready! */
-    boot_anim_set_progress(100);
-    boot_anim_set_text("Ready!");
+    if (cloud_ready) {
+        boot_anim_set_progress(100);
+        boot_anim_set_text("Ready!");
+    }
     vTaskDelay(pdMS_TO_TICKS(500));
     boot_anim_finish();
     log_heap_state("before_ui_init");
     hal_display_ui_init();
-    behavior_state_set_with_text("standby", "Ready!", 0);
+    behavior_state_set_with_text("standby", cloud_ready ? "Ready!" : "BLE Ready", 0);
     log_heap_state("after_ui_init");
-    ws_client_start();
-    log_heap_state("after_ws_start");
+    if (cloud_ready) {
+        ws_client_start();
+        log_heap_state("after_ws_start");
+    }
     run_camera_boot_diag();
     log_heap_state("after_camera_diag");
     /* Note: hal_display_ui_init() already sets "Ready" text and starts default animation.
      * Don't call display_update here as it would override the startup UI state. */
-    ESP_LOGI(TAG, "WatcheRobot ready");
+    ESP_LOGI(TAG, "WatcheRobot ready (cloud=%s, ble=%s)", cloud_ready ? "online" : "offline",
+             ble_service_is_connected() ? "connected" : "advertising");
 
     /* 12. Mark OTA partition valid (prevent rollback after successful boot) */
     ota_service_mark_valid();

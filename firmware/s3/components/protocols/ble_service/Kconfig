@@ -10,7 +10,7 @@ menu "Watcher BLE Service"
     config WATCHER_BLE_DEVICE_NAME
         string "BLE device name"
         depends on WATCHER_BLE_ENABLE
-        default "WATCHER_S3"
+        default "ESP_ROBOT"
         help
             BLE advertising name shown to mobile clients.
 
