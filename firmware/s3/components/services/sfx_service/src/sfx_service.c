@@ -16,7 +16,7 @@
 
 #define SFX_MANIFEST_PATH "/spiffs/sfx/manifest.json"
 #define SFX_DIR "/spiffs/sfx"
-#define SFX_TASK_STACK 4096
+#define SFX_TASK_STACK 8192
 #define SFX_TASK_PRIORITY 4
 #define SFX_POLL_INTERVAL_MS 20
 #define SFX_CHUNK_SIZE 2048
@@ -225,6 +225,30 @@ static void sfx_resolve_path_locked(const char *sound_id, char *out_path, size_t
     snprintf(out_path, out_size, "%s/%s.pcm", SFX_DIR, sound_id);
 }
 
+static bool sfx_sound_exists_locked(const char *sound_id, char *out_path, size_t out_size) {
+    FILE *probe = NULL;
+    char resolved_path[SFX_MAX_PATH_LEN];
+
+    if (sound_id == NULL || sound_id[0] == '\0') {
+        return false;
+    }
+
+    sfx_resolve_path_locked(sound_id, resolved_path, sizeof(resolved_path));
+    probe = fopen(resolved_path, "rb");
+    if (probe == NULL) {
+        if (out_path != NULL && out_size > 0) {
+            sfx_copy_string(out_path, out_size, resolved_path);
+        }
+        return false;
+    }
+
+    fclose(probe);
+    if (out_path != NULL && out_size > 0) {
+        sfx_copy_string(out_path, out_size, resolved_path);
+    }
+    return true;
+}
+
 static bool sfx_playback_should_abort(uint32_t expected_generation) {
     bool abort = true;
 
@@ -263,7 +287,7 @@ static void sfx_playback_file(const char *sound_id, uint32_t generation) {
 
     file = fopen(sound_path, "rb");
     if (file == NULL) {
-        ESP_LOGW(TAG, "SFX file not found for '%s': %s", sound_id, sound_path);
+        ESP_LOGI(TAG, "Skip local sfx '%s': file not found (%s)", sound_id, sound_path);
         return;
     }
 
@@ -397,6 +421,8 @@ esp_err_t sfx_service_reload(void) {
 }
 
 esp_err_t sfx_service_play(const char *sound_id) {
+    char sound_path[SFX_MAX_PATH_LEN];
+
     if (sound_id == NULL || sound_id[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
     }
@@ -412,6 +438,12 @@ esp_err_t sfx_service_play(const char *sound_id) {
     if (s_ctx.cloud_audio_busy) {
         sfx_unlock();
         return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!sfx_sound_exists_locked(sound_id, sound_path, sizeof(sound_path))) {
+        ESP_LOGI(TAG, "Skip local sfx '%s': no playable file at %s", sound_id, sound_path);
+        sfx_unlock();
+        return ESP_ERR_NOT_FOUND;
     }
 
     s_ctx.request_generation++;

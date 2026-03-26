@@ -79,6 +79,9 @@ typedef struct {
     char text_override[BEHAVIOR_TEXT_LEN];
     int text_override_font_size;
     bool text_override_valid;
+    char anim_override[BEHAVIOR_STATE_ID_LEN];
+    bool anim_override_valid;
+    bool suppress_state_sound_events;
 } behavior_context_t;
 
 static behavior_context_t s_ctx = {0};
@@ -511,6 +514,23 @@ static void behavior_reset_runtime_locked(void) {
     s_ctx.text_override[0] = '\0';
     s_ctx.text_override_font_size = 0;
     s_ctx.text_override_valid = false;
+    s_ctx.anim_override[0] = '\0';
+    s_ctx.anim_override_valid = false;
+    s_ctx.suppress_state_sound_events = false;
+}
+
+static bool behavior_is_valid_anim_id(const char *anim_id) {
+    return anim_id != NULL && anim_id[0] != '\0' && display_emoji_from_string(anim_id) != EMOJI_UNKNOWN;
+}
+
+static void behavior_set_anim_override_locked(const char *anim_id) {
+    if (behavior_is_valid_anim_id(anim_id)) {
+        behavior_copy_string(s_ctx.anim_override, sizeof(s_ctx.anim_override), anim_id);
+        s_ctx.anim_override_valid = true;
+    } else {
+        s_ctx.anim_override[0] = '\0';
+        s_ctx.anim_override_valid = false;
+    }
 }
 
 static void behavior_dispatch_motion_locked(const behavior_motion_event_t *event) {
@@ -524,11 +544,18 @@ static void behavior_dispatch_motion_locked(const behavior_motion_event_t *event
 }
 
 static void behavior_dispatch_expression_locked(const behavior_expression_event_t *event) {
+    const char *anim = NULL;
     const char *text = NULL;
     int font_size = 0;
 
     if (event == NULL) {
         return;
+    }
+
+    if (s_ctx.anim_override_valid) {
+        anim = s_ctx.anim_override;
+    } else if (event->anim[0] != '\0') {
+        anim = event->anim;
     }
 
     if (s_ctx.text_override_valid) {
@@ -539,24 +566,45 @@ static void behavior_dispatch_expression_locked(const behavior_expression_event_
         font_size = event->font_size;
     }
 
-    if (display_update(text, event->anim[0] != '\0' ? event->anim : NULL, font_size, NULL) != 0) {
+    if (display_update(text, anim, font_size, NULL) != 0) {
         ESP_LOGW(TAG, "Display update failed for state '%s'", s_ctx.current_state_id);
     }
 }
 
-static void behavior_dispatch_sound_locked(const behavior_sound_event_t *event) {
+static esp_err_t behavior_dispatch_sound_id_locked(const char *sound_id) {
     esp_err_t ret;
 
+    if (sound_id == NULL || sound_id[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ret = sfx_service_play(sound_id);
+    if (ret == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "Skip sound '%s': audio_busy_tts", sound_id);
+    } else if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to play sound '%s': %s", sound_id, esp_err_to_name(ret));
+    }
+
+    return ret;
+}
+
+static void behavior_dispatch_sound_locked(const behavior_sound_event_t *event) {
     if (event == NULL) {
         return;
     }
 
-    ret = sfx_service_play(event->sound_id);
-    if (ret == ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(TAG, "Skip sound '%s': audio_busy_tts", event->sound_id);
-    } else if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to play sound '%s': %s", event->sound_id, esp_err_to_name(ret));
+    (void)behavior_dispatch_sound_id_locked(event->sound_id);
+}
+
+static bool behavior_apply_sound_override_locked(const char *sound_id) {
+    esp_err_t ret;
+
+    if (sound_id == NULL || sound_id[0] == '\0') {
+        return false;
     }
+
+    ret = behavior_dispatch_sound_id_locked(sound_id);
+    return ret == ESP_OK || ret == ESP_ERR_INVALID_STATE;
 }
 
 static void behavior_dispatch_due_events_locked(uint32_t now_ms) {
@@ -586,8 +634,11 @@ static void behavior_dispatch_due_events_locked(uint32_t now_ms) {
         s_ctx.next_sound_index++;
     }
 
-    if (s_ctx.current_state->expression_count == 0 && s_ctx.text_override_valid) {
-        display_update(s_ctx.text_override, NULL, s_ctx.text_override_font_size, NULL);
+    if (s_ctx.current_state->expression_count == 0 && (s_ctx.text_override_valid || s_ctx.anim_override_valid)) {
+        display_update(s_ctx.text_override_valid ? s_ctx.text_override : NULL,
+                       s_ctx.anim_override_valid ? s_ctx.anim_override : NULL,
+                       s_ctx.text_override_font_size,
+                       NULL);
     }
 }
 
@@ -597,7 +648,11 @@ static bool behavior_all_events_dispatched_locked(void) {
            s_ctx.next_sound_index >= s_ctx.current_state->sound_count;
 }
 
-static esp_err_t behavior_schedule_state_locked(const char *state_id, const char *text, int font_size) {
+static esp_err_t behavior_schedule_state_locked(const char *state_id,
+                                                const char *text,
+                                                int font_size,
+                                                const char *anim_id,
+                                                const char *sound_id) {
     behavior_state_def_t *state_def = behavior_find_state_locked(state_id);
     uint32_t now_ms = behavior_now_ms();
 
@@ -615,7 +670,13 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id, const char
         s_ctx.text_override_valid = (text != NULL);
         behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
         s_ctx.text_override_font_size = font_size;
-        if (display_update(text, s_ctx.catalog.default_state, font_size, NULL) != 0) {
+        behavior_set_anim_override_locked(anim_id);
+        s_ctx.suppress_state_sound_events = false;
+        (void)behavior_apply_sound_override_locked(sound_id);
+        if (display_update(text,
+                           s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
+                           font_size,
+                           NULL) != 0) {
             ESP_LOGW(TAG, "Fallback standby display update failed");
         }
         return ESP_OK;
@@ -630,6 +691,11 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id, const char
     s_ctx.text_override_valid = (text != NULL);
     behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
     s_ctx.text_override_font_size = font_size;
+    behavior_set_anim_override_locked(anim_id);
+    s_ctx.suppress_state_sound_events = behavior_apply_sound_override_locked(sound_id);
+    if (s_ctx.suppress_state_sound_events) {
+        s_ctx.next_sound_index = s_ctx.current_state->sound_count;
+    }
     behavior_dispatch_due_events_locked(now_ms);
     return ESP_OK;
 }
@@ -659,7 +725,8 @@ static void behavior_task(void *arg) {
                         s_ctx.state_started_ms = now_ms;
                         s_ctx.next_motion_index = 0;
                         s_ctx.next_expression_index = 0;
-                        s_ctx.next_sound_index = 0;
+                        s_ctx.next_sound_index =
+                            s_ctx.suppress_state_sound_events ? s_ctx.current_state->sound_count : 0;
                         behavior_dispatch_due_events_locked(now_ms);
                     }
                 } else {
@@ -674,6 +741,9 @@ static void behavior_task(void *arg) {
                         s_ctx.text_override[0] = '\0';
                         s_ctx.text_override_font_size = 0;
                         s_ctx.text_override_valid = false;
+                        s_ctx.anim_override[0] = '\0';
+                        s_ctx.anim_override_valid = false;
+                        s_ctx.suppress_state_sound_events = false;
                         should_fallback = true;
                     }
                 }
@@ -771,10 +841,18 @@ esp_err_t behavior_state_load(void) {
 }
 
 esp_err_t behavior_state_set(const char *state_id) {
-    return behavior_state_set_with_text(state_id, NULL, 0);
+    return behavior_state_set_with_resources(state_id, NULL, 0, NULL, NULL);
 }
 
 esp_err_t behavior_state_set_with_text(const char *state_id, const char *text, int font_size) {
+    return behavior_state_set_with_resources(state_id, text, font_size, NULL, NULL);
+}
+
+esp_err_t behavior_state_set_with_resources(const char *state_id,
+                                            const char *text,
+                                            int font_size,
+                                            const char *anim_id,
+                                            const char *sound_id) {
     esp_err_t ret;
 
     if (state_id == NULL || state_id[0] == '\0') {
@@ -789,7 +867,7 @@ esp_err_t behavior_state_set_with_text(const char *state_id, const char *text, i
         return ESP_FAIL;
     }
 
-    ret = behavior_schedule_state_locked(state_id, text, font_size);
+    ret = behavior_schedule_state_locked(state_id, text, font_size, anim_id, sound_id);
     behavior_unlock();
     return ret;
 }
