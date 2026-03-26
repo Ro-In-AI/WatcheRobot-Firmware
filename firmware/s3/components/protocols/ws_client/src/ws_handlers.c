@@ -1,6 +1,6 @@
 /**
  * @file ws_handlers.c
- * @brief WebSocket message handlers implementation (Watcher protocol v0.1.1)
+ * @brief WebSocket message handlers implementation (Watcher protocol v0.1.5)
  */
 
 #include "ws_handlers.h"
@@ -15,6 +15,7 @@
 #include "hal_servo.h"
 #include "ws_client.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -450,6 +451,62 @@ static bool ws_contains_nocase(const char *haystack, const char *needle) {
     return false;
 }
 
+static void ws_normalize_resource_name(const char *raw, char *out, size_t out_size) {
+    const char *base;
+    const char *ext;
+    size_t len;
+    size_t i;
+
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (raw == NULL || raw[0] == '\0') {
+        return;
+    }
+
+    base = raw;
+    for (i = 0; raw[i] != '\0'; ++i) {
+        if (raw[i] == '/' || raw[i] == '\\') {
+            base = &raw[i + 1];
+        }
+    }
+
+    ext = strrchr(base, '.');
+    len = (ext != NULL && ext > base) ? (size_t)(ext - base) : strlen(base);
+    if (len >= out_size) {
+        len = out_size - 1;
+    }
+
+    for (i = 0; i < len; ++i) {
+        out[i] = (char)tolower((unsigned char)base[i]);
+    }
+    out[len] = '\0';
+}
+
+static bool ws_append_state_candidate(const char **candidates, size_t *count, size_t max_count, const char *candidate) {
+    size_t i;
+
+    if (candidates == NULL || count == NULL || candidate == NULL || candidate[0] == '\0') {
+        return false;
+    }
+
+    for (i = 0; i < *count; ++i) {
+        if (strcasecmp(candidates[i], candidate) == 0) {
+            return false;
+        }
+    }
+
+    if (*count >= max_count) {
+        return false;
+    }
+
+    candidates[*count] = candidate;
+    (*count)++;
+    return true;
+}
+
 static void ws_servo_report_task(void *arg) {
     bool session_ready_seen = false;
     bool motion_active = false;
@@ -845,19 +902,63 @@ void on_asr_result_handler(const ws_text_event_t *event) {
 }
 
 void on_ai_status_handler(const ws_ai_status_t *event) {
-    const char *emoji;
+    char action_state_id[WS_STATE_ID_MAX];
+    char status_state_id[WS_STATE_ID_MAX];
+    char fallback_state_id[WS_STATE_ID_MAX];
+    char image_name[WS_STATE_ID_MAX];
+    char sound_id[WS_STATE_ID_MAX];
+    const char *state_candidates[3] = {0};
+    size_t state_candidate_count = 0;
     const char *text;
+    esp_err_t ret = ESP_ERR_NOT_FOUND;
+    size_t i;
 
     if (event == NULL) {
         return;
     }
 
-    ESP_LOGI(TAG, "AI status: status=%s message=%s", event->status, event->message);
-    emoji = ws_ai_status_to_emoji(event->status, event->message);
-    text = event->message[0] != '\0' ? event->message : event->status;
-    if (emoji != NULL) {
-        behavior_state_set_with_text(emoji, text[0] != '\0' ? text : NULL, 0);
-    } else if (text[0] != '\0') {
+    ws_normalize_resource_name(event->action_file, action_state_id, sizeof(action_state_id));
+    ws_normalize_resource_name(event->status, status_state_id, sizeof(status_state_id));
+    ws_normalize_resource_name(event->image_name, image_name, sizeof(image_name));
+    ws_normalize_resource_name(event->sound_file, sound_id, sizeof(sound_id));
+    ws_normalize_resource_name(ws_ai_status_to_emoji(event->status, event->message),
+                               fallback_state_id,
+                               sizeof(fallback_state_id));
+
+    text = event->message[0] != '\0' ? event->message : NULL;
+
+    ws_append_state_candidate(state_candidates, &state_candidate_count, 3, action_state_id);
+    ws_append_state_candidate(state_candidates, &state_candidate_count, 3, status_state_id);
+    ws_append_state_candidate(state_candidates, &state_candidate_count, 3, fallback_state_id);
+
+    ESP_LOGI(TAG,
+             "AI status: status=%s message=%s image=%s action=%s sound=%s",
+             event->status,
+             event->message,
+             event->image_name,
+             event->action_file,
+             event->sound_file);
+
+    for (i = 0; i < state_candidate_count; ++i) {
+        ret = behavior_state_set_with_resources(state_candidates[i],
+                                                text,
+                                                0,
+                                                image_name[0] != '\0' ? image_name : NULL,
+                                                sound_id[0] != '\0' ? sound_id : NULL);
+        if (ret != ESP_ERR_NOT_FOUND) {
+            break;
+        }
+    }
+
+    if (ret == ESP_ERR_NOT_FOUND) {
+        ret = behavior_state_set_with_resources("standby",
+                                                text,
+                                                0,
+                                                image_name[0] != '\0' ? image_name : NULL,
+                                                sound_id[0] != '\0' ? sound_id : NULL);
+    }
+
+    if (ret != ESP_OK && text != NULL) {
         behavior_state_set_text(text, 0);
     }
 }

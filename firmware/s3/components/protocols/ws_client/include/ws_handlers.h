@@ -5,7 +5,7 @@
 
 /**
  * @file ws_handlers.h
- * @brief WebSocket message handlers for Watcher hardware (protocol v0.1.1)
+ * @brief WebSocket message handlers for Watcher hardware (protocol v0.1.5)
  */
 
 void ws_handlers_init(void);

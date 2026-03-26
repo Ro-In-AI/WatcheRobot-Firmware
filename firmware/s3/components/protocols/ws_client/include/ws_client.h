@@ -7,7 +7,7 @@
 
 /**
  * @file ws_client.h
- * @brief WebSocket client interface (Watcher protocol v0.1.1)
+ * @brief WebSocket client interface (Watcher protocol v0.1.5)
  */
 
 typedef enum {

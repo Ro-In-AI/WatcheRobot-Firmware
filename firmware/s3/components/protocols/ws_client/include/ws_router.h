@@ -29,6 +29,7 @@ typedef enum {
 #define WS_TEXT_DATA_MAX 256
 #define WS_STATUS_MAX 64
 #define WS_KIND_MAX 32
+#define WS_RESOURCE_NAME_MAX 96
 #define WS_CAPTURE_ACTION_MAX 16
 #define WS_TRANSFER_ID_MAX 64
 #define WS_SHA256_MAX 80
@@ -68,6 +69,9 @@ typedef struct {
 typedef struct {
     char status[WS_STATUS_MAX];
     char message[WS_TEXT_DATA_MAX];
+    char image_name[WS_RESOURCE_NAME_MAX];
+    char action_file[WS_RESOURCE_NAME_MAX];
+    char sound_file[WS_RESOURCE_NAME_MAX];
 } ws_ai_status_t;
 
 typedef struct {

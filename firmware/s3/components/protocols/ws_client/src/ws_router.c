@@ -1,6 +1,6 @@
 /**
  * @file ws_router.c
- * @brief WebSocket message router implementation (protocol v0.1.1)
+ * @brief WebSocket message router implementation (protocol v0.1.5)
  */
 
 #include "ws_router.h"
@@ -134,6 +134,9 @@ static void fill_ai_status(cJSON *root, ws_ai_status_t *event) {
     if (data) {
         copy_string(event->status, sizeof(event->status), get_string(data, "status"));
         copy_string(event->message, sizeof(event->message), get_string(data, "message"));
+        copy_string(event->image_name, sizeof(event->image_name), get_string(data, "image_name"));
+        copy_string(event->action_file, sizeof(event->action_file), get_string(data, "action_file"));
+        copy_string(event->sound_file, sizeof(event->sound_file), get_string(data, "sound_file"));
     }
 }
 

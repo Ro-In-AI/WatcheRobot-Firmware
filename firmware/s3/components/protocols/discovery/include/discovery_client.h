@@ -6,7 +6,7 @@
  *   ESP32 broadcasts: {"cmd":"DISCOVER","device_id":"xxx","mac":"xx:xx:xx:xx:xx:xx"}
  *   Server responds:
  *   {"cmd":"ANNOUNCE","ip":"x.x.x.x","port":8765,"version":"1.0.0",
- *    "protocol_version":"0.1.1","server":"watcher-server"}
+ *    "protocol_version":"0.1.5","server":"watcher-server"}
  */
 
 #ifndef DISCOVERY_CLIENT_H
@@ -15,7 +15,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define WATCHER_PROTOCOL_VERSION "0.1.1"
+#define WATCHER_PROTOCOL_VERSION "0.1.5"
 
 /* Discovery configuration */
 #define DISCOVERY_PORT 37020

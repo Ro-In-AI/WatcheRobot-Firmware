@@ -1,6 +1,6 @@
 /**
  * @file ws_client.c
- * @brief WebSocket client implementation (Watcher protocol v0.1.1)
+ * @brief WebSocket client implementation (Watcher protocol v0.1.5)
  */
 
 #include "ws_client.h"
