@@ -96,6 +96,17 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 The device will boot and show the progress animation. Watch the monitor output for the server discovery step.
 
+For Codex-driven multi-device workflows on Windows, prefer a logical device alias over raw COM ports:
+
+```powershell
+Copy-Item .\.codex\device-map.example.toml .\.codex\local\device-map.toml
+# Edit the local file and map s3-a / s3-b / s3-c to this machine's COM ports
+
+.\tools\run-lane.cmd -Firmware s3 -Feature smoke -DeviceAlias s3-a
+```
+
+This keeps shared plans and agent prompts stable across teammates even when each machine sees different COM numbers.
+
 ---
 
 ## Step 5 — Start the Cloud Server
@@ -160,4 +171,5 @@ idf.py build
 
 - [Architecture overview](architecture.md) — understand the component design
 - [GPIO mapping](hardware/gpio-mapping.md) — full pin reference
+- [Codex multi-device workflow](development/codex-multi-device-workflow.md) — team workflow for worktrees, lanes, and device aliases
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — how to add features or fix bugs

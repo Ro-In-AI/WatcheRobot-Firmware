@@ -29,6 +29,7 @@ Thumbs.db
 
 # Local AI assistant workspace metadata
 .claude/worktrees/
+.codex/local/
 
 # Secrets (never commit these)
 .env
@@ -45,6 +46,7 @@ tools/output/
 *.bin.tmp
 firmware/s3/monitor-*.log
 firmware/s3/flash-session-com*.log
+firmware/*/build-*/
 
 # IDF Component Manager local config
 idf_component_manager.yml
