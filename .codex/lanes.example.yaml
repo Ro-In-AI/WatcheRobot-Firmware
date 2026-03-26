@@ -1,0 +1,20 @@
+lanes:
+  - operator: alice
+    firmware: s3
+    feature: voice-v015
+    worktree: D:\GithubRep\wt-s3-voice-v015
+    branch: codex/voice-v015
+    device_alias: s3-a
+    build_dir: build-s3-a
+    test_profile: smoke
+    status: ready
+
+  - operator: bob
+    firmware: s3
+    feature: camera-wspk-fix
+    worktree: D:\GithubRep\wt-s3-camera-wspk-fix
+    branch: codex/camera-wspk-fix
+    device_alias: s3-b
+    build_dir: build-s3-b
+    test_profile: camera
+    status: flashing

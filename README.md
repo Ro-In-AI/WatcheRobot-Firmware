@@ -151,6 +151,7 @@ WatcheRobot-Firmware/
 |----------|-------------|
 | [docs/development/known-issues.md](docs/development/known-issues.md) | Known issues & workarounds |
 | [docs/development/testing.md](docs/development/testing.md) | Testing guide |
+| [docs/development/codex-multi-device-workflow.md](docs/development/codex-multi-device-workflow.md) | Codex lane workflow for multi-feature / multi-device development |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 

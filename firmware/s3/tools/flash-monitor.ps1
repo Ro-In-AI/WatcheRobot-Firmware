@@ -4,6 +4,12 @@ param(
     [string]$Port,
 
     [Parameter()]
+    [string]$DeviceAlias,
+
+    [Parameter()]
+    [string]$DeviceMapPath,
+
+    [Parameter()]
     [string]$ProjectPath,
 
     [Parameter()]
@@ -13,7 +19,22 @@ param(
     [switch]$NoBuild,
 
     [Parameter()]
+    [switch]$NoMonitor,
+
+    [Parameter()]
+    [int]$MonitorSeconds,
+
+    [Parameter()]
+    [int]$MonitorMaxLines,
+
+    [Parameter()]
+    [string]$MonitorLogPath,
+
+    [Parameter()]
     [switch]$DryRun,
+
+    [Parameter()]
+    [switch]$AutoSelectHighestPort,
 
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ExtraIdfArgs
@@ -21,6 +42,11 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$codexDeviceMapHelper = Join-Path $PSScriptRoot "..\..\..\tools\codex-device-map.ps1"
+if (Test-Path $codexDeviceMapHelper) {
+    . $codexDeviceMapHelper
+}
 
 if (-not $ProjectPath) {
     if (-not $PSScriptRoot) {
@@ -88,11 +114,34 @@ function Resolve-IdfPath {
 
 function Resolve-FlashPort {
     param(
-        [string]$RequestedPort
+        [string]$RequestedPort,
+
+        [string]$RequestedDeviceAlias,
+
+        [string]$RepoRoot,
+
+        [string]$FirmwareName,
+
+        [string]$ResolvedDeviceMapPath,
+
+        [switch]$AllowHighestPortAutoSelect
     )
 
+    if ($RequestedDeviceAlias) {
+        if (-not (Get-Command Resolve-CodexDeviceMapping -ErrorAction SilentlyContinue)) {
+            throw "未找到设备映射解析器。请确认 tools\codex-device-map.ps1 存在。"
+        }
+
+        $mapping = Resolve-CodexDeviceMapping -Alias $RequestedDeviceAlias -RepoRoot $RepoRoot -Firmware $FirmwareName -DeviceMapPath $ResolvedDeviceMapPath
+        return $mapping.Port
+    }
+
     if ($RequestedPort) {
-        return $RequestedPort.ToUpperInvariant()
+        if ($RequestedPort -match '^COM\d+$') {
+            return $RequestedPort.ToUpperInvariant()
+        }
+
+        return $RequestedPort
     }
 
     $ports = [System.IO.Ports.SerialPort]::GetPortNames() |
@@ -103,16 +152,248 @@ function Resolve-FlashPort {
         throw "未检测到可用串口，无法自动选择烧录端口。"
     }
 
-    return $ports[-1].ToUpperInvariant()
+    if ($ports.Count -eq 1) {
+        return $ports[0].ToUpperInvariant()
+    }
+
+    if ($AllowHighestPortAutoSelect) {
+        return $ports[-1].ToUpperInvariant()
+    }
+
+    throw "检测到多个可用串口: $($ports -join ', ')。请显式传入 -Port COMx，或改用 -DeviceAlias / tools\run-lane.ps1。"
+}
+
+function Resolve-OutputPath {
+    param(
+        [string]$RequestedPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BaseDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DefaultLeafName
+    )
+
+    if (-not $RequestedPath) {
+        return Join-Path $BaseDirectory $DefaultLeafName
+    }
+
+    if ([System.IO.Path]::IsPathRooted($RequestedPath)) {
+        return [System.IO.Path]::GetFullPath($RequestedPath)
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path $BaseDirectory $RequestedPath))
+}
+
+function Stop-ProcessTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$RootProcessId
+    )
+
+    $processTable = @{}
+    foreach ($process in Get-CimInstance Win32_Process -ErrorAction SilentlyContinue) {
+        $parentKey = [string][int]$process.ParentProcessId
+        if (-not $processTable.ContainsKey($parentKey)) {
+            $processTable[$parentKey] = New-Object System.Collections.Generic.List[int]
+        }
+        $processTable[$parentKey].Add([int]$process.ProcessId)
+    }
+
+    $toStop = New-Object System.Collections.Generic.List[int]
+    $stack = New-Object System.Collections.Generic.Stack[int]
+    $stack.Push($RootProcessId)
+
+    while ($stack.Count -gt 0) {
+        $current = $stack.Pop()
+        if ($toStop.Contains($current)) {
+            continue
+        }
+
+        $toStop.Add($current)
+        $childKey = [string]$current
+        if ($processTable.ContainsKey($childKey)) {
+            foreach ($childId in $processTable[$childKey]) {
+                $stack.Push($childId)
+            }
+        }
+    }
+
+    foreach ($processId in ($toStop | Sort-Object -Descending)) {
+        try {
+            Stop-Process -Id $processId -Force -ErrorAction Stop
+        }
+        catch {
+        }
+    }
+}
+
+function Invoke-BoundedMonitor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedProjectPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedPort,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedBuildPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$IdfExportScript,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$MonitorIdfArgs,
+
+        [int]$LineLimit,
+
+        [int]$TimeLimitSeconds,
+
+        [string]$RequestedLogPath
+    )
+
+    $logDirectory = if ($ResolvedBuildPath) { $ResolvedBuildPath } else { $ResolvedProjectPath }
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $stdoutLog = Resolve-OutputPath -RequestedPath $RequestedLogPath -BaseDirectory $logDirectory -DefaultLeafName "monitor-$($ResolvedPort.ToLowerInvariant())-$timestamp.log"
+    $stderrLog = if ($stdoutLog.EndsWith(".log")) {
+        $stdoutLog.Substring(0, $stdoutLog.Length - 4) + ".err.log"
+    } else {
+        "$stdoutLog.err.log"
+    }
+
+    $stdoutDir = Split-Path -Parent $stdoutLog
+    $stderrDir = Split-Path -Parent $stderrLog
+    if ($stdoutDir) {
+        $null = New-Item -ItemType Directory -Path $stdoutDir -Force
+    }
+    if ($stderrDir) {
+        $null = New-Item -ItemType Directory -Path $stderrDir -Force
+    }
+
+    $quotedArgs = ($MonitorIdfArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ", "
+    $monitorRunner = Join-Path ([System.IO.Path]::GetTempPath()) "codex-idf-monitor-$([guid]::NewGuid().ToString('N')).ps1"
+    $monitorScript = @"
+`$ErrorActionPreference = 'Stop'
+if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
+    `$IsWindows = `$true
+}
+. '$($IdfExportScript -replace "'", "''")' *> `$null
+if (-not (Get-Command 'idf.py' -ErrorAction SilentlyContinue)) {
+    throw 'ESP-IDF 环境已加载，但未找到 idf.py 函数。'
+}
+`$monitorArgs = @($quotedArgs)
+& idf.py @monitorArgs
+exit `$LASTEXITCODE
+"@
+    Set-Content -Path $monitorRunner -Value $monitorScript -Encoding UTF8
+
+    $process = $null
+    try {
+        $null = New-Item -ItemType File -Path $stdoutLog -Force
+        $null = New-Item -ItemType File -Path $stderrLog -Force
+        $process = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $monitorRunner) `
+            -WorkingDirectory $ResolvedProjectPath `
+            -PassThru `
+            -RedirectStandardOutput $stdoutLog `
+            -RedirectStandardError $stderrLog
+        $startedAt = Get-Date
+        $stopReason = "process_exit"
+
+        while (-not $process.HasExited) {
+            Start-Sleep -Milliseconds 500
+
+            if ($TimeLimitSeconds -gt 0 -and ((Get-Date) - $startedAt).TotalSeconds -ge $TimeLimitSeconds) {
+                $stopReason = "time_limit"
+                Stop-ProcessTree -RootProcessId $process.Id
+                break
+            }
+
+            if ($LineLimit -gt 0 -and (Test-Path $stdoutLog)) {
+                $currentLineCount = (Get-Content -Path $stdoutLog -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
+                if ($currentLineCount -ge $LineLimit) {
+                    $stopReason = "line_limit"
+                    Stop-ProcessTree -RootProcessId $process.Id
+                    break
+                }
+            }
+        }
+
+        if (-not $process.HasExited) {
+            $process.WaitForExit()
+        }
+
+        $stdoutContent = if (Test-Path $stdoutLog) { Get-Content -Path $stdoutLog -Raw -ErrorAction SilentlyContinue } else { "" }
+        $stderrContent = if (Test-Path $stderrLog) { Get-Content -Path $stderrLog -Raw -ErrorAction SilentlyContinue } else { "" }
+        $lineCount = if (Test-Path $stdoutLog) {
+            (Get-Content -Path $stdoutLog -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
+        } else {
+            0
+        }
+
+        Write-Host "Monitor : $stopReason"
+        Write-Host "Log     : $stdoutLog"
+        if ($stderrContent) {
+            Write-Host "ErrLog  : $stderrLog"
+        }
+
+        $tailLineCount = if ($LineLimit -gt 0) { [Math]::Min($LineLimit, 40) } else { 40 }
+        if ($tailLineCount -lt 1) {
+            $tailLineCount = 20
+        }
+
+        if ($stdoutContent) {
+            $tailLines = $stdoutContent -split "(`r`n|`n|`r)" | Where-Object { $_ -ne "" } | Select-Object -Last $tailLineCount
+            if ($tailLines) {
+                Write-Host "Monitor tail:"
+                foreach ($line in $tailLines) {
+                    Write-Host $line
+                }
+            }
+        }
+
+        if ($stopReason -eq "process_exit" -and $process.ExitCode -ne 0) {
+            throw "monitor 进程退出码非 0: $($process.ExitCode)"
+        }
+
+        return [pscustomobject]@{
+            LogPath      = $stdoutLog
+            ErrorLogPath = $stderrLog
+            StopReason   = $stopReason
+            LineCount    = $lineCount
+            ExitCode     = $process.ExitCode
+        }
+    }
+    finally {
+        if (Test-Path $monitorRunner) {
+            Remove-Item -Path $monitorRunner -Force -ErrorAction SilentlyContinue
+        }
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
 }
 
 $resolvedProjectPath = (Resolve-Path $ProjectPath).Path
+$resolvedRepoRoot = Split-Path -Parent (Split-Path -Parent $resolvedProjectPath)
+$firmwareName = Split-Path -Leaf $resolvedProjectPath
 $resolvedBuildPath = $null
 if ($BuildPath) {
-    $resolvedBuildPath = (Resolve-Path $BuildPath).Path
+    if (Test-Path $BuildPath) {
+        $resolvedBuildPath = (Resolve-Path $BuildPath).Path
+    } elseif ([System.IO.Path]::IsPathRooted($BuildPath)) {
+        $resolvedBuildPath = [System.IO.Path]::GetFullPath($BuildPath)
+    } else {
+        $resolvedBuildPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedProjectPath $BuildPath))
+    }
 }
 
-$resolvedPort = Resolve-FlashPort -RequestedPort $Port
+$resolvedPort = Resolve-FlashPort -RequestedPort $Port `
+    -RequestedDeviceAlias $DeviceAlias `
+    -RepoRoot $resolvedRepoRoot `
+    -FirmwareName $firmwareName `
+    -ResolvedDeviceMapPath $DeviceMapPath `
+    -AllowHighestPortAutoSelect:$AutoSelectHighestPort
 
 $idfPath = Resolve-IdfPath -ResolvedProjectPath $resolvedProjectPath -ResolvedBuildPath $resolvedBuildPath
 $idfExportScript = Join-Path $idfPath "export.ps1"
@@ -121,33 +402,62 @@ if (-not (Test-Path $idfExportScript)) {
     throw "未找到 ESP-IDF 导出脚本: $idfExportScript"
 }
 
-$idfArgs = @()
+$flashArgs = @()
 if ($resolvedBuildPath) {
-    $idfArgs += "-B"
-    $idfArgs += $resolvedBuildPath
+    $flashArgs += "-B"
+    $flashArgs += $resolvedBuildPath
 }
 
-$idfArgs += "-p"
-$idfArgs += $resolvedPort
+$flashArgs += "-p"
+$flashArgs += $resolvedPort
 
 if (-not $NoBuild) {
-    $idfArgs += "build"
+    $flashArgs += "build"
 }
 
-$idfArgs += "flash"
-$idfArgs += "monitor"
+$flashArgs += "flash"
+
+$monitorArgs = @()
+if ($resolvedBuildPath) {
+    $monitorArgs += "-B"
+    $monitorArgs += $resolvedBuildPath
+}
+$monitorArgs += "-p"
+$monitorArgs += $resolvedPort
+$monitorArgs += "monitor"
 
 if ($ExtraIdfArgs) {
-    $idfArgs += $ExtraIdfArgs
+    $flashArgs += $ExtraIdfArgs
+    $monitorArgs += $ExtraIdfArgs
 }
 
 Write-Host "Project : $resolvedProjectPath"
 if ($resolvedBuildPath) {
     Write-Host "Build   : $resolvedBuildPath"
 }
+if ($DeviceAlias) {
+    Write-Host "Device  : $DeviceAlias"
+}
 Write-Host "IDF     : $idfPath"
 Write-Host "Port    : $resolvedPort"
-Write-Host "Command : idf.py $($idfArgs -join ' ')"
+Write-Host "Flash   : idf.py $($flashArgs -join ' ')"
+if ($NoMonitor) {
+    Write-Host "Monitor : disabled"
+} elseif ($MonitorSeconds -gt 0 -or $MonitorMaxLines -gt 0) {
+    Write-Host "Monitor : bounded"
+    if ($MonitorSeconds -gt 0) {
+        Write-Host "Seconds : $MonitorSeconds"
+    }
+    if ($MonitorMaxLines -gt 0) {
+        Write-Host "Lines   : $MonitorMaxLines"
+    }
+    if ($MonitorLogPath) {
+        Write-Host "LogPath : $MonitorLogPath"
+    }
+} else {
+    Write-Host "Monitor : interactive"
+    Write-Host "Command : idf.py $($monitorArgs -join ' ')"
+}
 
 if ($DryRun) {
     exit 0
@@ -164,7 +474,33 @@ try {
         throw "ESP-IDF 环境已加载，但未找到 idf.py 函数。"
     }
 
-    & idf.py @idfArgs
+    & idf.py @flashArgs
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+
+    if ($NoMonitor) {
+        exit 0
+    }
+
+    if ($MonitorSeconds -gt 0 -or $MonitorMaxLines -gt 0) {
+        $monitorResult = Invoke-BoundedMonitor -ResolvedProjectPath $resolvedProjectPath `
+            -ResolvedPort $resolvedPort `
+            -ResolvedBuildPath $resolvedBuildPath `
+            -IdfExportScript $idfExportScript `
+            -MonitorIdfArgs $monitorArgs `
+            -LineLimit $MonitorMaxLines `
+            -TimeLimitSeconds $MonitorSeconds `
+            -RequestedLogPath $MonitorLogPath
+
+        if ($monitorResult.ExitCode -ne 0 -and $monitorResult.StopReason -eq "process_exit") {
+            exit $monitorResult.ExitCode
+        }
+
+        exit 0
+    }
+
+    & idf.py @monitorArgs
     exit $LASTEXITCODE
 }
 finally {

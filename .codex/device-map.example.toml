@@ -1,0 +1,14 @@
+# Copy this file to `.codex/local/device-map.toml` and edit it per machine.
+# Keep device aliases stable across the team. Only the local `port` value changes.
+
+[devices.s3-a]
+firmware = "s3"
+port = "COM31"
+
+[devices.s3-b]
+firmware = "s3"
+port = "COM30"
+
+[devices.s3-c]
+firmware = "s3"
+port = "COM35"
