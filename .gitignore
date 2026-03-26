@@ -46,3 +46,5 @@ tools/output/
 
 # IDF Component Manager local config
 idf_component_manager.yml
+firmware/s3/.vscode/
+firmware/s3/docs/ARCHITECTURE_MAP.md
