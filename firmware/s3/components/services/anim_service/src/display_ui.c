@@ -13,6 +13,14 @@ static char g_current_text[MAX_TEXT_LEN] = {0};
 static emoji_type_t g_current_emoji = EMOJI_STANDBY;
 static const int DEFAULT_FONT_SIZE = 24;
 
+static int text_equals_current(const char *text) {
+    if (text == NULL) {
+        return 0;
+    }
+
+    return strncmp(g_current_text, text, MAX_TEXT_LEN) == 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Private: Case-insensitive string compare                           */
 /* ------------------------------------------------------------------ */
@@ -100,12 +108,21 @@ emoji_type_t display_emoji_from_string(const char *emoji_str) {
 /* ------------------------------------------------------------------ */
 
 int display_update(const char *text, const char *emoji, int font_size, display_result_t *out_result) {
+    emoji_type_t requested_emoji = EMOJI_UNKNOWN;
+
     if (out_result) {
         memset(out_result, 0, sizeof(*out_result));
     }
 
+    if (emoji) {
+        requested_emoji = display_emoji_from_string(emoji);
+        if (requested_emoji == EMOJI_UNKNOWN) {
+            requested_emoji = EMOJI_STANDBY;
+        }
+    }
+
     /* Update text if provided */
-    if (text) {
+    if (text && !text_equals_current(text)) {
         int fs = (font_size > 0) ? font_size : DEFAULT_FONT_SIZE;
         if (hal_display_set_text(text, fs) != 0) {
             return -1;
@@ -120,20 +137,15 @@ int display_update(const char *text, const char *emoji, int font_size, display_r
     }
 
     /* Update emoji if provided */
-    if (emoji) {
-        emoji_type_t emoji_id = display_emoji_from_string(emoji);
-        if (emoji_id == EMOJI_UNKNOWN) {
-            emoji_id = EMOJI_STANDBY; /* Fallback to standby */
-        }
-
-        if (hal_display_set_emoji((int)emoji_id) != 0) {
+    if (emoji && requested_emoji != g_current_emoji) {
+        if (hal_display_set_emoji((int)requested_emoji) != 0) {
             return -1;
         }
-        g_current_emoji = emoji_id;
+        g_current_emoji = requested_emoji;
 
         if (out_result) {
             out_result->emoji_updated = 1;
-            out_result->emoji_id = (int)emoji_id;
+            out_result->emoji_id = (int)requested_emoji;
         }
     }
 
