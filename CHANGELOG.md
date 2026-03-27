@@ -11,6 +11,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.0.6] - 2026-03-27
+
+### Added
+- Codex multi-device flash workflow for local three-device automation testing
+- Device alias templates and lane metadata/log conventions for repeatable local test runs
+
+### Changed
+- `flash-monitor.ps1` now supports device alias resolution, bounded monitor sessions, and dedicated per-device build directories
+- Input initialization is delayed until cloud ready to make boot-time behavior more deterministic during test runs
+
+### Notes
+- Release target: Bluetooth provisioning validation and local automated device testing
+
+---
+
 ## [0.0.4] - 2026-03-17
 
 ### Added
