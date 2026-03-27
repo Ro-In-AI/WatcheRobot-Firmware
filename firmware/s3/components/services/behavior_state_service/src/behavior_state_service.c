@@ -82,6 +82,7 @@ typedef struct {
     char anim_override[BEHAVIOR_STATE_ID_LEN];
     bool anim_override_valid;
     bool suppress_state_sound_events;
+    bool wait_for_local_sfx_completion;
 } behavior_context_t;
 
 static behavior_context_t s_ctx = {0};
@@ -517,6 +518,7 @@ static void behavior_reset_runtime_locked(void) {
     s_ctx.anim_override[0] = '\0';
     s_ctx.anim_override_valid = false;
     s_ctx.suppress_state_sound_events = false;
+    s_ctx.wait_for_local_sfx_completion = false;
 }
 
 static bool behavior_is_valid_anim_id(const char *anim_id) {
@@ -589,11 +591,16 @@ static esp_err_t behavior_dispatch_sound_id_locked(const char *sound_id) {
 }
 
 static void behavior_dispatch_sound_locked(const behavior_sound_event_t *event) {
+    esp_err_t ret;
+
     if (event == NULL) {
         return;
     }
 
-    (void)behavior_dispatch_sound_id_locked(event->sound_id);
+    ret = behavior_dispatch_sound_id_locked(event->sound_id);
+    if (ret == ESP_OK) {
+        s_ctx.wait_for_local_sfx_completion = true;
+    }
 }
 
 static bool behavior_apply_sound_override_locked(const char *sound_id) {
@@ -604,6 +611,9 @@ static bool behavior_apply_sound_override_locked(const char *sound_id) {
     }
 
     ret = behavior_dispatch_sound_id_locked(sound_id);
+    if (ret == ESP_OK) {
+        s_ctx.wait_for_local_sfx_completion = true;
+    }
     return ret == ESP_OK || ret == ESP_ERR_INVALID_STATE;
 }
 
@@ -672,6 +682,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
         s_ctx.text_override_font_size = font_size;
         behavior_set_anim_override_locked(anim_id);
         s_ctx.suppress_state_sound_events = false;
+        s_ctx.wait_for_local_sfx_completion = false;
         (void)behavior_apply_sound_override_locked(sound_id);
         if (display_update(text,
                            s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
@@ -692,6 +703,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
     behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
     s_ctx.text_override_font_size = font_size;
     behavior_set_anim_override_locked(anim_id);
+    s_ctx.wait_for_local_sfx_completion = false;
     s_ctx.suppress_state_sound_events = behavior_apply_sound_override_locked(sound_id);
     if (s_ctx.suppress_state_sound_events) {
         s_ctx.next_sound_index = s_ctx.current_state->sound_count;
@@ -725,14 +737,14 @@ static void behavior_task(void *arg) {
                         s_ctx.state_started_ms = now_ms;
                         s_ctx.next_motion_index = 0;
                         s_ctx.next_expression_index = 0;
-                        s_ctx.next_sound_index =
-                            s_ctx.suppress_state_sound_events ? s_ctx.current_state->sound_count : 0;
+                        s_ctx.next_sound_index = s_ctx.current_state->sound_count;
                         behavior_dispatch_due_events_locked(now_ms);
                     }
                 } else {
                     done_at_ms = s_ctx.current_state->timeline_end_ms > 0 ? s_ctx.current_state->timeline_end_ms
                                                                           : BEHAVIOR_DEFAULT_ONESHOT_HOLD_MS;
-                    if (behavior_all_events_dispatched_locked() && elapsed_ms >= done_at_ms) {
+                    if (behavior_all_events_dispatched_locked() && elapsed_ms >= done_at_ms &&
+                        !(s_ctx.wait_for_local_sfx_completion && sfx_service_is_busy())) {
                         behavior_copy_string(fallback_state, sizeof(fallback_state), s_ctx.catalog.default_state);
                         s_ctx.current_state = NULL;
                         s_ctx.next_motion_index = 0;
@@ -744,6 +756,7 @@ static void behavior_task(void *arg) {
                         s_ctx.anim_override[0] = '\0';
                         s_ctx.anim_override_valid = false;
                         s_ctx.suppress_state_sound_events = false;
+                        s_ctx.wait_for_local_sfx_completion = false;
                         should_fallback = true;
                     }
                 }

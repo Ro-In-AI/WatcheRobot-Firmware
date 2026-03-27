@@ -10,7 +10,9 @@
       "expression": [
         { "at_ms": 0, "anim": "happy", "text": "Booting...", "font_size": 24 }
       ],
-      "sound": []
+      "sound": [
+        { "at_ms": 0, "sound_id": "boot" }
+      ]
     },
     "standby": {
       "loop": true,
@@ -20,7 +22,9 @@
       "expression": [
         { "at_ms": 0, "anim": "standby", "text": "", "font_size": 24 }
       ],
-      "sound": []
+      "sound": [
+        { "at_ms": 0, "sound_id": "standby" }
+      ]
     },
     "listening": {
       "loop": true,
@@ -45,7 +49,9 @@
       "expression": [
         { "at_ms": 0, "anim": "thinking", "text": "Thinking...", "font_size": 24 }
       ],
-      "sound": []
+      "sound": [
+        { "at_ms": 0, "sound_id": "thinking" }
+      ]
     },
     "processing": {
       "loop": true,
@@ -83,7 +89,9 @@
       "expression": [
         { "at_ms": 0, "anim": "happy", "text": "", "font_size": 24 }
       ],
-      "sound": []
+      "sound": [
+        { "at_ms": 0, "sound_id": "happy" }
+      ]
     },
     "error": {
       "loop": false,
@@ -96,7 +104,9 @@
       "expression": [
         { "at_ms": 0, "anim": "error", "text": "", "font_size": 24 }
       ],
-      "sound": []
+      "sound": [
+        { "at_ms": 0, "sound_id": "error" }
+      ]
     },
     "custom1": {
       "loop": true,

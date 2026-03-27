@@ -1,4 +1,10 @@
-{
-  "version": "1.0",
-  "sounds": {}
+﻿{
+    "version":  "1.0",
+    "sounds":  {
+                   "boot":  "boot.pcm",
+                   "error":  "error.pcm",
+                   "happy":  "happy.pcm",
+                   "standby":  "standby.pcm",
+                   "thinking":  "thinking.pcm"
+               }
 }

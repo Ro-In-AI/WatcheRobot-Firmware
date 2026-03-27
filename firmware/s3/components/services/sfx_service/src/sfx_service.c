@@ -288,6 +288,7 @@ static void sfx_playback_file(const char *sound_id, uint32_t generation) {
     file = fopen(sound_path, "rb");
     if (file == NULL) {
         ESP_LOGI(TAG, "Skip local sfx '%s': file not found (%s)", sound_id, sound_path);
+        sfx_set_local_busy(false);
         return;
     }
 
@@ -298,11 +299,11 @@ static void sfx_playback_file(const char *sound_id, uint32_t generation) {
         hal_audio_set_playback_mode(false);
         hal_audio_set_sample_rate(16000);
         fclose(file);
+        sfx_set_local_busy(false);
         return;
     }
 
     audio_started = true;
-    sfx_set_local_busy(true);
     ESP_LOGI(TAG, "Playing local sfx '%s' from %s", sound_id, sound_path);
 
     while (!feof(file)) {
@@ -343,6 +344,9 @@ static bool sfx_take_pending_request(char *sound_id, size_t sound_id_size, uint3
     }
 
     if (!s_ctx.cloud_audio_busy && s_ctx.pending_sound_id[0] != '\0') {
+        /* Keep the service busy across task handoff so callers do not think playback finished
+         * between dequeuing the request and actually starting the speaker stream. */
+        s_ctx.local_busy = true;
         sfx_copy_string(sound_id, sound_id_size, s_ctx.pending_sound_id);
         s_ctx.pending_sound_id[0] = '\0';
         *generation = s_ctx.request_generation;

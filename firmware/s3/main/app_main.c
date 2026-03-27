@@ -30,8 +30,10 @@
 
 /* Physical restart: click count to trigger reboot */
 #define RESTART_CLICK_COUNT 5
-/* Test hook: force device into BLE provisioning flow on every boot. */
-#define FORCE_WIFI_CLEAR_ON_BOOT 1
+#define STARTUP_BEHAVIOR_POLL_MS 50
+#define STARTUP_BEHAVIOR_TIMEOUT_MS 10000
+#define TEST_WIFI_SSID "Erroright"
+#define TEST_WIFI_PASSWORD "erroright"
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;
@@ -129,6 +131,19 @@ static void log_heap_state(const char *stage) {
              (unsigned)(largest_spiram / 1024U));
 }
 
+static void wait_for_behavior_idle(uint32_t timeout_ms) {
+    uint32_t waited_ms = 0;
+
+    while (behavior_state_is_busy() && waited_ms < timeout_ms) {
+        vTaskDelay(pdMS_TO_TICKS(STARTUP_BEHAVIOR_POLL_MS));
+        waited_ms += STARTUP_BEHAVIOR_POLL_MS;
+    }
+
+    if (behavior_state_is_busy()) {
+        ESP_LOGW(TAG, "Timed out waiting for startup behavior to settle after %lu ms", (unsigned long)waited_ms);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Main Application                                                   */
 /* ------------------------------------------------------------------ */
@@ -188,14 +203,12 @@ void app_main(void) {
     boot_anim_set_text("WiFi...");
     wifi_init();
     wifi_register_status_callback(on_wifi_status_changed);
-#if FORCE_WIFI_CLEAR_ON_BOOT
-    if (wifi_clear_credentials() == 0) {
-        ESP_LOGW(TAG, "Forced clearing stored WiFi credentials on boot for BLE provisioning test");
+    if (wifi_provision(TEST_WIFI_SSID, TEST_WIFI_PASSWORD) == 0) {
+        ESP_LOGI(TAG, "Provisioned startup WiFi SSID: %s", TEST_WIFI_SSID);
     } else {
-        ESP_LOGW(TAG, "Failed to clear stored WiFi credentials on boot");
+        ESP_LOGW(TAG, "Failed to provision startup WiFi SSID: %s", TEST_WIFI_SSID);
     }
-#endif
-    if (wifi_connect() != 0) {
+    if (wifi_wait_for_connection(10000) != 0 && wifi_connect() != 0) {
         s_waiting_for_wifi_provision = true;
         boot_anim_set_text("Open APP Set WiFi");
         ESP_LOGI(TAG, "Waiting for WiFi credentials via BLE provisioning");
@@ -269,7 +282,10 @@ void app_main(void) {
             ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
         }
     }
-    behavior_state_set_with_text("standby", cloud_ready ? "Ready!" : "BLE Ready", 0);
+
+    behavior_state_set("boot");
+    wait_for_behavior_idle(STARTUP_BEHAVIOR_TIMEOUT_MS);
+    behavior_state_set_text(cloud_ready ? "Ready!" : "BLE Ready", 0);
     log_heap_state("after_ui_init");
     if (cloud_ready) {
         ws_client_start();
