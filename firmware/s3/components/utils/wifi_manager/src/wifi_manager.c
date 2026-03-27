@@ -249,6 +249,12 @@ int wifi_provision(const char *ssid, const char *password)
     wifi_config_t wifi_cfg = {0};
     memcpy(wifi_cfg.sta.ssid, ssid, ssid_len);
     memcpy(wifi_cfg.sta.password, password, pass_len);
+    wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_cfg.sta.pmf_cfg.capable = true;
+    wifi_cfg.sta.pmf_cfg.required = false;
+    wifi_cfg.sta.failure_retry_cnt = 3;
 
     if (wifi_start_if_needed() != 0) {
         return -1;

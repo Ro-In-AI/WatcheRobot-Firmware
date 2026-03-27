@@ -22,6 +22,7 @@
 
 #define TAG "WS_HANDLERS"
 
+#define SERVO_POSITION_REPORT_ENABLED 0
 #define SERVO_REPORT_INTERVAL_MS 50
 #define SERVO_REPORT_TASK_STACK 4096
 #define SERVO_REPORT_TASK_PRIORITY 4
@@ -78,7 +79,9 @@ static ws_camera_context_t s_camera_ctx = {
     .upload_task = NULL,
 };
 
+#if SERVO_POSITION_REPORT_ENABLED
 static TaskHandle_t s_servo_report_task = NULL;
+#endif
 
 static esp_err_t ws_camera_ensure_lock(void) {
     if (s_camera_ctx.lock == NULL) {
@@ -507,6 +510,7 @@ static bool ws_append_state_candidate(const char **candidates, size_t *count, si
     return true;
 }
 
+#if SERVO_POSITION_REPORT_ENABLED
 static void ws_servo_report_task(void *arg) {
     bool session_ready_seen = false;
     bool motion_active = false;
@@ -521,6 +525,7 @@ static void ws_servo_report_task(void *arg) {
     while (true) {
         int x_deg;
         int y_deg;
+        bool suppress_action_reports;
 
         if (!ws_client_is_session_ready()) {
             session_ready_seen = false;
@@ -554,6 +559,18 @@ static void ws_servo_report_task(void *arg) {
             continue;
         }
 
+        suppress_action_reports = behavior_state_is_action_active();
+        if (suppress_action_reports) {
+            motion_active = false;
+            final_report_sent = true;
+            last_observed_x = x_deg;
+            last_observed_y = y_deg;
+            last_reported_x = x_deg;
+            last_reported_y = y_deg;
+            vTaskDelay(pdMS_TO_TICKS(SERVO_REPORT_INTERVAL_MS));
+            continue;
+        }
+
         if (x_deg != last_observed_x || y_deg != last_observed_y) {
             motion_active = true;
             final_report_sent = false;
@@ -575,8 +592,10 @@ static void ws_servo_report_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(SERVO_REPORT_INTERVAL_MS));
     }
 }
+#endif
 
 void ws_handlers_init(void) {
+#if SERVO_POSITION_REPORT_ENABLED
     if (s_servo_report_task == NULL) {
         if (xTaskCreate(ws_servo_report_task,
                         "ws_servo_report",
@@ -588,6 +607,9 @@ void ws_handlers_init(void) {
             ESP_LOGE(TAG, "servo report task create failed");
         }
     }
+#else
+    ESP_LOGI(TAG, "Servo position reporting disabled");
+#endif
 }
 
 const char *ws_ai_status_to_emoji(const char *status, const char *message) {
@@ -908,7 +930,10 @@ void on_ai_status_handler(const ws_ai_status_t *event) {
     char image_name[WS_STATE_ID_MAX];
     char sound_id[WS_STATE_ID_MAX];
     const char *state_candidates[3] = {0};
+    const char *action_candidates[3] = {0};
     size_t state_candidate_count = 0;
+    size_t action_candidate_count = 0;
+    const char *selected_action_id = NULL;
     const char *text;
     esp_err_t ret = ESP_ERR_NOT_FOUND;
     size_t i;
@@ -930,32 +955,45 @@ void on_ai_status_handler(const ws_ai_status_t *event) {
     ws_append_state_candidate(state_candidates, &state_candidate_count, 3, action_state_id);
     ws_append_state_candidate(state_candidates, &state_candidate_count, 3, status_state_id);
     ws_append_state_candidate(state_candidates, &state_candidate_count, 3, fallback_state_id);
+    ws_append_state_candidate(action_candidates, &action_candidate_count, 3, action_state_id);
+    ws_append_state_candidate(action_candidates, &action_candidate_count, 3, status_state_id);
+    ws_append_state_candidate(action_candidates, &action_candidate_count, 3, fallback_state_id);
+
+    for (i = 0; i < action_candidate_count; ++i) {
+        if (behavior_state_has_action(action_candidates[i])) {
+            selected_action_id = action_candidates[i];
+            break;
+        }
+    }
 
     ESP_LOGI(TAG,
-             "AI status: status=%s message=%s image=%s action=%s sound=%s",
+             "AI status: status=%s message=%s image=%s action=%s sound=%s selected_action=%s",
              event->status,
              event->message,
              event->image_name,
              event->action_file,
-             event->sound_file);
+             event->sound_file,
+             selected_action_id != NULL ? selected_action_id : "<none>");
 
     for (i = 0; i < state_candidate_count; ++i) {
-        ret = behavior_state_set_with_resources(state_candidates[i],
-                                                text,
-                                                0,
-                                                image_name[0] != '\0' ? image_name : NULL,
-                                                sound_id[0] != '\0' ? sound_id : NULL);
+        ret = behavior_state_set_with_resources_and_action(state_candidates[i],
+                                                           text,
+                                                           0,
+                                                           image_name[0] != '\0' ? image_name : NULL,
+                                                           sound_id[0] != '\0' ? sound_id : NULL,
+                                                           selected_action_id);
         if (ret != ESP_ERR_NOT_FOUND) {
             break;
         }
     }
 
     if (ret == ESP_ERR_NOT_FOUND) {
-        ret = behavior_state_set_with_resources("standby",
-                                                text,
-                                                0,
-                                                image_name[0] != '\0' ? image_name : NULL,
-                                                sound_id[0] != '\0' ? sound_id : NULL);
+        ret = behavior_state_set_with_resources_and_action("standby",
+                                                           text,
+                                                           0,
+                                                           image_name[0] != '\0' ? image_name : NULL,
+                                                           sound_id[0] != '\0' ? sound_id : NULL,
+                                                           selected_action_id);
     }
 
     if (ret != ESP_OK && text != NULL) {

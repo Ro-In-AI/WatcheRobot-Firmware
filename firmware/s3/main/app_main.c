@@ -25,13 +25,16 @@
 #include "ws_router.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #define TAG "MAIN"
 
 /* Physical restart: click count to trigger reboot */
 #define RESTART_CLICK_COUNT 5
-/* Test hook: force device into BLE provisioning flow on every boot. */
-#define FORCE_WIFI_CLEAR_ON_BOOT 1
+
+static const char *s_boot_wifi_ssid = "orulink_testnet";
+static const char *s_boot_wifi_password = "orulink2026";
+static const int s_boot_wifi_wait_timeout_ms = 20000;
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;
@@ -129,6 +132,35 @@ static void log_heap_state(const char *stage) {
              (unsigned)(largest_spiram / 1024U));
 }
 
+static int ensure_boot_wifi_connection(void) {
+    char saved_ssid[33] = {0};
+    bool have_saved_credentials = wifi_has_credentials() == 1;
+    bool saved_ssid_matches = false;
+
+    if (have_saved_credentials &&
+        wifi_get_saved_ssid(saved_ssid, sizeof(saved_ssid)) == 0 &&
+        strcmp(saved_ssid, s_boot_wifi_ssid) == 0) {
+        saved_ssid_matches = true;
+    }
+
+    if (saved_ssid_matches) {
+        ESP_LOGI(TAG, "Connecting to stored hidden test WiFi SSID: %s", s_boot_wifi_ssid);
+        if (wifi_connect() == 0) {
+            return 0;
+        }
+        ESP_LOGW(TAG, "Stored hidden test WiFi connect failed, rewriting credentials");
+    } else {
+        ESP_LOGI(TAG, "Writing hidden test WiFi credentials: %s", s_boot_wifi_ssid);
+    }
+
+    if (wifi_provision(s_boot_wifi_ssid, s_boot_wifi_password) != 0) {
+        ESP_LOGE(TAG, "Failed to provision hidden test WiFi SSID: %s", s_boot_wifi_ssid);
+        return -1;
+    }
+
+    return wifi_wait_for_connection(s_boot_wifi_wait_timeout_ms);
+}
+
 /* ------------------------------------------------------------------ */
 /* Main Application                                                   */
 /* ------------------------------------------------------------------ */
@@ -188,17 +220,10 @@ void app_main(void) {
     boot_anim_set_text("WiFi...");
     wifi_init();
     wifi_register_status_callback(on_wifi_status_changed);
-#if FORCE_WIFI_CLEAR_ON_BOOT
-    if (wifi_clear_credentials() == 0) {
-        ESP_LOGW(TAG, "Forced clearing stored WiFi credentials on boot for BLE provisioning test");
-    } else {
-        ESP_LOGW(TAG, "Failed to clear stored WiFi credentials on boot");
-    }
-#endif
-    if (wifi_connect() != 0) {
+    if (ensure_boot_wifi_connection() != 0) {
         s_waiting_for_wifi_provision = true;
         boot_anim_set_text("Open APP Set WiFi");
-        ESP_LOGI(TAG, "Waiting for WiFi credentials via BLE provisioning");
+        ESP_LOGI(TAG, "Hidden test WiFi unavailable, waiting for WiFi credentials via BLE provisioning");
         if (wifi_wait_for_connection(-1) != 0) {
             ESP_LOGE(TAG, "Waiting for WiFi connection failed");
             return;
