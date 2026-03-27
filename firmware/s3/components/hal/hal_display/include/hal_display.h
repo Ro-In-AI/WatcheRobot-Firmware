@@ -45,4 +45,13 @@ int hal_display_init(void);
  */
 int hal_display_ui_init(void);
 
+/**
+ * @brief Initialize touch/knob inputs after the display is already up
+ *
+ * This is used to delay all interactive input devices until the app is ready.
+ *
+ * @return 0 on success, -1 on error
+ */
+int hal_display_input_init(void);
+
 #endif /* HAL_DISPLAY_H */

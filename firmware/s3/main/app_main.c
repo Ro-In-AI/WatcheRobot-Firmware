@@ -30,6 +30,8 @@
 
 /* Physical restart: click count to trigger reboot */
 #define RESTART_CLICK_COUNT 5
+/* Test hook: force device into BLE provisioning flow on every boot. */
+#define FORCE_WIFI_CLEAR_ON_BOOT 1
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;
@@ -163,10 +165,9 @@ void app_main(void) {
     boot_anim_set_text("Servo...");
     hal_servo_init();
 
-    /* 5. Voice recorder: init only (do NOT start yet) */
+    /* 5. Initialize app state only. Input devices stay disabled during BLE provisioning. */
     boot_anim_set_progress(30);
-    boot_anim_set_text("Voice...");
-    voice_recorder_init();
+    boot_anim_set_text("State...");
     behavior_state_init();
 
     /* 5.5 BLE control + provisioning */
@@ -182,16 +183,18 @@ void app_main(void) {
         ESP_LOGW(TAG, "BLE init failed: %s", esp_err_to_name(ble_ret));
     }
 
-    /* 6. Register BSP-level button callbacks.
-     * Voice record start/stop is owned by voice_service's hal_button polling path.
-     * Keep only the multi-click reboot callback here to avoid duplicate UI/audio actions. */
-    bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
-
-    /* 7. WiFi */
+    /* 6. WiFi */
     boot_anim_set_progress(40);
     boot_anim_set_text("WiFi...");
     wifi_init();
     wifi_register_status_callback(on_wifi_status_changed);
+#if FORCE_WIFI_CLEAR_ON_BOOT
+    if (wifi_clear_credentials() == 0) {
+        ESP_LOGW(TAG, "Forced clearing stored WiFi credentials on boot for BLE provisioning test");
+    } else {
+        ESP_LOGW(TAG, "Failed to clear stored WiFi credentials on boot");
+    }
+#endif
     if (wifi_connect() != 0) {
         s_waiting_for_wifi_provision = true;
         boot_anim_set_text("Open APP Set WiFi");
@@ -204,7 +207,7 @@ void app_main(void) {
     }
     boot_anim_set_progress(55);
 
-    /* 8. Service discovery */
+    /* 7. Service discovery */
     boot_anim_set_text("Discovering...");
     discovery_init();
     server_info_t server_info = {0};
@@ -231,12 +234,7 @@ void app_main(void) {
     }
 
     if (cloud_ready) {
-        /* 9. Start voice recorder */
-        if (voice_recorder_start() != 0) {
-            ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
-        }
-
-        /* 10. WebSocket client */
+        /* 8. WebSocket client */
         boot_anim_set_progress(92);
         boot_anim_set_text("Connecting...");
         ws_client_init();
@@ -249,7 +247,7 @@ void app_main(void) {
         s_ble_only_mode = true;
     }
 
-    /* 11. Ready! */
+    /* 9. Ready! */
     if (cloud_ready) {
         boot_anim_set_progress(100);
         boot_anim_set_text("Ready!");
@@ -258,6 +256,19 @@ void app_main(void) {
     boot_anim_finish();
     log_heap_state("before_ui_init");
     hal_display_ui_init();
+    if (cloud_ready) {
+        if (hal_display_input_init() != 0) {
+            ESP_LOGW(TAG, "Delayed display input initialization failed");
+        }
+
+        /* Register encoder callbacks only after delayed input devices are attached. */
+        bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
+
+        voice_recorder_init();
+        if (voice_recorder_start() != 0) {
+            ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
+        }
+    }
     behavior_state_set_with_text("standby", cloud_ready ? "Ready!" : "BLE Ready", 0);
     log_heap_state("after_ui_init");
     if (cloud_ready) {
@@ -271,7 +282,7 @@ void app_main(void) {
     ESP_LOGI(TAG, "WatcheRobot ready (cloud=%s, ble=%s)", cloud_ready ? "online" : "offline",
              ble_service_is_connected() ? "connected" : "advertising");
 
-    /* 12. Mark OTA partition valid (prevent rollback after successful boot) */
+    /* 10. Mark OTA partition valid (prevent rollback after successful boot) */
     ota_service_mark_valid();
 
     /* Main loop */

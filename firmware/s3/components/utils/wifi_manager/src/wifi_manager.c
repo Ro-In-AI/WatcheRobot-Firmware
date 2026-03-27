@@ -23,6 +23,7 @@ static wifi_status_callback_t s_status_cbs[WIFI_STATUS_CALLBACK_MAX];
 static bool s_initialized = false;
 static bool s_wifi_started = false;
 static bool s_connect_requested = false;
+static bool s_connection_in_progress = false;
 static bool s_credentials_present = false;
 static bool is_connected = false;
 static wifi_status_t s_status = WIFI_STATUS_UNCONFIGURED;
@@ -74,6 +75,33 @@ static int wifi_start_if_needed(void)
     return 0;
 }
 
+static int wifi_request_connect(const char *source)
+{
+    if (!s_credentials_present) {
+        return -1;
+    }
+
+    if (is_connected) {
+        s_connection_in_progress = false;
+        return 0;
+    }
+
+    if (s_connection_in_progress) {
+        ESP_LOGI(TAG, "WiFi connect already in progress (%s)", source);
+        return 0;
+    }
+
+    esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        s_connection_in_progress = false;
+        ESP_LOGE(TAG, "esp_wifi_connect failed (%s): %s", source, esp_err_to_name(err));
+        return -1;
+    }
+
+    s_connection_in_progress = true;
+    return 0;
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
@@ -81,11 +109,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         if (s_connect_requested && s_credentials_present) {
-            esp_wifi_connect();
+            wifi_request_connect("sta_start");
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)event_data;
         is_connected = false;
+        s_connection_in_progress = false;
         s_ip_addr[0] = '\0';
         xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
 
@@ -93,8 +122,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGW(TAG, "Disconnected from AP (reason=%d), retrying...", event ? event->reason : -1);
             wifi_set_status(WIFI_STATUS_DISCONNECTED);
             if (s_connect_requested) {
-                esp_wifi_connect();
-                wifi_set_status(WIFI_STATUS_CONNECTING);
+                if (wifi_request_connect("sta_disconnected") == 0) {
+                    wifi_set_status(WIFI_STATUS_CONNECTING);
+                }
             }
         } else {
             wifi_set_status(WIFI_STATUS_UNCONFIGURED);
@@ -104,6 +134,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         snprintf(s_ip_addr, sizeof(s_ip_addr), IPSTR, IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "Got IP: %s", s_ip_addr);
         is_connected = true;
+        s_connection_in_progress = false;
         s_connect_requested = false;
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
         wifi_set_status(WIFI_STATUS_CONNECTED);
@@ -175,8 +206,7 @@ int wifi_connect(void)
     s_connect_requested = true;
     wifi_set_status(WIFI_STATUS_CONNECTING);
     ESP_LOGI(TAG, "Connecting to stored WiFi SSID: %s", s_saved_ssid);
-    if (esp_wifi_connect() != ESP_OK) {
-        ESP_LOGE(TAG, "esp_wifi_connect failed");
+    if (wifi_request_connect("wifi_connect") != 0) {
         wifi_set_status(WIFI_STATUS_DISCONNECTED);
         return -1;
     }
@@ -226,6 +256,7 @@ int wifi_provision(const char *ssid, const char *password)
 
     xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     is_connected = false;
+    s_connection_in_progress = false;
     s_ip_addr[0] = '\0';
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -242,8 +273,7 @@ int wifi_provision(const char *ssid, const char *password)
     wifi_set_status(WIFI_STATUS_CONNECTING);
     ESP_LOGI(TAG, "Provisioned WiFi SSID via BLE: %s", s_saved_ssid);
 
-    if (esp_wifi_connect() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start WiFi connect after provisioning");
+    if (wifi_request_connect("wifi_provision") != 0) {
         wifi_set_status(WIFI_STATUS_DISCONNECTED);
         return -1;
     }
@@ -266,6 +296,7 @@ int wifi_clear_credentials(void)
     s_ip_addr[0] = '\0';
     s_credentials_present = false;
     s_connect_requested = false;
+    s_connection_in_progress = false;
     is_connected = false;
     xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
     wifi_set_status(WIFI_STATUS_UNCONFIGURED);
