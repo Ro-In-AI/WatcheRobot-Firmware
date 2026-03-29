@@ -81,6 +81,8 @@ static void anim_worker_task(void *param);
 static void anim_frame_timer_cb(lv_timer_t *timer);
 static void anim_service_timer_cb(lv_timer_t *timer);
 static void hide_preview_layer(void);
+static int get_playback_frame_count(emoji_anim_type_t type);
+static const lv_img_dsc_t *get_playback_frame(emoji_anim_type_t type, int frame_index);
 
 static anim_heap_snapshot_t capture_heap_snapshot(void) {
     anim_heap_snapshot_t snapshot = {
@@ -110,6 +112,11 @@ static void activate_preview_only(emoji_anim_type_t type, const lv_img_dsc_t *pr
         return;
     }
 
+    int frame_count = emoji_load_type(type);
+    if (frame_count <= 0) {
+        frame_count = emoji_get_frame_count(type);
+    }
+
     lv_img_set_src(g_front_img, preview);
     lv_obj_set_style_opa(g_front_img, LV_OPA_COVER, 0);
     hide_preview_layer();
@@ -121,7 +128,11 @@ static void activate_preview_only(emoji_anim_type_t type, const lv_img_dsc_t *pr
     g_anim_start_us = esp_timer_get_time();
 
     if (g_frame_timer != NULL) {
-        lv_timer_pause(g_frame_timer);
+        if (frame_count > 1) {
+            lv_timer_resume(g_frame_timer);
+        } else {
+            lv_timer_pause(g_frame_timer);
+        }
     }
 }
 
@@ -207,11 +218,11 @@ static void set_playback_clock(emoji_anim_type_t type) {
 }
 
 static void resume_frame_timer_if_needed(emoji_anim_type_t type) {
-    int frame_count = anim_hot_get_frame_count();
+    int frame_count = get_playback_frame_count(type);
     if (g_frame_timer == NULL) {
         return;
     }
-    if (anim_hot_is_active_type(type) && frame_count > 1) {
+    if (frame_count > 1) {
         lv_timer_resume(g_frame_timer);
     } else {
         lv_timer_pause(g_frame_timer);
@@ -291,6 +302,35 @@ static const lv_img_dsc_t *get_preview_frame(emoji_anim_type_t type) {
     return NULL;
 }
 
+static int get_playback_frame_count(emoji_anim_type_t type) {
+    if (type == EMOJI_ANIM_NONE) {
+        return 0;
+    }
+
+    if (anim_hot_is_active_type(type)) {
+        return anim_hot_get_frame_count();
+    }
+
+    if (emoji_load_type(type) > 0) {
+        return emoji_get_frame_count(type);
+    }
+
+    return 0;
+}
+
+static const lv_img_dsc_t *get_playback_frame(emoji_anim_type_t type, int frame_index) {
+    if (type == EMOJI_ANIM_NONE || frame_index < 0) {
+        return NULL;
+    }
+
+    if (anim_hot_is_active_type(type)) {
+        anim_cached_frame_t *frame = anim_hot_get_frame(type, frame_index);
+        return frame != NULL ? &frame->img_dsc : NULL;
+    }
+
+    return emoji_get_image(type, frame_index);
+}
+
 static void anim_worker_task(void *param) {
     (void)param;
 
@@ -317,11 +357,11 @@ static void anim_worker_task(void *param) {
 static void anim_frame_timer_cb(lv_timer_t *timer) {
     (void)timer;
 
-    if (g_state != ANIM_PLAYER_PLAYING || g_current_type == EMOJI_ANIM_NONE || !anim_hot_is_active_type(g_current_type)) {
+    if (g_state != ANIM_PLAYER_PLAYING || g_current_type == EMOJI_ANIM_NONE) {
         return;
     }
 
-    int frame_count = anim_hot_get_frame_count();
+    int frame_count = get_playback_frame_count(g_current_type);
     if (frame_count <= 0) {
         return;
     }
@@ -340,9 +380,9 @@ static void anim_frame_timer_cb(lv_timer_t *timer) {
         return;
     }
 
-    anim_cached_frame_t *frame = anim_hot_get_frame(g_current_type, frame_index);
+    const lv_img_dsc_t *frame = get_playback_frame(g_current_type, frame_index);
     if (frame != NULL && g_front_img != NULL) {
-        lv_img_set_src(g_front_img, &frame->img_dsc);
+        lv_img_set_src(g_front_img, frame);
         g_current_frame = frame_index;
     }
 }
@@ -473,7 +513,7 @@ int emoji_anim_start(emoji_anim_type_t type) {
     if (!g_use_cache || should_use_preview_only_mode(&heap_snapshot)) {
         if (g_use_cache) {
             ESP_LOGW(TAG,
-                     "Low heap headroom, using preview-only animation for %s "
+                     "Low heap headroom, using source-frame playback for %s "
                      "(internal=%u/%u bytes, dma=%u/%u bytes)",
                      emoji_type_name(type),
                      (unsigned)heap_snapshot.free_internal,

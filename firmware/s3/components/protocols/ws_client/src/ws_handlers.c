@@ -591,6 +591,12 @@ void ws_handlers_init(void) {
 }
 
 const char *ws_ai_status_to_emoji(const char *status, const char *message) {
+    if (ws_contains_nocase(status, "observing") || ws_contains_nocase(message, "observing")) {
+        return "custom3";
+    }
+    if (ws_contains_nocase(status, "listening") || ws_contains_nocase(message, "listening")) {
+        return "listening";
+    }
     if (ws_contains_nocase(status, "thinking") || ws_contains_nocase(message, "thinking")) {
         return "thinking";
     }
@@ -951,11 +957,13 @@ void on_ai_status_handler(const ws_ai_status_t *event) {
     }
 
     if (ret == ESP_ERR_NOT_FOUND) {
-        ret = behavior_state_set_with_resources("standby",
-                                                text,
-                                                0,
-                                                image_name[0] != '\0' ? image_name : NULL,
-                                                sound_id[0] != '\0' ? sound_id : NULL);
+        ESP_LOGW(TAG,
+                 "AI status has no local match, keeping current state=%s status=%s action=%s image=%s fallback=%s",
+                 behavior_state_get_current(),
+                 event->status,
+                 action_state_id,
+                 image_name,
+                 fallback_state_id);
     }
 
     if (ret != ESP_OK && text != NULL) {
