@@ -1,0 +1,102 @@
+{
+  "scene_name": "Scene",
+  "frame_start": 1,
+  "frame_end": 220,
+  "fps": 30,
+  "animated_objects": [
+    {
+      "object_name": "底部轴",
+      "object_type": "MESH",
+      "action_name": "底部轴动作",
+      "keyframe_data": [
+        {
+          "frame_number": 1,
+          "active_axis": "z",
+          "rotation_angle": 90.0
+        },
+        {
+          "frame_number": 46,
+          "active_axis": "z",
+          "rotation_angle": 112.0
+        },
+        {
+          "frame_number": 98,
+          "active_axis": "z",
+          "rotation_angle": 74.0
+        },
+        {
+          "frame_number": 146,
+          "active_axis": "z",
+          "rotation_angle": 112.0
+        },
+        {
+          "frame_number": 189,
+          "active_axis": "z",
+          "rotation_angle": 90.0
+        }
+      ]
+    },
+    {
+      "object_name": "头轴",
+      "object_type": "EMPTY",
+      "action_name": "头轴动作.001",
+      "keyframe_data": [
+        {
+          "frame_number": 0,
+          "active_axis": "x",
+          "rotation_angle": 110.0
+        },
+        {
+          "frame_number": 20,
+          "active_axis": "x",
+          "rotation_angle": 135.0
+        },
+        {
+          "frame_number": 40,
+          "active_axis": "x",
+          "rotation_angle": 110.0
+        },
+        {
+          "frame_number": 60,
+          "active_axis": "x",
+          "rotation_angle": 135.0
+        },
+        {
+          "frame_number": 80,
+          "active_axis": "x",
+          "rotation_angle": 110.0
+        },
+        {
+          "frame_number": 100,
+          "active_axis": "x",
+          "rotation_angle": 135.0
+        },
+        {
+          "frame_number": 120,
+          "active_axis": "x",
+          "rotation_angle": 110.0
+        },
+        {
+          "frame_number": 140,
+          "active_axis": "x",
+          "rotation_angle": 135.0
+        },
+        {
+          "frame_number": 160,
+          "active_axis": "x",
+          "rotation_angle": 110.0
+        },
+        {
+          "frame_number": 180,
+          "active_axis": "x",
+          "rotation_angle": 135.0
+        },
+        {
+          "frame_number": 200,
+          "active_axis": "x",
+          "rotation_angle": 110.0
+        }
+      ]
+    }
+  ]
+}
