@@ -38,10 +38,13 @@ else()
     set(ANIM_DEFAULT_FPS 30)
 endif()
 
+set(ANIM_IMPORT_DIR ${CMAKE_SOURCE_DIR}/assets/watcher0327png)
+
 add_custom_target(anim_assets_gen
     COMMAND py -3 ${CMAKE_SOURCE_DIR}/tools/generate_anim_assets.py
             --spiffs-dir ${CMAKE_SOURCE_DIR}/spiffs
             --output-dir ${CMAKE_SOURCE_DIR}/spiffs/anim
+            --import-dir ${ANIM_IMPORT_DIR}
             --fps ${ANIM_DEFAULT_FPS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     BYPRODUCTS

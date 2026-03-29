@@ -9,6 +9,7 @@ Requires Pillow:
 from __future__ import annotations
 
 import argparse
+import shutil
 import struct
 import sys
 from pathlib import Path
@@ -38,6 +39,17 @@ PATH_LEN = 96
 NAME_LEN = 24
 MANIFEST_MAGIC = 0x4D494E41
 MANIFEST_VERSION = 1
+IMPORT_MAPPINGS = (
+    ("watcher-boot", "boot"),
+    ("watcher-error", "error"),
+    ("watcher-happy", "happy"),
+    ("watcher-listening", "listening"),
+    ("watcher-processing", "processing"),
+    ("watcher-processing2", "custom3"),
+    ("watcher-speaking", "speaking"),
+    ("watcher-standby", "standby"),
+    ("watcher-thinking", "thinking"),
+)
 
 
 def encode_c_string(value: str, size: int) -> bytes:
@@ -72,6 +84,29 @@ def discover_frames(spiffs_dir: Path, prefix: str) -> list[Path]:
         matches.append((index, path))
     matches.sort(key=lambda item: item[0])
     return [path for _, path in matches[:MAX_FRAMES]]
+
+
+def import_frames(import_dir: Path, spiffs_dir: Path) -> None:
+    if not import_dir.is_dir():
+        raise SystemExit(f"Import directory does not exist: {import_dir}")
+
+    for _, target_prefix in IMPORT_MAPPINGS:
+        for existing in spiffs_dir.glob(f"{target_prefix}*.png"):
+            existing.unlink()
+
+    for source_name, target_prefix in IMPORT_MAPPINGS:
+        source_dir = import_dir / source_name
+        if not source_dir.is_dir():
+            raise SystemExit(f"Animation source directory does not exist: {source_dir}")
+
+        frames = sorted(source_dir.glob("*.png"))
+        if not frames:
+            raise SystemExit(f"No PNG frames found in animation source: {source_dir}")
+
+        for index, frame in enumerate(frames, start=1):
+            shutil.copy2(frame, spiffs_dir / f"{target_prefix}{index}.png")
+
+        print(f"Imported {len(frames)} frames: {source_name} -> {target_prefix}")
 
 
 def build_manifest(spiffs_dir: Path, output_dir: Path, default_fps: int) -> None:
@@ -124,6 +159,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spiffs-dir", default="spiffs", help="Path to the SPIFFS asset directory")
     parser.add_argument("--output-dir", default="spiffs/anim", help="Where generated assets should be written")
+    parser.add_argument("--import-dir", help="Directory containing watcher0327png-style animation folders")
     parser.add_argument("--fps", type=int, default=30, help="Default FPS stored in manifest entries")
     args = parser.parse_args()
 
@@ -131,6 +167,9 @@ def main() -> int:
     output_dir = Path(args.output_dir).resolve()
     if not spiffs_dir.is_dir():
         raise SystemExit(f"SPIFFS directory does not exist: {spiffs_dir}")
+
+    if args.import_dir:
+        import_frames(Path(args.import_dir).resolve(), spiffs_dir)
 
     build_manifest(spiffs_dir, output_dir, args.fps)
     return 0
