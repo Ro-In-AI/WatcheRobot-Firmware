@@ -6,6 +6,7 @@
 #include "anim_player.h"
 #include "anim_meta.h"
 #include "esp_heap_caps.h"
+#include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -394,6 +395,8 @@ int emoji_anim_init(lv_obj_t *img_obj) {
     g_anim_start_us = esp_timer_get_time();
     g_use_cache = DEFAULT_USE_CACHE;
 
+    lvgl_port_lock(0);
+
     lv_obj_t *parent = lv_obj_get_parent(img_obj);
     if (g_back_img == NULL && parent != NULL) {
         g_back_img = lv_img_create(parent);
@@ -412,11 +415,12 @@ int emoji_anim_init(lv_obj_t *img_obj) {
         g_service_timer = lv_timer_create(anim_service_timer_cb, 20, NULL);
     }
 
+    hide_preview_layer();
+    lvgl_port_unlock();
+
     if (ensure_worker_started() != 0) {
         ESP_LOGW(TAG, "Animation worker unavailable, switching will fall back to sync builds");
     }
-
-    hide_preview_layer();
     return 0;
 }
 

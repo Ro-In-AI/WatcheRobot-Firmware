@@ -80,6 +80,7 @@
     },
     "happy": {
       "loop": false,
+      "hold_until_replaced": true,
       "motion": [
         { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 180 },
         { "at_ms": 220, "x_deg": 76, "y_deg": 108, "duration_ms": 220 },
@@ -95,6 +96,7 @@
     },
     "error": {
       "loop": false,
+      "hold_until_replaced": true,
       "motion": [
         { "at_ms": 0, "x_deg": 78, "y_deg": 120, "duration_ms": 180 },
         { "at_ms": 220, "x_deg": 102, "y_deg": 120, "duration_ms": 180 },

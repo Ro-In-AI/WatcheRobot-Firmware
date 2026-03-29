@@ -49,6 +49,7 @@ typedef struct {
 typedef struct {
     char id[BEHAVIOR_STATE_ID_LEN];
     bool loop;
+    bool hold_until_replaced;
     uint32_t timeline_end_ms;
     behavior_motion_event_t *motion;
     int motion_count;
@@ -83,6 +84,7 @@ typedef struct {
     bool anim_override_valid;
     bool suppress_state_sound_events;
     bool wait_for_local_sfx_completion;
+    bool hold_logged;
 } behavior_context_t;
 
 static behavior_context_t s_ctx = {0};
@@ -401,6 +403,9 @@ static esp_err_t behavior_parse_state_def(const char *state_id, cJSON *obj, beha
 
     loop_item = cJSON_GetObjectItem(obj, "loop");
     out_state->loop = (loop_item != NULL && cJSON_IsBool(loop_item) && cJSON_IsTrue(loop_item));
+    loop_item = cJSON_GetObjectItem(obj, "hold_until_replaced");
+    out_state->hold_until_replaced =
+        (loop_item != NULL && cJSON_IsBool(loop_item) && cJSON_IsTrue(loop_item));
 
     ret = behavior_parse_motion_events(cJSON_GetObjectItem(obj, "motion"),
                                        &out_state->motion,
@@ -519,6 +524,7 @@ static void behavior_reset_runtime_locked(void) {
     s_ctx.anim_override_valid = false;
     s_ctx.suppress_state_sound_events = false;
     s_ctx.wait_for_local_sfx_completion = false;
+    s_ctx.hold_logged = false;
 }
 
 static bool behavior_is_valid_anim_id(const char *anim_id) {
@@ -683,6 +689,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
         behavior_set_anim_override_locked(anim_id);
         s_ctx.suppress_state_sound_events = false;
         s_ctx.wait_for_local_sfx_completion = false;
+        s_ctx.hold_logged = false;
         (void)behavior_apply_sound_override_locked(sound_id);
         if (display_update(text,
                            s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
@@ -705,6 +712,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
     behavior_set_anim_override_locked(anim_id);
     s_ctx.wait_for_local_sfx_completion = false;
     s_ctx.suppress_state_sound_events = behavior_apply_sound_override_locked(sound_id);
+    s_ctx.hold_logged = false;
     if (s_ctx.suppress_state_sound_events) {
         s_ctx.next_sound_index = s_ctx.current_state->sound_count;
     }
@@ -745,19 +753,29 @@ static void behavior_task(void *arg) {
                                                                           : BEHAVIOR_DEFAULT_ONESHOT_HOLD_MS;
                     if (behavior_all_events_dispatched_locked() && elapsed_ms >= done_at_ms &&
                         !(s_ctx.wait_for_local_sfx_completion && sfx_service_is_busy())) {
-                        behavior_copy_string(fallback_state, sizeof(fallback_state), s_ctx.catalog.default_state);
-                        s_ctx.current_state = NULL;
-                        s_ctx.next_motion_index = 0;
-                        s_ctx.next_expression_index = 0;
-                        s_ctx.next_sound_index = 0;
-                        s_ctx.text_override[0] = '\0';
-                        s_ctx.text_override_font_size = 0;
-                        s_ctx.text_override_valid = false;
-                        s_ctx.anim_override[0] = '\0';
-                        s_ctx.anim_override_valid = false;
-                        s_ctx.suppress_state_sound_events = false;
-                        s_ctx.wait_for_local_sfx_completion = false;
-                        should_fallback = true;
+                        if (s_ctx.current_state->hold_until_replaced) {
+                            if (!s_ctx.hold_logged) {
+                                ESP_LOGI(TAG,
+                                         "Holding state=%s until next state arrives",
+                                         s_ctx.current_state_id);
+                                s_ctx.hold_logged = true;
+                            }
+                        } else {
+                            behavior_copy_string(fallback_state, sizeof(fallback_state), s_ctx.catalog.default_state);
+                            s_ctx.current_state = NULL;
+                            s_ctx.next_motion_index = 0;
+                            s_ctx.next_expression_index = 0;
+                            s_ctx.next_sound_index = 0;
+                            s_ctx.text_override[0] = '\0';
+                            s_ctx.text_override_font_size = 0;
+                            s_ctx.text_override_valid = false;
+                            s_ctx.anim_override[0] = '\0';
+                            s_ctx.anim_override_valid = false;
+                            s_ctx.suppress_state_sound_events = false;
+                            s_ctx.wait_for_local_sfx_completion = false;
+                            s_ctx.hold_logged = false;
+                            should_fallback = true;
+                        }
                     }
                 }
             }

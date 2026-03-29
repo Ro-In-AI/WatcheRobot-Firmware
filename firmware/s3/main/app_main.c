@@ -32,8 +32,8 @@
 #define RESTART_CLICK_COUNT 5
 #define STARTUP_BEHAVIOR_POLL_MS 50
 #define STARTUP_BEHAVIOR_TIMEOUT_MS 10000
-#define TEST_WIFI_SSID "Erroright"
-#define TEST_WIFI_PASSWORD "erroright"
+#define TEST_WIFI_SSID "orulink_testnet"
+#define TEST_WIFI_PASSWORD "orulink2026"
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;

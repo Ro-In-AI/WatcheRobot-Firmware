@@ -198,6 +198,7 @@ void boot_anim_show_error(const char *error_msg) {
     boot_anim_stop_intro();
 
     /* Hide progress elements */
+    lvgl_port_lock(0);
     lv_obj_add_flag(progress_arc, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(percent_label, LV_OBJ_FLAG_HIDDEN);
 
@@ -221,6 +222,7 @@ void boot_anim_show_error(const char *error_msg) {
         lv_label_set_text(countdown_label, "Reboot in 10s");
         lv_obj_clear_flag(countdown_label, LV_OBJ_FLAG_HIDDEN);
     }
+    lvgl_port_unlock();
 
     /* Start countdown task */
     countdown_seconds = 10;
@@ -245,7 +247,9 @@ static void boot_anim_countdown_task(void *param) {
             } else {
                 snprintf(buf, sizeof(buf), "Rebooting...");
             }
+            lvgl_port_lock(0);
             lv_label_set_text(countdown_label, buf);
+            lvgl_port_unlock();
         }
 
         if (countdown_seconds == 0) {
@@ -278,7 +282,9 @@ static void boot_anim_intro_timer_cb(lv_timer_t *timer) {
 
 static void boot_anim_stop_intro(void) {
     if (intro_timer != NULL) {
+        lvgl_port_lock(0);
         lv_timer_del(intro_timer);
+        lvgl_port_unlock();
         intro_timer = NULL;
     }
 
@@ -313,5 +319,7 @@ void boot_anim_finish(void) {
 }
 
 lv_obj_t *boot_anim_get_screen(void) {
-    return boot_screen;
+    lv_obj_t *screen = boot_screen;
+    boot_screen = NULL;
+    return screen;
 }

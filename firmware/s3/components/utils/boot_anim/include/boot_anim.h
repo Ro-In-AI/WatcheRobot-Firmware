@@ -66,7 +66,7 @@ void boot_anim_show_error(const char *error_msg);
  * @brief Finish boot animation and prepare for main UI
  *
  * Clears child widget pointers but does NOT delete the screen.
- * The caller must call boot_anim_get_screen() to get the old screen
+ * The caller must call boot_anim_get_screen() to take the old screen
  * and delete it AFTER loading a new screen via lv_disp_load_scr().
  */
 void boot_anim_finish(void);
@@ -74,8 +74,8 @@ void boot_anim_finish(void);
 /**
  * @brief Get the boot screen object (for deferred cleanup)
  *
- * Returns the boot screen so the caller can delete it after
- * loading a new screen. Returns NULL after cleanup.
+ * Returns the boot screen and clears the internal reference so the caller
+ * can safely delete it after loading a new screen. Returns NULL after cleanup.
  *
  * @return Pointer to boot screen, or NULL if already cleaned up
  */

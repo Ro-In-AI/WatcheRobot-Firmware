@@ -1018,6 +1018,10 @@ cleanup:
 bool hal_camera_is_streaming(void) {
     bool streaming = false;
 
+    if (s_ctx.lock == NULL || !s_ctx.initialized) {
+        return false;
+    }
+
     if (xSemaphoreTake(s_ctx.lock, portMAX_DELAY) == pdTRUE) {
         streaming = s_ctx.streaming;
         xSemaphoreGive(s_ctx.lock);

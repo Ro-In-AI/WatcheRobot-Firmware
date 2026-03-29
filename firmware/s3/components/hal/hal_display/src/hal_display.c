@@ -510,9 +510,9 @@ int hal_display_ui_init(void) {
     /* Load the new main screen FIRST - so user sees black screen immediately */
     lv_disp_load_scr(scr);
 
-    /* Now safe to delete the old boot screen (it's no longer active) */
+    /* Defer boot screen deletion until LVGL is idle to avoid refresh-time use-after-free. */
     if (old_boot_scr) {
-        lv_obj_del(old_boot_scr);
+        lv_obj_del_async(old_boot_scr);
     }
 
     lvgl_port_unlock();
