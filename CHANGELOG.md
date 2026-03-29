@@ -11,6 +11,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.0.8] - 2026-03-29
+
+### Added
+- SPIFFS-based behavior action executor for core runtime states
+- Watcher0327 animation asset pack and updated generated animation resources
+
+### Changed
+- Startup flow now integrates local SFX playback, behavior actions, and richer state transitions
+- Animation playback is more stable across state updates and boot-time display transitions
+
+### Notes
+- This release bundles two major features:
+  1. behavior action execution from SPIFFS
+  2. upgraded animation/media asset pipeline
+- Cross-feature integration is not fully validated yet; `0.1.0` is reserved for the fully integrated milestone
+
+---
+
 ## [0.0.6] - 2026-03-27
 
 ### Added

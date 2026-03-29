@@ -20,6 +20,14 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 - 📷 **Camera streaming** — Himax JPEG frames over WebSocket
 - 🔄 **OTA** — firmware updates over HTTP, animation assets over WebSocket
 
+### Current Release Track
+
+- Current test release target: `0.0.8`
+- This milestone bundles two major in-progress features:
+  - SPIFFS-based behavior action executor
+  - Upgraded animation asset and playback pipeline
+- `0.1.0` is reserved for the fully integrated and validated milestone after cross-feature bring-up
+
 ---
 
 ## Hardware Requirements
