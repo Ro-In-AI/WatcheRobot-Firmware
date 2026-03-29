@@ -22,10 +22,10 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current test release target: `0.0.8`
-- This milestone bundles two major in-progress features:
-  - SPIFFS-based behavior action executor
-  - Upgraded animation asset and playback pipeline
+- Current test release target: `0.8.1`
+- This release focuses on audio pipeline stabilization:
+  - WebSocket TTS playback now supports fragmented binary audio frames
+  - Voice upload is gated on cloud session readiness with clearer connection diagnostics
 - `0.1.0` is reserved for the fully integrated and validated milestone after cross-feature bring-up
 
 ---

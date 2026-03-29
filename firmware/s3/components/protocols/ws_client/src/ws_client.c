@@ -51,6 +51,64 @@ static SemaphoreHandle_t s_ws_send_lock = NULL;
 static uint32_t s_frame_sequences[WS_FRAME_TYPE_OTA + 1] = {0};
 static ws_client_media_send_stats_t s_last_media_send_stats = {0};
 
+typedef struct {
+    char *buffer;
+    size_t total_len;
+    size_t received_len;
+    bool active;
+} ws_text_fragment_state_t;
+
+typedef struct {
+    uint8_t *payload_buffer;
+    size_t total_len;
+    size_t received_total;
+    size_t payload_len;
+    size_t payload_received;
+    size_t header_len;
+    uint8_t frame_type;
+    uint8_t flags;
+    bool active;
+    bool header_parsed;
+    uint8_t header[WS_BINARY_HEADER_LEN];
+} ws_binary_fragment_state_t;
+
+static ws_text_fragment_state_t s_text_fragment_state = {0};
+static ws_binary_fragment_state_t s_binary_fragment_state = {0};
+static int64_t s_last_send_block_log_us = 0;
+static bool s_last_send_block_socket_connected = false;
+static bool s_last_send_block_hello_acknowledged = false;
+static bool s_last_send_block_allow_before_session = false;
+static bool s_last_send_block_binary = false;
+static int s_last_send_block_len = -1;
+
+static void ws_log_send_blocked(bool binary, int len, bool allow_before_session) {
+    int64_t now_us = esp_timer_get_time();
+    bool state_changed = s_last_send_block_socket_connected != s_socket_connected ||
+                         s_last_send_block_hello_acknowledged != s_hello_acknowledged ||
+                         s_last_send_block_allow_before_session != allow_before_session ||
+                         s_last_send_block_binary != binary || s_last_send_block_len != len;
+
+    if (!state_changed && (now_us - s_last_send_block_log_us) < 1000000LL) {
+        return;
+    }
+
+    s_last_send_block_log_us = now_us;
+    s_last_send_block_socket_connected = s_socket_connected;
+    s_last_send_block_hello_acknowledged = s_hello_acknowledged;
+    s_last_send_block_allow_before_session = allow_before_session;
+    s_last_send_block_binary = binary;
+    s_last_send_block_len = len;
+
+    ESP_LOGW(TAG,
+             "send blocked: binary=%d len=%d ws_client=%p socket_connected=%d hello_ack=%d allow_before_session=%d",
+             binary,
+             len,
+             (void *)s_ws_client,
+             s_socket_connected,
+             s_hello_acknowledged,
+             allow_before_session);
+}
+
 static void ws_write_u32_le(uint8_t *dst, uint32_t value) {
     dst[0] = (uint8_t)(value & 0xFF);
     dst[1] = (uint8_t)((value >> 8) & 0xFF);
@@ -60,6 +118,21 @@ static void ws_write_u32_le(uint8_t *dst, uint32_t value) {
 
 static uint32_t ws_read_u32_le(const uint8_t *src) {
     return ((uint32_t)src[0]) | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
+}
+
+static void ws_reset_text_fragment_state(void) {
+    free(s_text_fragment_state.buffer);
+    memset(&s_text_fragment_state, 0, sizeof(s_text_fragment_state));
+}
+
+static void ws_reset_binary_fragment_state(void) {
+    free(s_binary_fragment_state.payload_buffer);
+    memset(&s_binary_fragment_state, 0, sizeof(s_binary_fragment_state));
+}
+
+static void ws_reset_rx_fragment_states(void) {
+    ws_reset_text_fragment_state();
+    ws_reset_binary_fragment_state();
 }
 
 static void ws_reset_media_state(void) {
@@ -76,6 +149,7 @@ static void ws_reset_session_state(void) {
     s_waiting_for_response = false;
     s_timeout_display_count = 0;
     s_response_wait_start_time = 0;
+    ws_reset_rx_fragment_states();
     ws_reset_media_state();
 }
 
@@ -110,10 +184,12 @@ static int ws_client_lock_and_send(bool binary, const void *payload, int len, bo
     int64_t send_done_us = 0;
 
     if (s_ws_client == NULL || payload == NULL || len < 0 || !s_socket_connected) {
+        ws_log_send_blocked(binary, len, allow_before_session);
         return -1;
     }
 
     if (!allow_before_session && !s_hello_acknowledged) {
+        ws_log_send_blocked(binary, len, allow_before_session);
         return -1;
     }
 
@@ -305,30 +381,12 @@ static bool ws_event_is_fragmented(const esp_websocket_event_data_t *data) {
     return (data != NULL) && (data->payload_offset != 0 || data->payload_len != data->data_len);
 }
 
-static void ws_handle_text_frame(const esp_websocket_event_data_t *data) {
-    char *msg = NULL;
+static void ws_handle_text_message(const char *msg) {
     ws_msg_type_t msg_type;
 
-    if (data == NULL || data->data_ptr == NULL || data->data_len <= 0) {
+    if (msg == NULL || msg[0] == '\0') {
         return;
     }
-
-    if (ws_event_is_fragmented(data)) {
-        ESP_LOGW(TAG,
-                 "fragmented text frame unsupported: offset=%d chunk=%d total=%d",
-                 data->payload_offset,
-                 data->data_len,
-                 data->payload_len);
-        return;
-    }
-
-    msg = (char *)malloc((size_t)data->data_len + 1U);
-    if (msg == NULL) {
-        return;
-    }
-
-    memcpy(msg, data->data_ptr, (size_t)data->data_len);
-    msg[data->data_len] = '\0';
 
     ESP_LOGI(TAG, "WS received: %s", msg);
     msg_type = ws_route_message(msg);
@@ -344,45 +402,132 @@ static void ws_handle_text_frame(const esp_websocket_event_data_t *data) {
     default:
         break;
     }
-
-    free(msg);
 }
 
-static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
-    const uint8_t *frame = NULL;
-    const uint8_t *payload = NULL;
-    size_t payload_len = 0;
-    uint8_t frame_type;
-    uint8_t flags;
+static void ws_handle_text_frame(const esp_websocket_event_data_t *data) {
+    char *msg = NULL;
 
-    if (data == NULL || data->data_ptr == NULL || data->data_len < WS_BINARY_HEADER_LEN) {
+    if (data == NULL || data->data_ptr == NULL || data->data_len <= 0) {
         return;
     }
 
     if (ws_event_is_fragmented(data)) {
-        ESP_LOGW(TAG,
-                 "fragmented binary frame unsupported: offset=%d chunk=%d total=%d",
-                 data->payload_offset,
-                 data->data_len,
-                 data->payload_len);
+        size_t total_len;
+        size_t chunk_len;
+        size_t chunk_end;
+
+        total_len = (size_t)data->payload_len;
+        chunk_len = (size_t)data->data_len;
+        chunk_end = (size_t)data->payload_offset + chunk_len;
+
+        if (data->payload_offset == 0) {
+            ws_reset_text_fragment_state();
+            if (total_len == 0U) {
+                ESP_LOGW(TAG, "fragmented text frame has zero total length");
+                return;
+            }
+
+            s_text_fragment_state.buffer = (char *)calloc(total_len + 1U, 1U);
+            if (s_text_fragment_state.buffer == NULL) {
+                ESP_LOGE(TAG, "fragmented text frame alloc failed: %u", (unsigned int)total_len);
+                return;
+            }
+
+            s_text_fragment_state.active = true;
+            s_text_fragment_state.total_len = total_len;
+        } else if (!s_text_fragment_state.active || s_text_fragment_state.total_len != total_len) {
+            ESP_LOGW(TAG,
+                     "fragmented text frame state mismatch: offset=%d chunk=%d total=%d",
+                     data->payload_offset,
+                     data->data_len,
+                     data->payload_len);
+            ws_reset_text_fragment_state();
+            return;
+        }
+
+        if ((size_t)data->payload_offset != s_text_fragment_state.received_len || chunk_end > s_text_fragment_state.total_len) {
+            ESP_LOGW(TAG,
+                     "fragmented text frame out of order: offset=%d chunk=%d total=%d received=%u",
+                     data->payload_offset,
+                     data->data_len,
+                     data->payload_len,
+                     (unsigned int)s_text_fragment_state.received_len);
+            ws_reset_text_fragment_state();
+            return;
+        }
+
+        memcpy(s_text_fragment_state.buffer + data->payload_offset, data->data_ptr, chunk_len);
+        s_text_fragment_state.received_len = chunk_end;
+        if (s_text_fragment_state.received_len < s_text_fragment_state.total_len) {
+            return;
+        }
+
+        s_text_fragment_state.buffer[s_text_fragment_state.total_len] = '\0';
+        ws_handle_text_message(s_text_fragment_state.buffer);
+        ws_reset_text_fragment_state();
         return;
     }
 
-    frame = (const uint8_t *)data->data_ptr;
+    msg = (char *)malloc((size_t)data->data_len + 1U);
+    if (msg == NULL) {
+        return;
+    }
+
+    memcpy(msg, data->data_ptr, (size_t)data->data_len);
+    msg[data->data_len] = '\0';
+    ws_handle_text_message(msg);
+
+    free(msg);
+}
+
+static bool ws_parse_binary_header(const uint8_t *frame,
+                                   size_t frame_len,
+                                   uint8_t *frame_type,
+                                   uint8_t *flags,
+                                   size_t *payload_len) {
+    if (frame == NULL || frame_type == NULL || flags == NULL || payload_len == NULL) {
+        return false;
+    }
+
+    if (frame_len < WS_BINARY_HEADER_LEN) {
+        return false;
+    }
+
     if (memcmp(frame, WS_BINARY_MAGIC, 4) != 0) {
         ESP_LOGW(TAG, "invalid binary magic");
-        return;
+        return false;
     }
 
-    frame_type = frame[4];
-    flags = frame[5];
-    payload_len = (size_t)ws_read_u32_le(frame + 10);
-    if (payload_len > (size_t)(data->data_len - WS_BINARY_HEADER_LEN)) {
-        ESP_LOGW(TAG, "invalid binary payload len=%u packet=%d", (unsigned int)payload_len, data->data_len);
-        return;
+    *frame_type = frame[4];
+    *flags = frame[5];
+    *payload_len = (size_t)ws_read_u32_le(frame + 10);
+    return true;
+}
+
+static bool ws_parse_binary_frame(const uint8_t *frame,
+                                  size_t frame_len,
+                                  uint8_t *frame_type,
+                                  uint8_t *flags,
+                                  const uint8_t **payload,
+                                  size_t *payload_len) {
+    if (payload == NULL) {
+        return false;
     }
 
-    payload = frame + WS_BINARY_HEADER_LEN;
+    if (!ws_parse_binary_header(frame, frame_len, frame_type, flags, payload_len)) {
+        return false;
+    }
+
+    if (*payload_len > (frame_len - WS_BINARY_HEADER_LEN)) {
+        ESP_LOGW(TAG, "invalid binary payload len=%u packet=%u", (unsigned int)*payload_len, (unsigned int)frame_len);
+        return false;
+    }
+
+    *payload = frame + WS_BINARY_HEADER_LEN;
+    return true;
+}
+
+static void ws_dispatch_binary_frame(uint8_t frame_type, uint8_t flags, const uint8_t *payload, size_t payload_len) {
     switch (frame_type) {
     case WS_FRAME_TYPE_AUDIO:
         if (payload_len > 0U) {
@@ -406,6 +551,163 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
         ESP_LOGW(TAG, "unexpected binary frame type=%u len=%u", frame_type, (unsigned int)payload_len);
         break;
     }
+}
+
+static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
+    const uint8_t *frame = NULL;
+    const uint8_t *payload = NULL;
+    size_t payload_len = 0;
+    uint8_t frame_type;
+    uint8_t flags;
+
+    if (data == NULL || data->data_ptr == NULL || data->data_len <= 0) {
+        return;
+    }
+
+    if (ws_event_is_fragmented(data)) {
+        const uint8_t *chunk = (const uint8_t *)data->data_ptr;
+        size_t chunk_len = (size_t)data->data_len;
+        size_t total_len = (size_t)data->payload_len;
+        size_t chunk_end = (size_t)data->payload_offset + chunk_len;
+
+        if (data->payload_offset == 0) {
+            ws_reset_binary_fragment_state();
+            s_binary_fragment_state.active = true;
+            s_binary_fragment_state.total_len = total_len;
+        } else if (!s_binary_fragment_state.active || s_binary_fragment_state.total_len != total_len) {
+            ESP_LOGW(TAG,
+                     "fragmented binary frame state mismatch: offset=%d chunk=%d total=%d",
+                     data->payload_offset,
+                     data->data_len,
+                     data->payload_len);
+            ws_reset_binary_fragment_state();
+            return;
+        }
+
+        if ((size_t)data->payload_offset != s_binary_fragment_state.received_total ||
+            chunk_end > s_binary_fragment_state.total_len) {
+            ESP_LOGW(TAG,
+                     "fragmented binary frame out of order: offset=%d chunk=%d total=%d received=%u",
+                     data->payload_offset,
+                     data->data_len,
+                     data->payload_len,
+                     (unsigned int)s_binary_fragment_state.received_total);
+            ws_reset_binary_fragment_state();
+            return;
+        }
+
+        s_binary_fragment_state.received_total = chunk_end;
+
+        if (!s_binary_fragment_state.header_parsed) {
+            size_t header_needed = WS_BINARY_HEADER_LEN - s_binary_fragment_state.header_len;
+            size_t header_copy = chunk_len < header_needed ? chunk_len : header_needed;
+
+            memcpy(s_binary_fragment_state.header + s_binary_fragment_state.header_len, chunk, header_copy);
+            s_binary_fragment_state.header_len += header_copy;
+            chunk += header_copy;
+            chunk_len -= header_copy;
+
+            if (s_binary_fragment_state.header_len == WS_BINARY_HEADER_LEN) {
+                if (!ws_parse_binary_header(s_binary_fragment_state.header,
+                                            WS_BINARY_HEADER_LEN,
+                                            &s_binary_fragment_state.frame_type,
+                                            &s_binary_fragment_state.flags,
+                                            &s_binary_fragment_state.payload_len)) {
+                    ws_reset_binary_fragment_state();
+                    return;
+                }
+
+                if (s_binary_fragment_state.payload_len + WS_BINARY_HEADER_LEN != s_binary_fragment_state.total_len) {
+                    ESP_LOGW(TAG,
+                             "fragmented binary total mismatch: payload=%u total=%u",
+                             (unsigned int)s_binary_fragment_state.payload_len,
+                             (unsigned int)s_binary_fragment_state.total_len);
+                    ws_reset_binary_fragment_state();
+                    return;
+                }
+
+                s_binary_fragment_state.header_parsed = true;
+                if (s_binary_fragment_state.frame_type == WS_FRAME_TYPE_AUDIO) {
+                    ESP_LOGI(TAG,
+                             "streaming fragmented audio frame: payload=%u total=%u flags=0x%02x",
+                             (unsigned int)s_binary_fragment_state.payload_len,
+                             (unsigned int)s_binary_fragment_state.total_len,
+                             s_binary_fragment_state.flags);
+                    ws_client_mark_server_response();
+                } else if (s_binary_fragment_state.payload_len > 0U) {
+                    s_binary_fragment_state.payload_buffer = (uint8_t *)malloc(s_binary_fragment_state.payload_len);
+                    if (s_binary_fragment_state.payload_buffer == NULL) {
+                        ESP_LOGE(TAG,
+                                 "fragmented binary payload alloc failed: type=%u len=%u",
+                                 s_binary_fragment_state.frame_type,
+                                 (unsigned int)s_binary_fragment_state.payload_len);
+                        ws_reset_binary_fragment_state();
+                        return;
+                    }
+                }
+            }
+        }
+
+        if (!s_binary_fragment_state.header_parsed) {
+            return;
+        }
+
+        if (chunk_len > 0U) {
+            if (s_binary_fragment_state.payload_received + chunk_len > s_binary_fragment_state.payload_len) {
+                ESP_LOGW(TAG,
+                         "fragmented binary payload overflow: type=%u received=%u chunk=%u payload=%u",
+                         s_binary_fragment_state.frame_type,
+                         (unsigned int)s_binary_fragment_state.payload_received,
+                         (unsigned int)chunk_len,
+                         (unsigned int)s_binary_fragment_state.payload_len);
+                ws_reset_binary_fragment_state();
+                return;
+            }
+
+            if (s_binary_fragment_state.frame_type == WS_FRAME_TYPE_AUDIO) {
+                ws_handle_tts_binary(chunk, (int)chunk_len);
+            } else if (s_binary_fragment_state.payload_buffer != NULL) {
+                memcpy(s_binary_fragment_state.payload_buffer + s_binary_fragment_state.payload_received, chunk, chunk_len);
+            }
+
+            s_binary_fragment_state.payload_received += chunk_len;
+        }
+
+        if (s_binary_fragment_state.received_total < s_binary_fragment_state.total_len) {
+            return;
+        }
+
+        if (s_binary_fragment_state.payload_received != s_binary_fragment_state.payload_len) {
+            ESP_LOGW(TAG,
+                     "fragmented binary payload incomplete: type=%u received=%u payload=%u",
+                     s_binary_fragment_state.frame_type,
+                     (unsigned int)s_binary_fragment_state.payload_received,
+                     (unsigned int)s_binary_fragment_state.payload_len);
+            ws_reset_binary_fragment_state();
+            return;
+        }
+
+        if (s_binary_fragment_state.frame_type == WS_FRAME_TYPE_AUDIO) {
+            if ((s_binary_fragment_state.flags & WS_FRAME_FLAG_LAST) != 0U) {
+                ws_tts_complete();
+            }
+        } else {
+            ws_dispatch_binary_frame(s_binary_fragment_state.frame_type,
+                                     s_binary_fragment_state.flags,
+                                     s_binary_fragment_state.payload_buffer,
+                                     s_binary_fragment_state.payload_received);
+        }
+
+        ws_reset_binary_fragment_state();
+        return;
+    }
+
+    frame = (const uint8_t *)data->data_ptr;
+    if (!ws_parse_binary_frame(frame, (size_t)data->data_len, &frame_type, &flags, &payload, &payload_len)) {
+        return;
+    }
+
+    ws_dispatch_binary_frame(frame_type, flags, payload, payload_len);
 }
 
 static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -521,12 +823,14 @@ int ws_client_start(void) {
         return -1;
     }
 
+    ESP_LOGI(TAG, "Starting WebSocket client (URL: %s)", s_ws_server_url);
     ret = esp_websocket_client_start(s_ws_client);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "failed to start WebSocket: %s", esp_err_to_name(ret));
         return -1;
     }
 
+    ESP_LOGI(TAG, "WebSocket start requested");
     return 0;
 }
 

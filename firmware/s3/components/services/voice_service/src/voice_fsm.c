@@ -43,6 +43,13 @@ static bool g_recording_triggered_by_wake_word = false;
 
 static uint8_t g_pcm_buf[PCM_FRAME_SIZE];
 
+static void show_cloud_not_ready_state(void) {
+    bool connected = ws_client_is_connected() != 0;
+    behavior_state_set_with_text(connected ? "processing" : "error",
+                                 connected ? "Cloud Handshake..." : "Cloud Offline",
+                                 0);
+}
+
 static void log_internal_heap_state(const char *stage) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -177,6 +184,13 @@ void voice_recorder_get_stats(voice_stats_t *out_stats) {
 /* ------------------------------------------------------------------ */
 
 static int start_recording(void) {
+    if (!ws_client_is_session_ready()) {
+        ESP_LOGW(TAG, "start_recording blocked: ws session not ready (connected=%d)", ws_client_is_connected());
+        show_cloud_not_ready_state();
+        g_stats.error_count++;
+        return -1;
+    }
+
     log_internal_heap_state("before_recording");
     freeze_current_animation();
 
@@ -224,10 +238,14 @@ static int stop_recording(void) {
     hal_audio_stop();
 #endif
 
-    /* Send audio end marker */
-    if (ws_send_audio_end() != 0) {
-        g_stats.error_count++;
-        /* Still transition to idle */
+    /* Skip end marker if the cloud session is already gone. */
+    if (ws_client_is_session_ready()) {
+        if (ws_send_audio_end() != 0) {
+            g_stats.error_count++;
+            /* Still transition to idle */
+        }
+    } else {
+        ESP_LOGW(TAG, "Skipping audio end marker: ws session not ready (connected=%d)", ws_client_is_connected());
     }
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
@@ -361,6 +379,10 @@ int voice_recorder_tick(void) {
 
     /* Send PCM directly via WebSocket (no encoding) */
     if (ws_send_audio(g_pcm_buf, pcm_len) != 0) {
+        if (!ws_client_is_session_ready()) {
+            ESP_LOGW(TAG, "Cloud session lost during recording (connected=%d)", ws_client_is_connected());
+            show_cloud_not_ready_state();
+        }
         g_stats.error_count++;
         /* Only log every 10 errors to avoid flooding */
         if (g_stats.error_count % 10 == 1) {
@@ -381,6 +403,11 @@ static void button_callback(bool pressed) {
     /* This is called from task context (via hal_button_poll) */
     if (pressed) {
         if (g_state == VOICE_STATE_IDLE) {
+            if (!ws_client_is_session_ready()) {
+                ESP_LOGW(TAG, "Button press ignored: ws session not ready (connected=%d)", ws_client_is_connected());
+                show_cloud_not_ready_state();
+                return;
+            }
             /* Button triggers recording start */
             ESP_LOGI(TAG, "Button PRESSED - starting recording");
             g_recording_triggered_by_wake_word = false;
@@ -388,7 +415,7 @@ static void button_callback(bool pressed) {
             if (g_state == VOICE_STATE_RECORDING) {
                 behavior_state_set_with_text("listening", "Listening...", 0);
             } else {
-                behavior_state_set_with_text("error", "Mic Unavailable", 0);
+                show_cloud_not_ready_state();
             }
         } else if (g_state == VOICE_STATE_RECORDING) {
             /* Already recording (wake word mode) - short press to stop */

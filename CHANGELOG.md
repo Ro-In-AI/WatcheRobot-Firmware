@@ -11,6 +11,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.8.1] - 2026-03-29
+
+### Fixed
+- WebSocket TTS playback now reassembles fragmented text and binary frames instead of dropping fragmented cloud audio
+- Voice recording refuses to start until the cloud WebSocket session is ready, avoiding full-buffer upload failures before hello acknowledgement
+
+### Changed
+- WebSocket send failures now log the blocked state (`socket_connected` / `hello_ack`) to make cloud audio regressions easier to diagnose
+
+### Notes
+- Release focus: audio reliability for cloud ASR/TTS bring-up on the Watcher S3 test rigs
+
+---
+
 ## [0.0.8] - 2026-03-29
 
 ### Added
