@@ -1165,6 +1165,18 @@ static bool behavior_should_override_state_motion_locked(void) {
     return s_ctx.current_action != NULL;
 }
 
+static void behavior_log_action_start_locked(const char *state_id, const behavior_action_def_t *action_def) {
+    if (action_def == NULL) {
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "Starting action '%s' for state '%s': motion_count=%d duration_ms=%lu",
+             action_def->id,
+             state_id != NULL ? state_id : s_ctx.catalog.default_state,
+             action_def->motion_count,
+             (unsigned long)action_def->total_duration_ms);
+}
 static void behavior_dispatch_motion_locked(const behavior_motion_event_t *event) {
     if (event == NULL) {
         return;
@@ -1213,6 +1225,8 @@ static esp_err_t behavior_dispatch_sound_id_locked(const char *sound_id) {
     ret = sfx_service_play(sound_id);
     if (ret == ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "Skip sound '%s': audio_busy_tts", sound_id);
+    } else if (ret == ESP_ERR_NOT_FOUND) {
+        /* Missing optional local SFX should not drown out motion debugging. */
     } else if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to play sound '%s': %s", sound_id, esp_err_to_name(ret));
     }
@@ -1282,7 +1296,16 @@ static void behavior_dispatch_due_events_locked(uint32_t now_ms) {
 
     while (s_ctx.current_action != NULL && s_ctx.next_action_motion_index < s_ctx.current_action->motion_count &&
            s_ctx.current_action->motion[s_ctx.next_action_motion_index].at_ms <= elapsed_ms) {
-        behavior_dispatch_motion_locked(&s_ctx.current_action->motion[s_ctx.next_action_motion_index]);
+        const behavior_motion_event_t *event = &s_ctx.current_action->motion[s_ctx.next_action_motion_index];
+
+        ESP_LOGI(TAG,
+                 "Dispatch action '%s': at_ms=%lu x=%d y=%d duration_ms=%d",
+                 s_ctx.current_action_id[0] != '\0' ? s_ctx.current_action_id : "<none>",
+                 (unsigned long)event->at_ms,
+                 event->x_deg,
+                 event->y_deg,
+                 event->duration_ms);
+        behavior_dispatch_motion_locked(event);
         s_ctx.next_action_motion_index++;
     }
 
@@ -1337,6 +1360,10 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
 
         effective_state_id = s_ctx.catalog.default_state;
         if (behavior_is_same_state_action_request_locked(effective_state_id, action_def != NULL ? action_def->id : NULL)) {
+            ESP_LOGI(TAG,
+                     "Ignoring repeated state/action request: state=%s action=%s",
+                     effective_state_id,
+                     action_def != NULL ? action_def->id : "<none>");
             s_ctx.text_override_valid = (text != NULL);
             behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
             s_ctx.text_override_font_size = font_size;
@@ -1370,6 +1397,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
         s_ctx.wait_for_local_sfx_completion = false;
         s_ctx.hold_logged = false;
         (void)behavior_apply_sound_override_locked(sound_id);
+        behavior_log_action_start_locked(effective_state_id, action_def);
         if (display_update(text,
                            s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
                            font_size,
@@ -1381,6 +1409,10 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
 
     effective_state_id = state_def->id;
     if (behavior_is_same_state_action_request_locked(effective_state_id, action_def != NULL ? action_def->id : NULL)) {
+        ESP_LOGI(TAG,
+                 "Ignoring repeated state/action request: state=%s action=%s",
+                 effective_state_id,
+                 action_def != NULL ? action_def->id : "<none>");
         s_ctx.text_override_valid = (text != NULL);
         behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
         s_ctx.text_override_font_size = font_size;
@@ -1414,6 +1446,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
     if (s_ctx.suppress_state_sound_events) {
         s_ctx.next_sound_index = s_ctx.current_state->sound_count;
     }
+    behavior_log_action_start_locked(effective_state_id, action_def);
     behavior_dispatch_due_events_locked(now_ms);
     return ESP_OK;
 }
@@ -1611,6 +1644,7 @@ esp_err_t behavior_state_set_with_resources_and_action(const char *state_id,
                                                        const char *sound_id,
                                                        const char *action_id) {
     esp_err_t ret;
+    char resolved_state[BEHAVIOR_STATE_ID_LEN] = {0};
 
     if (state_id == NULL || state_id[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
@@ -1624,8 +1658,24 @@ esp_err_t behavior_state_set_with_resources_and_action(const char *state_id,
         return ESP_FAIL;
     }
 
+    ESP_LOGI(TAG,
+             "State request state=%s action=%s text=%s anim_override=%s sound_override=%s font=%d",
+             state_id,
+             action_id != NULL ? action_id : "<none>",
+             text != NULL ? text : "<unchanged>",
+             anim_id != NULL ? anim_id : "<default>",
+             sound_id != NULL ? sound_id : "<default>",
+             font_size);
     ret = behavior_schedule_state_locked(state_id, text, font_size, anim_id, sound_id, action_id);
+    if (ret == ESP_OK) {
+        behavior_copy_string(resolved_state, sizeof(resolved_state), s_ctx.current_state_id);
+    }
     behavior_unlock();
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "State request applied requested=%s resolved=%s", state_id, resolved_state);
+    } else {
+        ESP_LOGW(TAG, "State request failed state=%s err=%s", state_id, esp_err_to_name(ret));
+    }
     return ret;
 }
 

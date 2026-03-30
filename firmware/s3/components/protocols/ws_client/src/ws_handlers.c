@@ -971,6 +971,14 @@ void on_ai_status_handler(const ws_ai_status_t *event) {
             break;
         }
     }
+    if (selected_action_id == NULL &&
+        (action_state_id[0] != '\0' || status_state_id[0] != '\0' || fallback_state_id[0] != '\0')) {
+        ESP_LOGW(TAG,
+                 "No SPIFFS action matched candidates: action_file=%s status=%s fallback=%s",
+                 action_state_id[0] != '\0' ? action_state_id : "<none>",
+                 status_state_id[0] != '\0' ? status_state_id : "<none>",
+                 fallback_state_id[0] != '\0' ? fallback_state_id : "<none>");
+    }
 
     ESP_LOGI(TAG,
              "AI status: status=%s message=%s image=%s action=%s sound=%s selected_action=%s",
@@ -994,15 +1002,23 @@ void on_ai_status_handler(const ws_ai_status_t *event) {
     }
 
     if (ret == ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(TAG,
-                 "AI status has no local match, keeping current state=%s status=%s action=%s image=%s fallback=%s "
-                 "selected_action=%s",
-                 behavior_state_get_current(),
-                 event->status,
-                 action_state_id,
-                 image_name,
-                 fallback_state_id,
-                 selected_action_id != NULL ? selected_action_id : "<none>");
+        ret = behavior_state_set_with_resources_and_action("standby",
+                                                           text,
+                                                           0,
+                                                           image_name[0] != '\0' ? image_name : NULL,
+                                                           sound_id[0] != '\0' ? sound_id : NULL,
+                                                           selected_action_id);
+        if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG,
+                     "AI status has no local match, keeping current state=%s status=%s action=%s image=%s fallback=%s "
+                     "selected_action=%s",
+                     behavior_state_get_current(),
+                     event->status,
+                     action_state_id,
+                     image_name,
+                     fallback_state_id,
+                     selected_action_id != NULL ? selected_action_id : "<none>");
+        }
     }
 
     if (ret != ESP_OK && text != NULL) {
