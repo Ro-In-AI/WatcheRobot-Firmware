@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [0.8.1] - 2026-03-29
+## [0.0.9] - 2026-03-29
 
 ### Fixed
 - WebSocket TTS playback now reassembles fragmented text and binary frames instead of dropping fragmented cloud audio
