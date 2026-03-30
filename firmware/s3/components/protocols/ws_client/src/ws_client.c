@@ -28,10 +28,12 @@
 #define TAG "WS_CLIENT"
 
 #define WS_DEFAULT_URL "ws://[IP_ADDRESS]"
-#define WS_TIMEOUT_MS 10000
+#define WS_NETWORK_TIMEOUT_MS 30000
 #define WS_URL_MAX_LEN 128
 #define WS_BUFFER_SIZE 65536
 #define WS_TASK_STACK 12288
+#define WS_TASK_PRIO 8
+#define WS_SEND_TIMEOUT_MS 5000
 #define WS_RESPONSE_TIMEOUT_MS 30000
 #define WS_BINARY_HEADER_LEN 14
 #define WS_BINARY_MAGIC "WSPK"
@@ -182,6 +184,7 @@ static int ws_client_lock_and_send(bool binary, const void *payload, int len, bo
     int64_t start_us = 0;
     int64_t lock_acquired_us = 0;
     int64_t send_done_us = 0;
+    TickType_t send_timeout_ticks = pdMS_TO_TICKS(WS_SEND_TIMEOUT_MS);
 
     if (s_ws_client == NULL || payload == NULL || len < 0 || !s_socket_connected) {
         ws_log_send_blocked(binary, len, allow_before_session);
@@ -208,8 +211,8 @@ static int ws_client_lock_and_send(bool binary, const void *payload, int len, bo
     }
     lock_acquired_us = esp_timer_get_time();
 
-    sent = binary ? esp_websocket_client_send_bin(s_ws_client, (const char *)payload, len, pdMS_TO_TICKS(1000))
-                  : esp_websocket_client_send_text(s_ws_client, (const char *)payload, len, pdMS_TO_TICKS(1000));
+    sent = binary ? esp_websocket_client_send_bin(s_ws_client, (const char *)payload, len, send_timeout_ticks)
+                  : esp_websocket_client_send_text(s_ws_client, (const char *)payload, len, send_timeout_ticks);
     send_done_us = esp_timer_get_time();
 
     xSemaphoreGive(s_ws_send_lock);
@@ -753,7 +756,17 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
         break;
 
     case WEBSOCKET_EVENT_ERROR:
-        ESP_LOGE(TAG, "WebSocket error");
+        if (data != NULL) {
+            ESP_LOGE(TAG,
+                     "WebSocket error: type=%d esp_err=%s tls_code=%d tls_flags=%d sock_errno=%d",
+                     data->error_handle.error_type,
+                     esp_err_to_name(data->error_handle.esp_tls_last_esp_err),
+                     data->error_handle.esp_tls_stack_err,
+                     data->error_handle.esp_tls_cert_verify_flags,
+                     data->error_handle.esp_transport_sock_errno);
+        } else {
+            ESP_LOGE(TAG, "WebSocket error");
+        }
         break;
 
     default:
@@ -764,9 +777,14 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
 int ws_client_init(void) {
     esp_websocket_client_config_t cfg = {
         .uri = s_ws_server_url,
-        .network_timeout_ms = WS_TIMEOUT_MS,
+        .network_timeout_ms = WS_NETWORK_TIMEOUT_MS,
+        .task_prio = WS_TASK_PRIO,
         .buffer_size = WS_BUFFER_SIZE,
         .task_stack = WS_TASK_STACK,
+        .keep_alive_enable = true,
+        .keep_alive_idle = 15,
+        .keep_alive_interval = 5,
+        .keep_alive_count = 3,
     };
 
     if (s_ws_client != NULL) {

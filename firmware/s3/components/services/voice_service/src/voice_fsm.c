@@ -63,6 +63,11 @@ static void freeze_current_animation(void) {
     lvgl_port_unlock();
 }
 
+static void show_listening_ui(void) {
+    behavior_state_set_with_text("listening", "Listening...", 0);
+    freeze_current_animation();
+}
+
 /* ------------------------------------------------------------------ */
 /* Private: VAD (Voice Activity Detection)                             */
 /* ------------------------------------------------------------------ */
@@ -413,7 +418,7 @@ static void button_callback(bool pressed) {
             g_recording_triggered_by_wake_word = false;
             voice_recorder_process_event(VOICE_EVENT_BUTTON_PRESS);
             if (g_state == VOICE_STATE_RECORDING) {
-                behavior_state_set_with_text("listening", "Listening...", 0);
+                show_listening_ui();
             } else {
                 show_cloud_not_ready_state();
             }
@@ -469,7 +474,7 @@ static void voice_recorder_task(void *arg) {
 static void on_wake_word_detected(const char *wake_word, void *user_data) {
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word);
     g_recording_triggered_by_wake_word = true; /* Mark as wake word triggered */
-    behavior_state_set_with_text("listening", "Listening...", 0);
+    show_listening_ui();
     voice_recorder_process_event(VOICE_EVENT_WAKE_WORD);
 }
 
