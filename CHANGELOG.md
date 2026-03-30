@@ -11,6 +11,31 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.0-beta] - 2026-03-30
+
+### Added
+- Beta release track for the current integrated `main` branch
+- SPIFFS-driven behavior actions with guarded fallback for local expression execution
+- Multi-device Codex lane flashing workflow for local parallel bring-up and repeated device testing
+
+### Fixed
+- Startup display sequencing and state handoff during cloud bring-up are more stable
+- BLE provisioning path is hardened for first-time network setup and recovery after Wi-Fi cleanup
+- WebSocket recording/upload path is more resilient during long audio capture and cloud handoff
+- Local SFX playback now hands off to cloud TTS more cleanly during reply start
+
+### Changed
+- Firmware version is now tracked as `0.1.0-beta` for the current integration milestone
+- Mainline audio path now favors smoother local SFX playback, safer TTS takeover, and more tolerant WebSocket timing
+- Behavior state transitions now integrate animation, SPIFFS action playback, and safer fallback handling
+- Local multi-device development workflow is now part of the beta bring-up path for `s3-a / s3-b / s3-c / s3-d` style rigs
+
+### Summary
+- This beta marks the first mainline milestone where voice, BLE provisioning, animation, local actions, and automated multi-device testing are all available together on the current integrated branch.
+- The branch is suitable for ongoing joint debugging and integration validation, while the later stable `0.1.0` release remains reserved for fully completed end-to-end bring-up.
+
+---
+
 ## [0.0.92] - 2026-03-30
 
 ### Fixed
