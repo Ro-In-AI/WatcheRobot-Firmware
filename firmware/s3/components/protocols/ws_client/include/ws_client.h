@@ -37,6 +37,19 @@ typedef struct {
     uint64_t timestamp_us;
 } ws_client_media_send_stats_t;
 
+typedef struct {
+    bool valid;
+    uint32_t queued_frames;
+    uint32_t sent_frames;
+    uint32_t dropped_frames;
+    uint32_t pending_frames;
+    uint32_t high_watermark;
+    uint32_t last_queue_delay_us;
+    bool session_open;
+    bool first_frame_pending;
+    bool end_pending;
+} ws_client_audio_queue_stats_t;
+
 /**
  * Initialize WebSocket client
  */
@@ -169,6 +182,7 @@ void ws_client_get_media_send_stats(ws_client_media_send_stats_t *stats);
  * Send audio data via WebSocket using WSPK audio frames.
  * @param data Audio data (PCM 16-bit, 16kHz, mono, LE)
  * @param len Data length
+ * @note This call only enqueues audio; a worker task performs the actual send.
  * @return 0 on success, -1 on error
  */
 int ws_send_audio(const uint8_t *data, int len);
@@ -196,5 +210,10 @@ void ws_tts_complete(void);
  * Check response timeout and recover wake-word mode if needed.
  */
 void ws_tts_timeout_check(void);
+
+/**
+ * Get the current audio queue statistics.
+ */
+void ws_client_get_audio_queue_stats(ws_client_audio_queue_stats_t *stats);
 
 #endif /* WS_CLIENT_H */

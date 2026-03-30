@@ -2,11 +2,11 @@
 #include "esp_log.h"
 #include <string.h>
 
-#define TAG "HAL_PCM"
+#define TAG "HAL_AUDIO_PCM"
 
 /**
  * @file hal_opus.c
- * @brief Audio codec HAL - PCM passthrough implementation
+ * @brief Audio transport HAL - PCM passthrough implementation
  *
  * MVP simplification: Direct PCM transmission without any encoding.
  * This reduces complexity and CPU usage on the ESP32-S3.
@@ -21,7 +21,7 @@
  */
 
 int hal_opus_init(void) {
-    ESP_LOGI(TAG, "Audio codec initialized (PCM passthrough mode)");
+    ESP_LOGI(TAG, "Audio transport initialized (PCM passthrough mode)");
     return 0;
 }
 
@@ -34,7 +34,7 @@ int hal_opus_encode(const uint8_t *pcm_in, int pcm_len, uint8_t *out_buf, int ou
     int out_len = (pcm_len < out_max_len) ? pcm_len : out_max_len;
     memcpy(out_buf, pcm_in, out_len);
 
-    ESP_LOGD(TAG, "PCM passthrough: %d bytes", out_len);
+    ESP_LOGD(TAG, "PCM passthrough transport: %d bytes", out_len);
     return out_len;
 }
 
@@ -47,6 +47,6 @@ int hal_opus_decode(const uint8_t *in_data, int in_len, uint8_t *pcm_out, int pc
     int out_len = (in_len < pcm_max_len) ? in_len : pcm_max_len;
     memcpy(pcm_out, in_data, out_len);
 
-    ESP_LOGD(TAG, "PCM passthrough: %d bytes", out_len);
+    ESP_LOGD(TAG, "PCM passthrough transport: %d bytes", out_len);
     return out_len;
 }

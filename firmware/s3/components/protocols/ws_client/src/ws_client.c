@@ -38,6 +38,11 @@
 #define WS_BINARY_HEADER_LEN 14
 #define WS_BINARY_MAGIC "WSPK"
 #define WS_DEVICE_ERROR_CODE_GENERIC 1501
+#define WS_AUDIO_FRAME_BYTES 1920
+#define WS_AUDIO_QUEUE_DEPTH 8
+#define WS_AUDIO_WORKER_STACK 4096
+#define WS_AUDIO_WORKER_PRIO 6
+#define WS_AUDIO_WORKER_WAIT_MS 20
 
 static esp_websocket_client_handle_t s_ws_client = NULL;
 static bool s_socket_connected = false;
@@ -52,6 +57,31 @@ static char s_ws_server_url[WS_URL_MAX_LEN] = WS_DEFAULT_URL;
 static SemaphoreHandle_t s_ws_send_lock = NULL;
 static uint32_t s_frame_sequences[WS_FRAME_TYPE_OTA + 1] = {0};
 static ws_client_media_send_stats_t s_last_media_send_stats = {0};
+static ws_client_audio_queue_stats_t s_last_audio_queue_stats = {0};
+
+typedef struct {
+    uint8_t data[WS_AUDIO_FRAME_BYTES];
+    uint16_t len;
+    uint64_t enqueued_us;
+} ws_audio_frame_slot_t;
+
+static ws_audio_frame_slot_t s_audio_frame_pool[WS_AUDIO_QUEUE_DEPTH];
+static QueueHandle_t s_audio_free_slots = NULL;
+static QueueHandle_t s_audio_pending_slots = NULL;
+static SemaphoreHandle_t s_audio_slot_lock = NULL;
+static SemaphoreHandle_t s_audio_state_lock = NULL;
+static TaskHandle_t s_audio_worker_task = NULL;
+static volatile bool s_audio_worker_running = false;
+static bool s_audio_inflight_active = false;
+static uint8_t s_audio_inflight_slot = 0;
+static bool s_audio_session_open = false;
+static bool s_audio_first_frame_pending = false;
+static bool s_audio_end_pending = false;
+static uint32_t s_audio_queued_frames = 0;
+static uint32_t s_audio_sent_frames = 0;
+static uint32_t s_audio_dropped_frames = 0;
+static uint32_t s_audio_high_watermark = 0;
+static uint32_t s_audio_last_queue_delay_us = 0;
 
 typedef struct {
     char *buffer;
@@ -83,6 +113,14 @@ static bool s_last_send_block_allow_before_session = false;
 static bool s_last_send_block_binary = false;
 static int s_last_send_block_len = -1;
 
+static esp_err_t ws_audio_queue_init(void);
+static void ws_audio_queue_reset_locked(void);
+static void ws_audio_update_stats_locked(void);
+static void ws_audio_worker_task(void *arg);
+static int ws_send_binary_packet(ws_frame_type_t frame_type, uint8_t flags, const uint8_t *payload, size_t len);
+static int ws_send_audio_packet(const uint8_t *data, size_t len, uint8_t flags);
+static bool ws_audio_session_ready(void);
+
 static void ws_log_send_blocked(bool binary, int len, bool allow_before_session) {
     int64_t now_us = esp_timer_get_time();
     bool state_changed = s_last_send_block_socket_connected != s_socket_connected ||
@@ -109,6 +147,271 @@ static void ws_log_send_blocked(bool binary, int len, bool allow_before_session)
              s_socket_connected,
              s_hello_acknowledged,
              allow_before_session);
+}
+
+static bool ws_audio_session_ready(void) {
+    return s_ws_client != NULL && s_socket_connected && s_hello_acknowledged;
+}
+
+static void ws_audio_update_stats_locked(void) {
+    if (s_audio_state_lock == NULL) {
+        memset(&s_last_audio_queue_stats, 0, sizeof(s_last_audio_queue_stats));
+        return;
+    }
+
+    s_last_audio_queue_stats.valid = true;
+    s_last_audio_queue_stats.queued_frames = s_audio_queued_frames;
+    s_last_audio_queue_stats.sent_frames = s_audio_sent_frames;
+    s_last_audio_queue_stats.dropped_frames = s_audio_dropped_frames;
+    s_last_audio_queue_stats.pending_frames = s_audio_pending_slots != NULL
+                                                 ? (uint32_t)uxQueueMessagesWaiting(s_audio_pending_slots)
+                                                 : 0U;
+    s_last_audio_queue_stats.high_watermark = s_audio_high_watermark;
+    s_last_audio_queue_stats.last_queue_delay_us = s_audio_last_queue_delay_us;
+    s_last_audio_queue_stats.session_open = s_audio_session_open;
+    s_last_audio_queue_stats.first_frame_pending = s_audio_first_frame_pending;
+    s_last_audio_queue_stats.end_pending = s_audio_end_pending;
+}
+
+static void ws_audio_queue_reset_locked(void) {
+    uint8_t slot_idx;
+    bool inflight_active = s_audio_inflight_active;
+    uint8_t inflight_slot = s_audio_inflight_slot;
+
+    if (s_audio_state_lock == NULL || s_audio_free_slots == NULL || s_audio_pending_slots == NULL) {
+        return;
+    }
+
+    xQueueReset(s_audio_free_slots);
+    xQueueReset(s_audio_pending_slots);
+    for (slot_idx = 0; slot_idx < WS_AUDIO_QUEUE_DEPTH; ++slot_idx) {
+        if (!inflight_active || slot_idx != inflight_slot) {
+            (void)xQueueSendToBack(s_audio_free_slots, &slot_idx, 0);
+        }
+    }
+
+    s_audio_session_open = false;
+    s_audio_first_frame_pending = false;
+    s_audio_end_pending = false;
+    s_audio_upload_active = false;
+    s_audio_last_queue_delay_us = 0;
+    ws_audio_update_stats_locked();
+}
+
+static esp_err_t ws_audio_queue_init(void) {
+    bool need_reset = false;
+
+    if (s_audio_slot_lock == NULL) {
+        s_audio_slot_lock = xSemaphoreCreateMutex();
+        if (s_audio_slot_lock == NULL) {
+            ESP_LOGE(TAG, "failed to create audio slot lock");
+            return ESP_FAIL;
+        }
+        need_reset = true;
+    }
+
+    if (s_audio_state_lock == NULL) {
+        s_audio_state_lock = xSemaphoreCreateMutex();
+        if (s_audio_state_lock == NULL) {
+            ESP_LOGE(TAG, "failed to create audio state lock");
+            return ESP_FAIL;
+        }
+        need_reset = true;
+    }
+
+    if (s_audio_free_slots == NULL) {
+        s_audio_free_slots = xQueueCreate(WS_AUDIO_QUEUE_DEPTH, sizeof(uint8_t));
+        if (s_audio_free_slots == NULL) {
+            ESP_LOGE(TAG, "failed to create audio free slot queue");
+            return ESP_FAIL;
+        }
+        need_reset = true;
+    }
+
+    if (s_audio_pending_slots == NULL) {
+        s_audio_pending_slots = xQueueCreate(WS_AUDIO_QUEUE_DEPTH, sizeof(uint8_t));
+        if (s_audio_pending_slots == NULL) {
+            ESP_LOGE(TAG, "failed to create audio pending queue");
+            return ESP_FAIL;
+        }
+        need_reset = true;
+    }
+
+    if (s_audio_worker_task == NULL) {
+        s_audio_worker_running = true;
+        BaseType_t task_ret = xTaskCreate(ws_audio_worker_task,
+                                          "ws_audio_send",
+                                          WS_AUDIO_WORKER_STACK,
+                                          NULL,
+                                          WS_AUDIO_WORKER_PRIO,
+                                          &s_audio_worker_task);
+        if (task_ret != pdPASS) {
+            s_audio_worker_running = false;
+            ESP_LOGE(TAG, "failed to create audio worker task");
+            return ESP_FAIL;
+        }
+        need_reset = true;
+    } else {
+        if (!s_audio_worker_running) {
+            s_audio_worker_running = true;
+            need_reset = true;
+        }
+    }
+
+    if (need_reset && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+        ws_audio_queue_reset_locked();
+        xSemaphoreGive(s_audio_state_lock);
+    }
+
+    return ESP_OK;
+}
+
+static int ws_send_audio_packet(const uint8_t *data, size_t len, uint8_t flags) {
+    return ws_send_binary_packet(WS_FRAME_TYPE_AUDIO, flags, data, len);
+}
+
+static void ws_audio_worker_task(void *arg) {
+    uint8_t slot_idx = 0;
+
+    (void)arg;
+
+    while (s_audio_worker_running) {
+        bool have_slot = false;
+
+        if (s_audio_slot_lock == NULL || xSemaphoreTake(s_audio_slot_lock, pdMS_TO_TICKS(WS_AUDIO_WORKER_WAIT_MS)) != pdTRUE) {
+            continue;
+        }
+
+        if (s_audio_pending_slots != NULL && xQueueReceive(s_audio_pending_slots, &slot_idx, 0) == pdTRUE) {
+            s_audio_inflight_active = true;
+            s_audio_inflight_slot = slot_idx;
+            have_slot = true;
+        }
+
+        xSemaphoreGive(s_audio_slot_lock);
+
+        if (have_slot) {
+            bool ready = false;
+            bool first_pending = false;
+            uint16_t frame_len = 0;
+            uint64_t enqueued_us = 0;
+            uint8_t flags = WS_FRAME_FLAG_NONE;
+            int send_ret = -1;
+            int64_t now_us = 0;
+
+            if (s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+                ready = ws_audio_session_ready();
+                if (ready) {
+                    frame_len = s_audio_frame_pool[slot_idx].len;
+                    enqueued_us = s_audio_frame_pool[slot_idx].enqueued_us;
+                    first_pending = s_audio_first_frame_pending;
+                }
+                xSemaphoreGive(s_audio_state_lock);
+            }
+
+            if (ready && frame_len > 0U) {
+                if (first_pending) {
+                    flags |= WS_FRAME_FLAG_FIRST;
+                }
+
+                send_ret = ws_send_audio_packet(s_audio_frame_pool[slot_idx].data, frame_len, flags);
+                now_us = esp_timer_get_time();
+
+                if (s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+                    if (send_ret == 0) {
+                        s_audio_sent_frames++;
+                        s_audio_first_frame_pending = false;
+                        s_audio_last_queue_delay_us = (uint32_t)((now_us > (int64_t)enqueued_us)
+                                                                     ? (now_us - (int64_t)enqueued_us)
+                                                                     : 0);
+                    } else {
+                        s_audio_dropped_frames++;
+                        s_audio_last_queue_delay_us = (uint32_t)((now_us > (int64_t)enqueued_us)
+                                                                     ? (now_us - (int64_t)enqueued_us)
+                                                                     : 0);
+                    }
+                    ws_audio_update_stats_locked();
+                    xSemaphoreGive(s_audio_state_lock);
+                }
+
+                if (send_ret == 0 && s_audio_sent_frames % 30U == 0U) {
+                    ws_client_media_send_stats_t send_stats = {0};
+                    ws_client_get_media_send_stats(&send_stats);
+                    ESP_LOGI(TAG,
+                             "audio send latest_us{queue=%lu total=%lu lock=%lu send=%lu payload=%u packet=%u} "
+                             "queue{pending=%u high=%u queued=%lu sent=%lu dropped=%lu delay=%lu}",
+                             (unsigned long)s_audio_last_queue_delay_us,
+                             (unsigned long)send_stats.total_us,
+                             (unsigned long)send_stats.lock_wait_us,
+                             (unsigned long)send_stats.send_us,
+                             (unsigned int)send_stats.payload_len,
+                             (unsigned int)send_stats.packet_len,
+                             (unsigned int)s_last_audio_queue_stats.pending_frames,
+                             (unsigned int)s_last_audio_queue_stats.high_watermark,
+                             (unsigned long)s_audio_queued_frames,
+                             (unsigned long)s_audio_sent_frames,
+                             (unsigned long)s_audio_dropped_frames,
+                             (unsigned long)s_audio_last_queue_delay_us);
+                }
+            } else if (s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+                s_audio_dropped_frames++;
+                ws_audio_update_stats_locked();
+                xSemaphoreGive(s_audio_state_lock);
+            }
+
+            if (s_audio_slot_lock != NULL && xSemaphoreTake(s_audio_slot_lock, portMAX_DELAY) == pdTRUE) {
+                if (s_audio_inflight_active && s_audio_inflight_slot == slot_idx) {
+                    s_audio_inflight_active = false;
+                }
+                xSemaphoreGive(s_audio_slot_lock);
+            }
+
+            if (s_audio_free_slots != NULL) {
+                (void)xQueueSendToBack(s_audio_free_slots, &slot_idx, 0);
+            }
+            continue;
+        }
+
+        if (s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+            bool ready = ws_audio_session_ready();
+            bool send_end = s_audio_end_pending && ready;
+            bool first_pending = s_audio_first_frame_pending;
+            bool session_open = s_audio_session_open;
+            xSemaphoreGive(s_audio_state_lock);
+
+            if (send_end) {
+                uint8_t flags = WS_FRAME_FLAG_LAST;
+                int send_ret;
+
+                if (first_pending || !session_open) {
+                    flags |= WS_FRAME_FLAG_FIRST;
+                }
+
+                send_ret = ws_send_audio_packet(NULL, 0, flags);
+                if (send_ret == 0 && s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+                    s_audio_session_open = false;
+                    s_audio_first_frame_pending = false;
+                    s_audio_end_pending = false;
+                    s_audio_upload_active = false;
+                    s_audio_last_queue_delay_us = 0;
+                    ws_audio_update_stats_locked();
+                    xSemaphoreGive(s_audio_state_lock);
+                    s_waiting_for_response = true;
+                    s_timeout_display_count = 0;
+                    s_response_wait_start_time = esp_timer_get_time();
+                    ESP_LOGI(TAG, "audio end marker sent, waiting for server response (%dms)", WS_RESPONSE_TIMEOUT_MS);
+                }
+            }
+
+            if (!send_end) {
+                vTaskDelay(pdMS_TO_TICKS(WS_AUDIO_WORKER_WAIT_MS));
+            }
+        }
+    }
+
+    s_audio_worker_task = NULL;
+    s_audio_worker_running = false;
+    vTaskDelete(NULL);
 }
 
 static void ws_write_u32_le(uint8_t *dst, uint32_t value) {
@@ -138,11 +441,35 @@ static void ws_reset_rx_fragment_states(void) {
 }
 
 static void ws_reset_media_state(void) {
+    bool slot_lock_taken = false;
+    bool send_lock_taken = false;
+
     memset(s_frame_sequences, 0, sizeof(s_frame_sequences));
     memset(&s_last_media_send_stats, 0, sizeof(s_last_media_send_stats));
     s_audio_upload_active = false;
     s_ota_binary_nacked = false;
     sfx_service_set_cloud_audio_busy(false);
+
+    if (s_audio_state_lock != NULL && s_audio_free_slots != NULL && s_audio_pending_slots != NULL) {
+        if (s_audio_slot_lock != NULL && xSemaphoreTake(s_audio_slot_lock, portMAX_DELAY) == pdTRUE) {
+            slot_lock_taken = true;
+        }
+        if (s_ws_send_lock != NULL && xSemaphoreTake(s_ws_send_lock, portMAX_DELAY) == pdTRUE) {
+            send_lock_taken = true;
+        }
+        if (xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+            ws_audio_queue_reset_locked();
+            xSemaphoreGive(s_audio_state_lock);
+        }
+        if (send_lock_taken) {
+            xSemaphoreGive(s_ws_send_lock);
+        }
+        if (slot_lock_taken) {
+            xSemaphoreGive(s_audio_slot_lock);
+        }
+    } else {
+        memset(&s_last_audio_queue_stats, 0, sizeof(s_last_audio_queue_stats));
+    }
 }
 
 static void ws_reset_session_state(void) {
@@ -807,6 +1134,12 @@ int ws_client_init(void) {
         }
     }
 
+    if (ws_audio_queue_init() != ESP_OK) {
+        esp_websocket_client_destroy(s_ws_client);
+        s_ws_client = NULL;
+        return -1;
+    }
+
     ws_reset_session_state();
     esp_websocket_register_events(s_ws_client, WEBSOCKET_EVENT_ANY, ws_event_handler, NULL);
     ESP_LOGI(TAG, "WebSocket client initialized (URL: %s)", s_ws_server_url);
@@ -858,6 +1191,19 @@ void ws_client_stop(void) {
     }
 
     ws_abort_tts_playback();
+
+    s_audio_worker_running = false;
+    if (s_audio_worker_task != NULL) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    if (s_audio_state_lock != NULL && s_audio_free_slots != NULL && s_audio_pending_slots != NULL) {
+        if (xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+            ws_audio_queue_reset_locked();
+            xSemaphoreGive(s_audio_state_lock);
+        }
+    }
+
     if (s_ws_client != NULL) {
         esp_websocket_client_stop(s_ws_client);
         esp_websocket_client_destroy(s_ws_client);
@@ -1081,43 +1427,155 @@ void ws_client_get_media_send_stats(ws_client_media_send_stats_t *stats) {
 }
 
 int ws_send_audio(const uint8_t *data, int len) {
-    uint8_t flags = WS_FRAME_FLAG_NONE;
-    int ret;
-
     if (data == NULL || len <= 0) {
         return -1;
     }
 
-    if (!s_audio_upload_active) {
-        flags |= WS_FRAME_FLAG_FIRST;
+    if (ws_audio_queue_init() != ESP_OK) {
+        return -1;
     }
 
-    ret = ws_send_binary_packet(WS_FRAME_TYPE_AUDIO, flags, data, (size_t)len);
-    if (ret == 0) {
-        s_audio_upload_active = true;
+    if (s_audio_state_lock == NULL || s_audio_free_slots == NULL || s_audio_pending_slots == NULL) {
+        return -1;
     }
 
-    return ret;
+    if (xSemaphoreTake(s_audio_state_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return -1;
+    }
+
+    if (!ws_audio_session_ready() || s_audio_end_pending) {
+        xSemaphoreGive(s_audio_state_lock);
+        ws_log_send_blocked(true, len, false);
+        return -1;
+    }
+
+    {
+        uint8_t slot_idx = 0;
+        ws_audio_frame_slot_t *slot = NULL;
+        bool reclaimed_oldest = false;
+        uint32_t pending_before = 0U;
+        uint64_t evicted_age_us = 0U;
+
+        if (uxQueueMessagesWaiting(s_audio_free_slots) == 0U) {
+            if (uxQueueMessagesWaiting(s_audio_pending_slots) > 0U &&
+                xQueueReceive(s_audio_pending_slots, &slot_idx, 0) == pdTRUE) {
+                reclaimed_oldest = true;
+                pending_before = (uint32_t)uxQueueMessagesWaiting(s_audio_pending_slots) + 1U;
+                if (s_audio_frame_pool[slot_idx].enqueued_us > 0U) {
+                    int64_t now_us = esp_timer_get_time();
+                    evicted_age_us = (uint64_t)((now_us > (int64_t)s_audio_frame_pool[slot_idx].enqueued_us)
+                                                    ? (now_us - (int64_t)s_audio_frame_pool[slot_idx].enqueued_us)
+                                                    : 0);
+                }
+                s_audio_dropped_frames++;
+            } else {
+                s_audio_dropped_frames++;
+                ws_audio_update_stats_locked();
+                xSemaphoreGive(s_audio_state_lock);
+                if (s_audio_dropped_frames % 10U == 1U) {
+                    ESP_LOGW(TAG,
+                             "audio enqueue dropped: queue full and no reclaimable slot (pending=%u dropped=%lu)",
+                             (unsigned int)uxQueueMessagesWaiting(s_audio_pending_slots),
+                             (unsigned long)s_audio_dropped_frames);
+                }
+                return -1;
+            }
+        } else if (xQueueReceive(s_audio_free_slots, &slot_idx, 0) != pdTRUE) {
+            s_audio_dropped_frames++;
+            ws_audio_update_stats_locked();
+            xSemaphoreGive(s_audio_state_lock);
+            return -1;
+        }
+
+        slot = &s_audio_frame_pool[slot_idx];
+        if (len > WS_AUDIO_FRAME_BYTES) {
+            len = WS_AUDIO_FRAME_BYTES;
+        }
+
+        memcpy(slot->data, data, (size_t)len);
+        slot->len = (uint16_t)len;
+        slot->enqueued_us = (uint64_t)esp_timer_get_time();
+
+        if (!s_audio_session_open) {
+            s_audio_session_open = true;
+            s_audio_first_frame_pending = true;
+            s_audio_upload_active = true;
+        }
+
+        if (xQueueSendToBack(s_audio_pending_slots, &slot_idx, 0) != pdTRUE) {
+            (void)xQueueSendToBack(s_audio_free_slots, &slot_idx, 0);
+            s_audio_dropped_frames++;
+            ws_audio_update_stats_locked();
+            xSemaphoreGive(s_audio_state_lock);
+            return -1;
+        }
+
+        if (reclaimed_oldest && s_audio_dropped_frames % 10U == 1U) {
+            ESP_LOGW(TAG,
+                     "audio enqueue pressure: evicted oldest frame (pending_before=%u age_us=%llu dropped=%lu)",
+                     (unsigned int)pending_before,
+                     (unsigned long long)evicted_age_us,
+                     (unsigned long)s_audio_dropped_frames);
+        }
+
+        s_audio_queued_frames++;
+        {
+            uint32_t pending = (uint32_t)uxQueueMessagesWaiting(s_audio_pending_slots);
+            if (pending > s_audio_high_watermark) {
+                s_audio_high_watermark = pending;
+            }
+        }
+        ws_audio_update_stats_locked();
+    }
+
+    xSemaphoreGive(s_audio_state_lock);
+    return 0;
 }
 
 int ws_send_audio_end(void) {
-    uint8_t flags = WS_FRAME_FLAG_LAST;
-    int ret;
-
-    if (!s_audio_upload_active) {
-        flags |= WS_FRAME_FLAG_FIRST;
+    if (ws_audio_queue_init() != ESP_OK) {
+        return -1;
     }
 
-    ret = ws_send_binary_packet(WS_FRAME_TYPE_AUDIO, flags, NULL, 0);
+    if (s_audio_state_lock == NULL) {
+        return -1;
+    }
+
+    if (xSemaphoreTake(s_audio_state_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return -1;
+    }
+
+    if (!ws_audio_session_ready()) {
+        xSemaphoreGive(s_audio_state_lock);
+        ws_log_send_blocked(true, 0, false);
+        return -1;
+    }
+
+    s_audio_end_pending = true;
     s_audio_upload_active = false;
-    if (ret == 0) {
-        s_waiting_for_response = true;
-        s_timeout_display_count = 0;
-        s_response_wait_start_time = esp_timer_get_time();
-        ESP_LOGI(TAG, "audio end sent, waiting for server response (%dms)", WS_RESPONSE_TIMEOUT_MS);
+    ws_audio_update_stats_locked();
+    xSemaphoreGive(s_audio_state_lock);
+
+    if (s_audio_worker_task != NULL) {
+        taskYIELD();
     }
 
-    return ret;
+    return 0;
+}
+
+void ws_client_get_audio_queue_stats(ws_client_audio_queue_stats_t *stats) {
+    if (stats == NULL) {
+        return;
+    }
+
+    if (s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+        ws_audio_update_stats_locked();
+        *stats = s_last_audio_queue_stats;
+        xSemaphoreGive(s_audio_state_lock);
+        return;
+    }
+
+    *stats = s_last_audio_queue_stats;
 }
 
 void ws_handle_tts_binary(const uint8_t *data, int len) {

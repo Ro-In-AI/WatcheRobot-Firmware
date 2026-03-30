@@ -22,7 +22,7 @@ typedef enum {
 /* Voice recorder statistics */
 typedef struct {
     int record_count;  /* Number of recordings completed */
-    int encode_count;  /* Number of audio frames encoded */
+    int encode_count;  /* Number of audio frames accepted */
     int error_count;   /* Number of errors */
     int current_state; /* Current state (voice_state_t) */
 } voice_stats_t;
@@ -43,10 +43,10 @@ voice_state_t voice_recorder_get_state(void);
 void voice_recorder_process_event(voice_event_t event);
 
 /**
- * Process a tick (called periodically to read audio and encode)
- * Should be called at audio frame rate (e.g., every 60ms for Opus)
+ * Process a tick (called periodically to read audio and enqueue upload)
+ * Should be called at audio frame rate (e.g., every 60ms for PCM frames)
  *
- * @return Number of frames encoded, or -1 on error
+ * @return Number of frames accepted, or -1 on error
  */
 int voice_recorder_tick(void);
 
@@ -107,12 +107,12 @@ int hal_audio_read(uint8_t *out_buf, int max_len);
 int hal_audio_stop(void);
 
 /**
- * Encode audio to Opus (HAL)
+ * Prepare audio for upload (HAL passthrough)
  * @param pcm_in PCM input data
  * @param pcm_len PCM data length
- * @param opus_out Output buffer for encoded data
+ * @param opus_out Output buffer for transport data
  * @param out_max Maximum output size
- * @return Encoded data length, or -1 on error
+ * @return Transport data length, or -1 on error
  */
 int hal_opus_encode(const uint8_t *pcm_in, int pcm_len, uint8_t *opus_out, int out_max);
 
@@ -122,7 +122,7 @@ int hal_opus_encode(const uint8_t *pcm_in, int pcm_len, uint8_t *opus_out, int o
 
 /**
  * Send audio data to cloud (WS)
- * @param data Audio data (Opus encoded)
+ * @param data Audio data (PCM 16-bit, 16kHz, mono, LE)
  * @param len Data length
  * @return 0 on success, -1 on error
  */

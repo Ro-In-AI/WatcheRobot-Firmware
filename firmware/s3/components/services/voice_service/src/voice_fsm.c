@@ -342,7 +342,6 @@ int voice_recorder_tick(void) {
     }
 
     int16_t *samples = (int16_t *)g_pcm_buf;
-    size_t num_samples = pcm_len / 2; /* 16-bit samples */
 #endif
 
     /* Audio quality check: calculate RMS and peak */
@@ -367,8 +366,32 @@ int voice_recorder_tick(void) {
 
     /* Log every 10 frames */
     if (g_stats.encode_count % 10 == 0) {
-        ESP_LOGI(TAG, "Audio: frame#%d, rms=%d, peak=%d, zeros=%d/%d", g_stats.encode_count + 1, rms, peak, zero_count,
-                 sample_count);
+        ws_client_audio_queue_stats_t queue_stats = {0};
+        ws_client_media_send_stats_t send_stats = {0};
+
+        ws_client_get_audio_queue_stats(&queue_stats);
+        ws_client_get_media_send_stats(&send_stats);
+        ESP_LOGI(TAG,
+                 "Audio: frame#%d rms=%d peak=%d zeros=%d/%d queue{pending=%u high=%u queued=%lu sent=%lu dropped=%lu delay=%lu end=%d first=%d} "
+                 "send{total=%lu lock=%lu send=%lu payload=%u packet=%u}",
+                 g_stats.encode_count + 1,
+                 rms,
+                 peak,
+                 zero_count,
+                 sample_count,
+                 (unsigned int)queue_stats.pending_frames,
+                 (unsigned int)queue_stats.high_watermark,
+                 (unsigned long)queue_stats.queued_frames,
+                 (unsigned long)queue_stats.sent_frames,
+                 (unsigned long)queue_stats.dropped_frames,
+                 (unsigned long)queue_stats.last_queue_delay_us,
+                 queue_stats.end_pending,
+                 queue_stats.first_frame_pending,
+                 (unsigned long)send_stats.total_us,
+                 (unsigned long)send_stats.lock_wait_us,
+                 (unsigned long)send_stats.send_us,
+                 (unsigned int)send_stats.payload_len,
+                 (unsigned int)send_stats.packet_len);
     }
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
@@ -382,7 +405,7 @@ int voice_recorder_tick(void) {
     }
 #endif
 
-    /* Send PCM directly via WebSocket (no encoding) */
+    /* Enqueue PCM for asynchronous WebSocket upload */
     if (ws_send_audio(g_pcm_buf, pcm_len) != 0) {
         if (!ws_client_is_session_ready()) {
             ESP_LOGW(TAG, "Cloud session lost during recording (connected=%d)", ws_client_is_connected());
@@ -456,7 +479,7 @@ static void voice_recorder_task(void *arg) {
         /* Poll button state via IO expander */
         hal_button_poll();
 
-        /* Process audio encoding/sending if recording */
+        /* Process audio capture/upload if recording */
         voice_recorder_tick();
 
         vTaskDelay(pdMS_TO_TICKS(TICK_INTERVAL_MS));

@@ -5,7 +5,7 @@
 
 /**
  * @file hal_opus.h
- * @brief Audio codec HAL - PCM passthrough mode (no compression)
+ * @brief Audio transport HAL - PCM passthrough mode (no compression)
  *
  * MVP simplification: Direct PCM transmission without encoding.
  * Frame format: 16-bit, 16kHz, mono PCM.
