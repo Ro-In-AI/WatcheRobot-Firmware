@@ -1,6 +1,7 @@
 #include "sfx_service.h"
 
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -17,9 +18,10 @@
 #define SFX_MANIFEST_PATH "/spiffs/sfx/manifest.json"
 #define SFX_DIR "/spiffs/sfx"
 #define SFX_TASK_STACK 8192
-#define SFX_TASK_PRIORITY 4
+#define SFX_TASK_PRIORITY 5
 #define SFX_POLL_INTERVAL_MS 20
-#define SFX_CHUNK_SIZE 2048
+#define SFX_STREAM_CHUNK_SIZE 4096
+#define SFX_PREFETCH_LIMIT_BYTES (192 * 1024)
 #define SFX_MAX_ID_LEN 32
 #define SFX_MAX_PATH_LEN 128
 #define SFX_MAX_MANIFEST_BYTES 8192
@@ -273,11 +275,147 @@ static void sfx_set_local_busy(bool busy) {
     sfx_unlock();
 }
 
+static esp_err_t sfx_load_audio_blob(const char *sound_id,
+                                     const char *sound_path,
+                                     uint8_t **audio_data,
+                                     size_t *audio_size,
+                                     bool *loaded_in_psram) {
+    FILE *file = NULL;
+    long file_size = 0;
+    uint8_t *buffer = NULL;
+    size_t read_size = 0;
+    bool in_psram = true;
+
+    if (audio_data == NULL || audio_size == NULL || loaded_in_psram == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *audio_data = NULL;
+    *audio_size = 0U;
+    *loaded_in_psram = false;
+
+    file = fopen(sound_path, "rb");
+    if (file == NULL) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    fseek(file, 0, SEEK_END);
+    file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (file_size <= 0) {
+        fclose(file);
+        return ESP_FAIL;
+    }
+
+    if ((size_t)file_size > SFX_PREFETCH_LIMIT_BYTES) {
+        fclose(file);
+        ESP_LOGW(TAG,
+                 "Local sfx '%s' is %u bytes, exceeding prefetch limit %u, keeping streaming fallback",
+                 sound_id,
+                 (unsigned int)file_size,
+                 (unsigned int)SFX_PREFETCH_LIMIT_BYTES);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    buffer = (uint8_t *)heap_caps_malloc((size_t)file_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buffer == NULL) {
+        in_psram = false;
+        buffer = (uint8_t *)heap_caps_malloc((size_t)file_size, MALLOC_CAP_8BIT);
+    }
+    if (buffer == NULL) {
+        fclose(file);
+        return ESP_ERR_NO_MEM;
+    }
+
+    read_size = fread(buffer, 1, (size_t)file_size, file);
+    fclose(file);
+    if (read_size != (size_t)file_size) {
+        free(buffer);
+        return ESP_FAIL;
+    }
+
+    *audio_data = buffer;
+    *audio_size = (size_t)file_size;
+    *loaded_in_psram = in_psram;
+    return ESP_OK;
+}
+
+static bool sfx_playback_buffered(const char *sound_id, uint32_t generation, const uint8_t *audio_data, size_t audio_size) {
+    uint8_t staging[SFX_STREAM_CHUNK_SIZE];
+    size_t offset = 0U;
+
+    while (offset < audio_size) {
+        size_t remaining = audio_size - offset;
+        size_t chunk_size = remaining > sizeof(staging) ? sizeof(staging) : remaining;
+        int written = 0;
+
+        if (sfx_playback_should_abort(generation)) {
+            ESP_LOGI(TAG, "Stopping local sfx '%s' due to new audio request", sound_id);
+            return false;
+        }
+
+        memcpy(staging, audio_data + offset, chunk_size);
+        written = hal_audio_write(staging, (int)chunk_size);
+        if (written != (int)chunk_size) {
+            ESP_LOGW(TAG, "Incomplete buffered sfx playback '%s': %d/%u", sound_id, written, (unsigned int)chunk_size);
+            return false;
+        }
+
+        offset += chunk_size;
+    }
+
+    return true;
+}
+
+static bool sfx_playback_streaming(const char *sound_id, uint32_t generation, FILE *file) {
+    uint8_t buffer[SFX_STREAM_CHUNK_SIZE];
+
+    while (!feof(file)) {
+        size_t read_size = 0U;
+        int written = 0;
+
+        if (sfx_playback_should_abort(generation)) {
+            ESP_LOGI(TAG, "Stopping local sfx '%s' due to new audio request", sound_id);
+            return false;
+        }
+
+        read_size = fread(buffer, 1, sizeof(buffer), file);
+        if (read_size == 0U) {
+            break;
+        }
+
+        written = hal_audio_write(buffer, (int)read_size);
+        if (written != (int)read_size) {
+            ESP_LOGW(TAG, "Incomplete streaming sfx playback '%s': %d/%u", sound_id, written, (unsigned int)read_size);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool sfx_is_cloud_audio_busy(void) {
+    bool busy = false;
+
+    if (!s_ctx.initialized || !sfx_lock()) {
+        return false;
+    }
+
+    busy = s_ctx.cloud_audio_busy;
+    sfx_unlock();
+    return busy;
+}
+
 static void sfx_playback_file(const char *sound_id, uint32_t generation) {
     FILE *file = NULL;
-    uint8_t buffer[SFX_CHUNK_SIZE];
+    uint8_t *audio_data = NULL;
+    size_t audio_size = 0U;
     char sound_path[SFX_MAX_PATH_LEN];
     bool audio_started = false;
+    bool loaded_in_psram = false;
+    bool use_prefetched_audio = false;
+    bool handoff_to_cloud_audio = false;
+    esp_err_t preload_ret = ESP_OK;
 
     if (!sfx_lock()) {
         return;
@@ -285,9 +423,32 @@ static void sfx_playback_file(const char *sound_id, uint32_t generation) {
     sfx_resolve_path_locked(sound_id, sound_path, sizeof(sound_path));
     sfx_unlock();
 
-    file = fopen(sound_path, "rb");
-    if (file == NULL) {
-        ESP_LOGI(TAG, "Skip local sfx '%s': file not found (%s)", sound_id, sound_path);
+    preload_ret = sfx_load_audio_blob(sound_id, sound_path, &audio_data, &audio_size, &loaded_in_psram);
+    if (preload_ret == ESP_OK) {
+        use_prefetched_audio = true;
+    } else if (preload_ret == ESP_ERR_NOT_SUPPORTED || preload_ret == ESP_ERR_NO_MEM) {
+        file = fopen(sound_path, "rb");
+        if (file == NULL) {
+            ESP_LOGI(TAG, "Skip local sfx '%s': file not found (%s)", sound_id, sound_path);
+            sfx_set_local_busy(false);
+            return;
+        }
+        ESP_LOGW(TAG,
+                 "Playing local sfx '%s' with streaming fallback (reason=%s)",
+                 sound_id,
+                 preload_ret == ESP_ERR_NO_MEM ? "no_mem" : "too_large");
+    } else {
+        ESP_LOGW(TAG, "Failed to preload local sfx '%s' from %s: %s", sound_id, sound_path, esp_err_to_name(preload_ret));
+        sfx_set_local_busy(false);
+        return;
+    }
+
+    if (sfx_playback_should_abort(generation)) {
+        ESP_LOGI(TAG, "Skip local sfx '%s': request superseded before playback started", sound_id);
+        if (file != NULL) {
+            fclose(file);
+        }
+        free(audio_data);
         sfx_set_local_busy(false);
         return;
     }
@@ -298,40 +459,46 @@ static void sfx_playback_file(const char *sound_id, uint32_t generation) {
         ESP_LOGW(TAG, "Failed to start audio for '%s'", sound_id);
         hal_audio_set_playback_mode(false);
         hal_audio_set_sample_rate(16000);
-        fclose(file);
+        if (file != NULL) {
+            fclose(file);
+        }
+        free(audio_data);
         sfx_set_local_busy(false);
         return;
     }
 
     audio_started = true;
-    ESP_LOGI(TAG, "Playing local sfx '%s' from %s", sound_id, sound_path);
-
-    while (!feof(file)) {
-        size_t read_size;
-        int written;
-
-        if (sfx_playback_should_abort(generation)) {
-            ESP_LOGI(TAG, "Stopping local sfx '%s' due to new audio request", sound_id);
-            break;
-        }
-
-        read_size = fread(buffer, 1, sizeof(buffer), file);
-        if (read_size == 0U) {
-            break;
-        }
-
-        written = hal_audio_write(buffer, (int)read_size);
-        if (written != (int)read_size) {
-            ESP_LOGW(TAG, "Incomplete sfx playback '%s': %d/%u", sound_id, written, (unsigned int)read_size);
-            break;
-        }
+    if (use_prefetched_audio) {
+        ESP_LOGI(TAG,
+                 "Playing local sfx '%s' from %s via %s prefetch (%u bytes, chunk=%u)",
+                 sound_id,
+                 sound_path,
+                 loaded_in_psram ? "psram" : "heap",
+                 (unsigned int)audio_size,
+                 (unsigned int)SFX_STREAM_CHUNK_SIZE);
+        sfx_playback_buffered(sound_id, generation, audio_data, audio_size);
+    } else {
+        ESP_LOGI(TAG,
+                 "Playing local sfx '%s' from %s via streaming fallback (chunk=%u)",
+                 sound_id,
+                 sound_path,
+                 (unsigned int)SFX_STREAM_CHUNK_SIZE);
+        sfx_playback_streaming(sound_id, generation, file);
     }
 
-    fclose(file);
+    if (file != NULL) {
+        fclose(file);
+    }
+    free(audio_data);
     if (audio_started) {
-        hal_audio_stop();
-        hal_audio_set_playback_mode(false);
-        hal_audio_set_sample_rate(16000);
+        handoff_to_cloud_audio = sfx_is_cloud_audio_busy();
+        if (handoff_to_cloud_audio) {
+            ESP_LOGI(TAG, "Handing off audio path from local sfx '%s' to cloud audio", sound_id);
+        } else {
+            hal_audio_stop();
+            hal_audio_set_playback_mode(false);
+            hal_audio_set_sample_rate(16000);
+        }
     }
     sfx_set_local_busy(false);
 }

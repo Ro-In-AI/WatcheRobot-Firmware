@@ -52,6 +52,18 @@ int discovery_init(void);
 int discovery_start(server_info_t *info);
 
 /**
+ * @brief Start service discovery with a caller-provided timeout
+ *
+ * This is useful during boot where we want a shorter discovery window so
+ * startup can continue even when the cloud service is temporarily offline.
+ *
+ * @param info Pointer to store discovered server info
+ * @param timeout_ms Discovery timeout in milliseconds. Values <= 0 use the default.
+ * @return 0 on success (server found), -1 on failure/timeout
+ */
+int discovery_start_with_timeout(server_info_t *info, int timeout_ms);
+
+/**
  * @brief Get discovered server URL
  *
  * Formats the discovered server info into a WebSocket URL.

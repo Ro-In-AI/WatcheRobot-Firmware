@@ -31,7 +31,7 @@
 #define WS_TIMEOUT_MS 10000
 #define WS_URL_MAX_LEN 128
 #define WS_BUFFER_SIZE 65536
-#define WS_TASK_STACK 16384
+#define WS_TASK_STACK 12288
 #define WS_RESPONSE_TIMEOUT_MS 30000
 #define WS_BINARY_HEADER_LEN 14
 #define WS_BINARY_MAGIC "WSPK"
@@ -1113,8 +1113,6 @@ void ws_handle_tts_binary(const uint8_t *data, int len) {
         ESP_LOGI(TAG, "TTS started, first chunk: %d bytes", len);
         s_waiting_for_response = false;
         sfx_service_set_cloud_audio_busy(true);
-        sfx_service_stop();
-        behavior_state_set("speaking");
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
         voice_recorder_pause_wake_word();
@@ -1122,8 +1120,14 @@ void ws_handle_tts_binary(const uint8_t *data, int len) {
 
         hal_audio_set_playback_mode(true);
         hal_audio_set_sample_rate(24000);
-        hal_audio_start();
+        if (hal_audio_start() != 0) {
+            ESP_LOGW(TAG, "Failed to start playback for TTS");
+            sfx_service_set_cloud_audio_busy(false);
+            ws_resume_wake_word_after_tts();
+            return;
+        }
         s_tts_playing = true;
+        behavior_state_set("speaking");
     }
 
     written = hal_audio_write(data, len);

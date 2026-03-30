@@ -123,12 +123,13 @@ int discovery_init(void) {
 /* Public: Start service discovery                                     */
 /* ------------------------------------------------------------------ */
 
-int discovery_start(server_info_t *info) {
+int discovery_start_with_timeout(server_info_t *info, int timeout_ms) {
     if (!g_initialized) {
         ESP_LOGE(TAG, "Discovery not initialized");
         return -1;
     }
 
+    int effective_timeout_ms = timeout_ms > 0 ? timeout_ms : DISCOVERY_TIMEOUT_MS;
     int sock = -1;
     int ret = -1;
     char tx_buf[TX_BUF_SIZE];
@@ -185,7 +186,7 @@ int discovery_start(server_info_t *info) {
         /* Continue anyway - we can still receive via unicast */
     }
 
-    ESP_LOGI(TAG, "Starting discovery (port %d, timeout %d ms)...", DISCOVERY_PORT, DISCOVERY_TIMEOUT_MS);
+    ESP_LOGI(TAG, "Starting discovery (port %d, timeout %d ms)...", DISCOVERY_PORT, effective_timeout_ms);
 
     int64_t start_time = esp_timer_get_time() / 1000; /* ms */
     int retry_count = 0;
@@ -193,7 +194,7 @@ int discovery_start(server_info_t *info) {
     while (1) {
         /* Check timeout */
         int64_t elapsed = (esp_timer_get_time() / 1000) - start_time;
-        if (elapsed >= DISCOVERY_TIMEOUT_MS) {
+        if (elapsed >= effective_timeout_ms) {
             ESP_LOGW(TAG, "Discovery timeout after %lld ms", elapsed);
             break;
         }
@@ -240,13 +241,28 @@ int discovery_start(server_info_t *info) {
 
         /* Reset retry count periodically */
         if (retry_count >= DISCOVERY_RETRY_COUNT) {
-            vTaskDelay(pdMS_TO_TICKS(DISCOVERY_INTERVAL_MS - 1500));
+            int64_t remaining_ms = effective_timeout_ms - ((esp_timer_get_time() / 1000) - start_time);
+            int delay_ms = DISCOVERY_INTERVAL_MS - 1500;
+
+            if (delay_ms < 0) {
+                delay_ms = 0;
+            }
+            if (remaining_ms > 0 && delay_ms > remaining_ms) {
+                delay_ms = (int)remaining_ms;
+            }
+            if (delay_ms > 0) {
+                vTaskDelay(pdMS_TO_TICKS(delay_ms));
+            }
             retry_count = 0;
         }
     }
 
     close(sock);
     return ret;
+}
+
+int discovery_start(server_info_t *info) {
+    return discovery_start_with_timeout(info, DISCOVERY_TIMEOUT_MS);
 }
 
 /* ------------------------------------------------------------------ */

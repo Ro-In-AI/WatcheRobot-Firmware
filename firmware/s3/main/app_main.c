@@ -33,6 +33,7 @@
 #define RESTART_CLICK_COUNT 5
 #define STARTUP_BEHAVIOR_POLL_MS 50
 #define STARTUP_BEHAVIOR_TIMEOUT_MS 10000
+#define BOOT_DISCOVERY_TIMEOUT_MS 5000
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;
@@ -239,7 +240,7 @@ void app_main(void) {
     boot_anim_set_text("Discovering...");
     discovery_init();
     server_info_t server_info = {0};
-    if (discovery_start(&server_info) == 0) {
+    if (discovery_start_with_timeout(&server_info, BOOT_DISCOVERY_TIMEOUT_MS) == 0) {
         if (server_info.protocol_version[0] == '\0' ||
             strcmp(server_info.protocol_version, WATCHER_PROTOCOL_VERSION) != 0) {
             ESP_LOGE(TAG, "Protocol mismatch: server=%s expected=%s",
@@ -258,7 +259,7 @@ void app_main(void) {
             cloud_ready = true;
         }
     } else {
-        ESP_LOGW(TAG, "Discovery failed, continuing in BLE-only mode");
+        ESP_LOGW(TAG, "Discovery failed within %d ms, continuing in BLE-only mode", BOOT_DISCOVERY_TIMEOUT_MS);
     }
 
     if (cloud_ready) {
