@@ -112,6 +112,26 @@ function Resolve-IdfPath {
     throw "未找到 ESP-IDF。请先设置 IDF_PATH，或确保 build/project_description.json 中包含有效的 idf_path。"
 }
 
+function Resolve-IdfBootstrapScript {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedIdfPath
+    )
+
+    $installRoot = Split-Path -Parent (Split-Path -Parent $ResolvedIdfPath)
+    $initializeScript = Join-Path $installRoot "Initialize-Idf.ps1"
+    if (Test-Path $initializeScript) {
+        return $initializeScript
+    }
+
+    $exportScript = Join-Path $ResolvedIdfPath "export.ps1"
+    if (Test-Path $exportScript) {
+        return $exportScript
+    }
+
+    throw "未找到 ESP-IDF 引导脚本。已检查: $initializeScript, $exportScript"
+}
+
 function Resolve-FlashPort {
     param(
         [string]$RequestedPort,
@@ -240,7 +260,10 @@ function Invoke-BoundedMonitor {
         [string]$ResolvedBuildPath,
 
         [Parameter(Mandatory = $true)]
-        [string]$IdfExportScript,
+        [string]$IdfBootstrapScript,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedIdfPath,
 
         [Parameter(Mandatory = $true)]
         [string[]]$MonitorIdfArgs,
@@ -277,7 +300,8 @@ function Invoke-BoundedMonitor {
 if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
     `$IsWindows = `$true
 }
-. '$($IdfExportScript -replace "'", "''")' *> `$null
+`$env:IDF_PATH = '$($ResolvedIdfPath -replace "'", "''")'
+. '$($IdfBootstrapScript -replace "'", "''")' | Out-Null
 if (-not (Get-Command 'idf.py' -ErrorAction SilentlyContinue)) {
     throw 'ESP-IDF 环境已加载，但未找到 idf.py 函数。'
 }
@@ -396,11 +420,7 @@ $resolvedPort = Resolve-FlashPort -RequestedPort $Port `
     -AllowHighestPortAutoSelect:$AutoSelectHighestPort
 
 $idfPath = Resolve-IdfPath -ResolvedProjectPath $resolvedProjectPath -ResolvedBuildPath $resolvedBuildPath
-$idfExportScript = Join-Path $idfPath "export.ps1"
-
-if (-not (Test-Path $idfExportScript)) {
-    throw "未找到 ESP-IDF 导出脚本: $idfExportScript"
-}
+$idfBootstrapScript = Resolve-IdfBootstrapScript -ResolvedIdfPath $idfPath
 
 $flashArgs = @()
 if ($resolvedBuildPath) {
@@ -469,7 +489,8 @@ try {
     if (-not (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
         $IsWindows = $true
     }
-    . $idfExportScript
+    $env:IDF_PATH = $idfPath
+    . $idfBootstrapScript | Out-Null
     if (-not (Get-Command "idf.py" -ErrorAction SilentlyContinue)) {
         throw "ESP-IDF 环境已加载，但未找到 idf.py 函数。"
     }
@@ -487,7 +508,8 @@ try {
         $monitorResult = Invoke-BoundedMonitor -ResolvedProjectPath $resolvedProjectPath `
             -ResolvedPort $resolvedPort `
             -ResolvedBuildPath $resolvedBuildPath `
-            -IdfExportScript $idfExportScript `
+            -IdfBootstrapScript $idfBootstrapScript `
+            -ResolvedIdfPath $idfPath `
             -MonitorIdfArgs $monitorArgs `
             -LineLimit $MonitorMaxLines `
             -TimeLimitSeconds $MonitorSeconds `
