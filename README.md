@@ -22,12 +22,13 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current test release target: `0.0.91`
-- This release focuses on Wi-Fi configuration cleanup and audio pipeline stabilization:
-  - Hardcoded boot-time test Wi-Fi credentials have been removed from firmware startup
-  - Devices now use stored credentials or wait for BLE provisioning on first setup
-  - WebSocket TTS playback now supports fragmented binary audio frames
-  - Voice upload is gated on cloud session readiness with clearer connection diagnostics
+- Current test release target: `0.0.92`
+- This release focuses on audio playback smoothness and voice-session stability:
+  - Local SFX now uses PSRAM prefetch and larger playback chunks to reduce short stutters
+  - TTS start now takes over the audio path cleanly from local SFX without bouncing back into recording mode
+  - WebSocket TTS playback keeps fragmented audio/text state across packets instead of dropping streamed replies
+  - Voice upload uses more tolerant WebSocket timeouts, higher client priority, and clearer connection diagnostics
+  - Recording freezes the listening animation to reduce UI pressure during audio upload
 - `0.1.0` is reserved for the fully integrated and validated milestone after cross-feature bring-up
 
 ---

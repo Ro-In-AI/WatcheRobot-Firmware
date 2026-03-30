@@ -11,6 +11,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.0.92] - 2026-03-30
+
+### Fixed
+- Local SFX playback now hands the audio path cleanly to cloud TTS instead of briefly switching back to recording mode during reply start
+- Recording upload no longer drops the WebSocket connection as easily under low-memory UI load
+
+### Changed
+- Local SFX now prefers PSRAM prefetch with larger playback chunks to reduce SPIFFS read jitter and short stutters
+- WebSocket TTS playback now streams fragmented binary audio frames directly and keeps fragmented text/binary state across packets
+- Boot-time discovery now uses a bounded timeout so the device can continue startup in BLE-only mode when the cloud server is unavailable
+- WebSocket recording/upload path now uses longer send/network timeouts, higher client task priority, keep-alive, and richer error diagnostics
+- Listening UI is frozen to a static frame during recording to reduce animation pressure while voice data is uploading
+
+### Notes
+- Release focus: audio playback smoothness, TTS start handoff, and WebSocket stability during voice recording
+
+---
+
 ## [0.0.91] - 2026-03-30
 
 ### Changed
