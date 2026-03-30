@@ -22,7 +22,7 @@
 #ifdef CONFIG_WATCHER_ANIM_FPS
 #define EMOJI_ANIM_INTERVAL_MS (1000 / CONFIG_WATCHER_ANIM_FPS)
 #else
-#define EMOJI_ANIM_INTERVAL_MS 33 /* 30fps */
+#define EMOJI_ANIM_INTERVAL_MS 100 /* 10fps */
 #endif
 
 /**

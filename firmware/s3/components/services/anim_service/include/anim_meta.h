@@ -54,7 +54,7 @@ anim_config_t *anim_meta_get_config(emoji_anim_type_t type);
  * Returns type-specific FPS if set, otherwise default FPS.
  *
  * @param type Animation type
- * @return FPS value (default 30 if not configured)
+ * @return FPS value (default 10 or CONFIG_WATCHER_ANIM_FPS if not configured)
  */
 int anim_meta_get_fps(emoji_anim_type_t type);
 
@@ -69,7 +69,7 @@ bool anim_meta_should_loop(emoji_anim_type_t type);
 /**
  * @brief Get default FPS value
  *
- * @return Default FPS (30 if not configured)
+ * @return Default FPS (10 or CONFIG_WATCHER_ANIM_FPS if not configured)
  */
 int anim_meta_get_default_fps(void);
 

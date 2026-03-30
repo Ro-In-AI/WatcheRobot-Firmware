@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -16,7 +17,11 @@
 #define ANIM_META_PATH "/spiffs/anim/anim_meta.json"
 
 /* Default values */
-#define DEFAULT_FPS 30
+#ifdef CONFIG_WATCHER_ANIM_FPS
+#define DEFAULT_FPS CONFIG_WATCHER_ANIM_FPS
+#else
+#define DEFAULT_FPS 10
+#endif
 #define DEFAULT_LOOP true
 
 /* Metadata state */

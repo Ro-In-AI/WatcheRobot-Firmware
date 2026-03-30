@@ -160,7 +160,7 @@ def main() -> int:
     parser.add_argument("--spiffs-dir", default="spiffs", help="Path to the SPIFFS asset directory")
     parser.add_argument("--output-dir", default="spiffs/anim", help="Where generated assets should be written")
     parser.add_argument("--import-dir", help="Directory containing watcher0327png-style animation folders")
-    parser.add_argument("--fps", type=int, default=30, help="Default FPS stored in manifest entries")
+    parser.add_argument("--fps", type=int, default=10, help="Default FPS stored in manifest entries")
     args = parser.parse_args()
 
     spiffs_dir = Path(args.spiffs_dir).resolve()

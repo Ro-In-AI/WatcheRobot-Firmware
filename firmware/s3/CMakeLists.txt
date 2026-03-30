@@ -35,7 +35,7 @@ project(WatcheRobot-S3)
 if(DEFINED CONFIG_WATCHER_ANIM_FPS)
     set(ANIM_DEFAULT_FPS ${CONFIG_WATCHER_ANIM_FPS})
 else()
-    set(ANIM_DEFAULT_FPS 30)
+    set(ANIM_DEFAULT_FPS 10)
 endif()
 
 set(ANIM_IMPORT_DIR ${CMAKE_SOURCE_DIR}/assets/watcher0327png)
