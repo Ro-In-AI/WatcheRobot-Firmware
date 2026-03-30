@@ -22,8 +22,10 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current test release target: `0.0.9`
-- This release focuses on audio pipeline stabilization:
+- Current test release target: `0.0.91`
+- This release focuses on Wi-Fi configuration cleanup and audio pipeline stabilization:
+  - Hardcoded boot-time test Wi-Fi credentials have been removed from firmware startup
+  - Devices now use stored credentials or wait for BLE provisioning on first setup
   - WebSocket TTS playback now supports fragmented binary audio frames
   - Voice upload is gated on cloud session readiness with clearer connection diagnostics
 - `0.1.0` is reserved for the fully integrated and validated milestone after cross-feature bring-up
@@ -62,9 +64,10 @@ C:\Espressif\frameworks\esp-idf-v5.2.1\export.ps1
 git clone https://github.com/Ro-In-AI/WatcheRobot-Firmware.git
 cd WatcheRobot-Firmware/firmware/s3
 
-# Edit WiFi credentials and server settings
+# Edit server settings if needed. Wi-Fi credentials are no longer baked into firmware;
+# first-time setup should use BLE provisioning or previously stored STA credentials.
 idf.py menuconfig
-# Navigate: Watcher Configuration → WiFi / Server
+# Navigate: Watcher Configuration → Server / BLE
 ```
 
 ### 3. Build & Flash

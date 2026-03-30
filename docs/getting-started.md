@@ -57,11 +57,11 @@ Navigate to **Watcher Configuration** and set:
 
 | Option | Description | Example |
 |--------|-------------|---------|
-| `WATCHER_WIFI_SSID` | Your WiFi network name | `MyHomeWifi` |
-| `WATCHER_WIFI_PASSWORD` | WiFi password | `mypassword` |
 | `WATCHER_SERVO_X_GPIO` | X-axis servo GPIO | `19` (default) |
 | `WATCHER_SERVO_Y_GPIO` | Y-axis servo GPIO | `20` (default) |
-| `WATCHER_BLE_ENABLE` | Enable BLE | `n` to start |
+| `WATCHER_BLE_ENABLE` | Enable BLE provisioning/control path | `y` |
+
+Wi-Fi credentials are not hardcoded into the firmware. On first boot, use BLE provisioning to send the target SSID/password, or let the device reconnect with previously stored STA credentials.
 
 Save and exit (`S` → `Q`).
 

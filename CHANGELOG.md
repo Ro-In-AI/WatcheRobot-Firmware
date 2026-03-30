@@ -11,6 +11,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.0.91] - 2026-03-30
+
+### Changed
+- Removed the boot-time hardcoded hidden Wi-Fi credentials from firmware startup
+- Boot now uses only stored STA credentials and otherwise waits for BLE provisioning to provide Wi-Fi
+
+### Notes
+- Release focus: Wi-Fi configuration cleanup for local device testing and BLE provisioning validation
+
+---
+
 ## [0.0.9] - 2026-03-29
 
 ### Fixed

@@ -17,7 +17,7 @@
 
 ### FZ-01 Wi-Fi 接入层
 - 连接模式：`STA`。
-- 初版凭据来源：固件内置 SSID/PASS。
+- 当前凭据来源：已保存 STA 配置；若未配置则通过 BLE provisioning 下发。
 - 连接超时：`10s`；断线自动重连。
 - 鉴权阈值：`WPA2_PSK`。
 
@@ -178,7 +178,7 @@
   - 终端显示层最终会截断到 `30` 字符并追加 `...`
 
 ## 4. 暂不冻结（Freeze Later）
-- BLE GATT + Wi-Fi Provisioning（当前为 stub）。
+- BLE 配网 UX / 安全增强（当前已支持基础 SSID/PASS 下发与连接）。
 - OTA 真正写分区与校验切换流程（当前为 stub / nack 占位）。
 - 更复杂的视频多路复用、分片与重传策略。
 - SSCMA 推理结果对云侧的结构化上报协议。
@@ -203,7 +203,7 @@
 
 ## 7. 风险记录（不阻塞本次冻结）
 - Discovery 与 WS 目前均未做链路鉴权/加密。
-- Wi-Fi 仍为硬编码凭据。
+- Wi-Fi 配网当前仍依赖本地已保存 STA 配置或 BLE 下发，尚未加入更严格的凭据保护策略。
 - 本地仍保留 `ctrl.robot.state.set` 与 `evt.camera.state` 兼容扩展；它们不是 `device_communication_protocol.md v0.1.5` 的硬件端主消息集合。
 - 当前 camera media 走 `JPEG/MJPEG`，不是压缩视频码流；带宽与 CPU 成本都由服务端/网关承担解 JPEG。
 - 当前板端刷机仍偶发无法自动进入下载模式，可能需要手动 `BOOT + RESET`。
