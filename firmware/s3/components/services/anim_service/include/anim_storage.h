@@ -205,6 +205,13 @@ typedef struct {
     lv_img_dsc_t img_dsc;
 } anim_warm_frame_t;
 
+typedef struct {
+    bool can_build;
+    size_t estimated_bytes;
+    size_t active_bytes;
+    size_t free_spiram;
+} anim_hot_build_budget_t;
+
 /**
  * @brief Initialize SPIFFS, metadata, and the animation catalog.
  */
@@ -236,6 +243,11 @@ const lv_img_dsc_t *anim_warm_get_first_frame(emoji_anim_type_t type);
 int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id);
 
 /**
+ * @brief Check whether the requested type can be built into the hot cache.
+ */
+bool anim_hot_can_build_type(emoji_anim_type_t type, anim_hot_build_budget_t *out_budget);
+
+/**
  * @brief Commit the prepared hot cache and make it active.
  */
 int anim_hot_commit_prepared(emoji_anim_type_t type, uint32_t generation_id);
@@ -254,6 +266,11 @@ bool anim_hot_is_active_type(emoji_anim_type_t type);
  * @brief Get the currently active hot cache type.
  */
 emoji_anim_type_t anim_hot_get_active_type(void);
+
+/**
+ * @brief Release the currently active hot cache.
+ */
+void anim_hot_release_active(void);
 
 /**
  * @brief Get the active hot cache frame count.

@@ -34,7 +34,7 @@ static int intro_frame_count = 0;
 /* Forward declarations */
 static void boot_anim_countdown_task(void *param);
 static void boot_anim_intro_timer_cb(lv_timer_t *timer);
-static void boot_anim_stop_intro(void);
+static void boot_anim_stop_intro_locked(void);
 
 /* ------------------------------------------------------------------ */
 /* Public: Initialize boot animation                                   */
@@ -133,14 +133,13 @@ void boot_anim_start_intro(emoji_anim_type_t type, int max_frames, uint32_t inte
 
     lvgl_port_lock(0);
     lv_img_set_src(intro_img, img);
-    lvgl_port_unlock();
-
     if (intro_timer != NULL) {
         lv_timer_set_period(intro_timer, interval_ms);
         lv_timer_resume(intro_timer);
     } else {
         intro_timer = lv_timer_create(boot_anim_intro_timer_cb, interval_ms, NULL);
     }
+    lvgl_port_unlock();
 
     ESP_LOGI(TAG, "Boot intro started: %s (%d frames @ %lums)", emoji_type_name(type), intro_frame_count,
              (unsigned long)interval_ms);
@@ -195,10 +194,11 @@ void boot_anim_show_error(const char *error_msg) {
     in_error_mode = true;
 
     ESP_LOGE(TAG, "Boot error: %s", error_msg);
-    boot_anim_stop_intro();
+
+    lvgl_port_lock(0);
+    boot_anim_stop_intro_locked();
 
     /* Hide progress elements */
-    lvgl_port_lock(0);
     lv_obj_add_flag(progress_arc, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(percent_label, LV_OBJ_FLAG_HIDDEN);
 
@@ -280,11 +280,9 @@ static void boot_anim_intro_timer_cb(lv_timer_t *timer) {
     }
 }
 
-static void boot_anim_stop_intro(void) {
+static void boot_anim_stop_intro_locked(void) {
     if (intro_timer != NULL) {
-        lvgl_port_lock(0);
         lv_timer_del(intro_timer);
-        lvgl_port_unlock();
         intro_timer = NULL;
     }
 
@@ -303,7 +301,8 @@ void boot_anim_finish(void) {
 
     /* Brief delay to show 100% */
     vTaskDelay(pdMS_TO_TICKS(300));
-    boot_anim_stop_intro();
+    lvgl_port_lock(0);
+    boot_anim_stop_intro_locked();
 
     /* Clear child pointers - do NOT delete the screen here.
      * The caller must load a new screen first, then call
@@ -314,6 +313,7 @@ void boot_anim_finish(void) {
     status_label = NULL;
     error_img = NULL;
     countdown_label = NULL;
+    lvgl_port_unlock();
 
     ESP_LOGI(TAG, "Boot animation finished");
 }

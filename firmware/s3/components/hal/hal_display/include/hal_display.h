@@ -1,6 +1,8 @@
 #ifndef HAL_DISPLAY_H
 #define HAL_DISPLAY_H
 
+#include <stdbool.h>
+
 /**
  * Set text on display
  * @param text Text to display
@@ -15,6 +17,12 @@ int hal_display_set_text(const char *text, int font_size);
  * @return 0 on success, -1 on error
  */
 int hal_display_set_emoji(int emoji_id);
+
+/**
+ * Query the emoji that is actually being displayed right now.
+ * Returns the display_ui emoji ID, or -1 if unavailable.
+ */
+int hal_display_get_current_emoji_id(void);
 
 /**
  * @brief Minimal display init for boot animation
@@ -53,5 +61,10 @@ int hal_display_ui_init(void);
  * @return 0 on success, -1 on error
  */
 int hal_display_input_init(void);
+
+/**
+ * @brief Return whether knob/encoder input is attached successfully
+ */
+bool hal_display_has_knob_input(void);
 
 #endif /* HAL_DISPLAY_H */

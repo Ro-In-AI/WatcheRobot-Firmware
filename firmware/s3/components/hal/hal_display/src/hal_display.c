@@ -8,10 +8,13 @@
 #include "anim_storage.h"
 #include "boot_anim.h"
 #include "display_ui.h"
+#include "driver/gpio.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hal_button.h"
 #include "lvgl.h"
 #include "sensecap-watcher.h"
 
@@ -26,6 +29,9 @@ extern const lv_font_t lv_font_simsun_16_cjk;
 
 #define TAG "HAL_DISPLAY"
 #define WATCHER_LCD_SAFE_TRANS_QUEUE_DEPTH 1
+#define GENERAL_I2C_RECOVERY_PULSES 9
+#define GENERAL_I2C_MAX_PREPARE_ATTEMPTS 3
+#define GENERAL_I2C_BITBANG_DELAY_US 8
 
 static lv_obj_t *label_text = NULL;
 static lv_obj_t *img_emoji = NULL;
@@ -40,6 +46,248 @@ static esp_lcd_panel_io_handle_t s_panel_io_handle = NULL;
 static esp_lcd_panel_handle_t s_panel_handle = NULL;
 static esp_lcd_panel_io_handle_t s_touch_io_handle = NULL;
 static esp_lcd_touch_handle_t s_touch_handle = NULL;
+
+static void hal_display_general_i2c_delay(void) {
+    esp_rom_delay_us(GENERAL_I2C_BITBANG_DELAY_US);
+}
+
+static esp_err_t hal_display_general_i2c_bus_mode(bool output_mode, int sda_level, int scl_level) {
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << BSP_GENERAL_I2C_SDA) | (1ULL << BSP_GENERAL_I2C_SCL),
+        .mode = output_mode ? GPIO_MODE_INPUT_OUTPUT_OD : GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+
+    esp_err_t ret = gpio_config(&cfg);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    if (output_mode) {
+        gpio_set_level(BSP_GENERAL_I2C_SDA, sda_level);
+        gpio_set_level(BSP_GENERAL_I2C_SCL, scl_level);
+        hal_display_general_i2c_delay();
+    }
+
+    return ESP_OK;
+}
+
+static void hal_display_general_i2c_stop(void) {
+    (void)hal_display_general_i2c_bus_mode(true, 0, 0);
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 0);
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+    hal_display_general_i2c_delay();
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 1);
+    hal_display_general_i2c_delay();
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 1);
+    hal_display_general_i2c_delay();
+}
+
+static void hal_display_general_i2c_start(void) {
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 1);
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 1);
+    hal_display_general_i2c_delay();
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 0);
+    hal_display_general_i2c_delay();
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+    hal_display_general_i2c_delay();
+}
+
+static bool hal_display_general_i2c_write_byte(uint8_t value) {
+    int bit;
+
+    for (bit = 7; bit >= 0; --bit) {
+        gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+        gpio_set_level(BSP_GENERAL_I2C_SDA, (value >> bit) & 0x1);
+        hal_display_general_i2c_delay();
+        gpio_set_level(BSP_GENERAL_I2C_SCL, 1);
+        hal_display_general_i2c_delay();
+    }
+
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 1);
+    hal_display_general_i2c_delay();
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 1);
+    hal_display_general_i2c_delay();
+    return gpio_get_level(BSP_GENERAL_I2C_SDA) == 0;
+}
+
+static uint8_t hal_display_general_i2c_read_byte(bool ack) {
+    uint8_t value = 0;
+    int bit;
+
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 1);
+    for (bit = 7; bit >= 0; --bit) {
+        gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+        hal_display_general_i2c_delay();
+        gpio_set_level(BSP_GENERAL_I2C_SCL, 1);
+        hal_display_general_i2c_delay();
+        if (gpio_get_level(BSP_GENERAL_I2C_SDA) != 0) {
+            value |= (uint8_t)(1U << bit);
+        }
+    }
+
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+    gpio_set_level(BSP_GENERAL_I2C_SDA, ack ? 0 : 1);
+    hal_display_general_i2c_delay();
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 1);
+    hal_display_general_i2c_delay();
+    gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 1);
+    hal_display_general_i2c_delay();
+    return value;
+}
+
+static bool hal_display_general_i2c_read_input_reg(uint16_t *out_value) {
+    uint8_t low = 0;
+    uint8_t high = 0;
+
+    if (out_value == NULL) {
+        return false;
+    }
+    if (hal_display_general_i2c_bus_mode(true, 1, 1) != ESP_OK) {
+        return false;
+    }
+
+    hal_display_general_i2c_start();
+    if (!hal_display_general_i2c_write_byte((uint8_t)(ESP_IO_EXPANDER_I2C_PCA9535_ADDRESS_001 << 1))) {
+        hal_display_general_i2c_stop();
+        return false;
+    }
+    if (!hal_display_general_i2c_write_byte(0x00)) {
+        hal_display_general_i2c_stop();
+        return false;
+    }
+
+    hal_display_general_i2c_start();
+    if (!hal_display_general_i2c_write_byte((uint8_t)((ESP_IO_EXPANDER_I2C_PCA9535_ADDRESS_001 << 1) | 0x1))) {
+        hal_display_general_i2c_stop();
+        return false;
+    }
+
+    low = hal_display_general_i2c_read_byte(true);
+    high = hal_display_general_i2c_read_byte(false);
+    hal_display_general_i2c_stop();
+    *out_value = ((uint16_t)high << 8) | low;
+    return true;
+}
+
+static void hal_display_recover_general_i2c_bus(void) {
+    int pulse;
+
+    if (hal_display_general_i2c_bus_mode(true, 1, 1) != ESP_OK) {
+        return;
+    }
+
+    gpio_set_level(BSP_GENERAL_I2C_SDA, 1);
+    for (pulse = 0; pulse < GENERAL_I2C_RECOVERY_PULSES; ++pulse) {
+        gpio_set_level(BSP_GENERAL_I2C_SCL, 0);
+        hal_display_general_i2c_delay();
+        gpio_set_level(BSP_GENERAL_I2C_SCL, 1);
+        hal_display_general_i2c_delay();
+    }
+
+    hal_display_general_i2c_stop();
+    (void)hal_display_general_i2c_bus_mode(false, 1, 1);
+}
+
+static bool hal_display_prepare_general_i2c_bus(void) {
+    int attempt;
+
+    for (attempt = 1; attempt <= GENERAL_I2C_MAX_PREPARE_ATTEMPTS; ++attempt) {
+        int sda_level;
+        int scl_level;
+        bool read_ok;
+        uint16_t input_reg = 0;
+
+        if (hal_display_general_i2c_bus_mode(false, 1, 1) != ESP_OK) {
+            ESP_LOGW(TAG, "General I2C preflight failed to configure GPIOs");
+            return false;
+        }
+
+        sda_level = gpio_get_level(BSP_GENERAL_I2C_SDA);
+        scl_level = gpio_get_level(BSP_GENERAL_I2C_SCL);
+        read_ok = hal_display_general_i2c_read_input_reg(&input_reg);
+
+        ESP_LOGI(TAG,
+                 "General I2C preflight attempt %d/%d: SDA=%d SCL=%d read_ok=%d input_reg=0x%04x",
+                 attempt,
+                 GENERAL_I2C_MAX_PREPARE_ATTEMPTS,
+                 sda_level,
+                 scl_level,
+                 read_ok ? 1 : 0,
+                 (unsigned int)input_reg);
+
+        if (read_ok) {
+            gpio_reset_pin(BSP_GENERAL_I2C_SDA);
+            gpio_reset_pin(BSP_GENERAL_I2C_SCL);
+            return true;
+        }
+
+        hal_display_recover_general_i2c_bus();
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    gpio_reset_pin(BSP_GENERAL_I2C_SDA);
+    gpio_reset_pin(BSP_GENERAL_I2C_SCL);
+    return false;
+}
+
+static const char *hal_display_emoji_name(int emoji_id) {
+    switch (emoji_id) {
+    case 0:
+        return "standby";
+    case 1:
+        return "happy";
+    case 2:
+        return "listening";
+    case 3:
+        return "thinking";
+    case 4:
+        return "processing";
+    case 5:
+        return "speaking";
+    case 6:
+        return "error";
+    case 7:
+        return "custom1";
+    case 8:
+        return "custom2";
+    case 9:
+        return "custom3";
+    default:
+        return "unknown";
+    }
+}
+
+static int hal_display_anim_type_to_emoji_id(emoji_anim_type_t type) {
+    switch (type) {
+    case EMOJI_ANIM_STANDBY:
+        return EMOJI_STANDBY;
+    case EMOJI_ANIM_HAPPY:
+        return EMOJI_HAPPY;
+    case EMOJI_ANIM_LISTENING:
+        return EMOJI_LISTENING;
+    case EMOJI_ANIM_THINKING:
+        return EMOJI_THINKING;
+    case EMOJI_ANIM_PROCESSING:
+        return EMOJI_PROCESSING;
+    case EMOJI_ANIM_SPEAKING:
+        return EMOJI_SPEAKING;
+    case EMOJI_ANIM_ERROR:
+        return EMOJI_ERROR;
+    case EMOJI_ANIM_CUSTOM_1:
+        return EMOJI_CUSTOM_1;
+    case EMOJI_ANIM_CUSTOM_2:
+        return EMOJI_CUSTOM_2;
+    case EMOJI_ANIM_CUSTOM_3:
+        return EMOJI_CUSTOM_3;
+    default:
+        return -1;
+    }
+}
 
 /* Map display_ui emoji_type to unified internal animation types. */
 static emoji_anim_type_t map_emoji_type(int ui_emoji_id) {
@@ -342,6 +590,11 @@ int hal_display_minimal_init(void) {
 
     ESP_LOGI(TAG, "Minimal display init for boot animation...");
 
+    if (!hal_display_prepare_general_i2c_bus()) {
+        ESP_LOGE(TAG, "General I2C preflight failed before IO expander init");
+        return -1;
+    }
+
     /* 1. Initialize IO expander */
     if (bsp_io_expander_init() == NULL) {
         ESP_LOGE(TAG, "Failed to initialize IO expander");
@@ -549,8 +802,12 @@ int hal_display_input_init(void) {
 
     ESP_LOGI(TAG, "Initializing delayed display inputs...");
 
-    if (hal_display_init_knob_input() == NULL) {
-        ESP_LOGW(TAG, "Knob input initialization failed");
+    if (hal_button_io_ready()) {
+        if (hal_display_init_knob_input() == NULL) {
+            ESP_LOGW(TAG, "Knob input initialization failed");
+        }
+    } else {
+        ESP_LOGW(TAG, "Skipping knob input initialization because IO expander button probe failed");
     }
     if (hal_display_init_touch_input() == NULL) {
         ESP_LOGW(TAG, "Touch input initialization failed");
@@ -558,6 +815,10 @@ int hal_display_input_init(void) {
 
     inputs_initialized = (s_knob_indev != NULL) || (s_touch_indev != NULL);
     return inputs_initialized ? 0 : -1;
+}
+
+bool hal_display_has_knob_input(void) {
+    return s_knob_indev != NULL;
 }
 
 int hal_display_set_text(const char *text, int font_size) {
@@ -609,42 +870,26 @@ int hal_display_set_emoji(int emoji_id) {
         return -1;
     }
 
-    const char *emoji_name = "unknown";
-    switch (emoji_id) {
-    case 0:
-        emoji_name = "standby";
-        break;
-    case 1:
-        emoji_name = "happy";
-        break;
-    case 2:
-        emoji_name = "listening";
-        break;
-    case 3:
-        emoji_name = "thinking";
-        break;
-    case 4:
-        emoji_name = "processing";
-        break;
-    case 5:
-        emoji_name = "speaking";
-        break;
-    case 6:
-        emoji_name = "error";
-        break;
-    case 7:
-        emoji_name = "custom1";
-        break;
-    case 8:
-        emoji_name = "custom2";
-        break;
-    case 9:
-        emoji_name = "custom3";
-        break;
+    const char *emoji_name = hal_display_emoji_name(emoji_id);
+    emoji_anim_type_t displayed_type = emoji_anim_get_type();
+    if (!emoji_anim_is_switch_pending() && displayed_type == type) {
+        ESP_LOGI(TAG, "Set emoji request: %s -> %s animation applied", emoji_name, emoji_type_name(type));
+    } else {
+        ESP_LOGI(TAG,
+                 "Set emoji request: %s -> %s animation accepted, async preparation in progress (active=%s)",
+                 emoji_name,
+                 emoji_type_name(type),
+                 displayed_type == EMOJI_ANIM_NONE ? "none" : emoji_type_name(displayed_type));
+    }
+    return 0;
+}
+
+int hal_display_get_current_emoji_id(void) {
+    if (!is_initialized || !img_emoji) {
+        return -1;
     }
 
-    ESP_LOGI(TAG, "Set emoji: %s -> %s animation", emoji_name, emoji_type_name(type));
-    return 0;
+    return hal_display_anim_type_to_emoji_id(emoji_anim_get_type());
 }
 
 /**

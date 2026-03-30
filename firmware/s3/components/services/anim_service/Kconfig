@@ -7,7 +7,8 @@ menu "Watcher Animation Service"
         help
             Target frame rate for emoji animations.
             Higher values provide smoother animation but require faster frame decoding.
-            Default 10fps balances smoothness with lower decode and memory pressure.
+            Default 10fps balances smoothness with lower decode pressure and
+            more stable playback on current hardware.
 
     config WATCHER_ANIM_MAX_FRAMES_PER_TYPE
         int "Maximum frames per animation type"

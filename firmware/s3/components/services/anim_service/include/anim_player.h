@@ -1,12 +1,12 @@
 /**
  * @file anim_player.h
- * @brief Animation player with 30fps playback support
+ * @brief Animation player with configurable playback support
  *
  * Provides frame-based animation for emoji images using LVGL timers.
  * Supports multiple animation states with configurable frame rates.
  *
  * Features:
- * - 30fps default frame rate (configurable via Kconfig)
+ * - 10fps default frame rate (configurable via Kconfig)
  * - RGB565 cache for fast frame switching (<1ms latency)
  * - Lazy loading: only current animation type in PSRAM
  * - Type switch latency: <500ms
@@ -63,6 +63,12 @@ void emoji_anim_stop(void);
  * @return true if animation is active, false otherwise
  */
 bool emoji_anim_is_running(void);
+
+/**
+ * @brief Check if an animation switch is still pending async completion.
+ * @return true if the player is waiting for a new cache to commit.
+ */
+bool emoji_anim_is_switch_pending(void);
 
 /**
  * @brief Get current animation type

@@ -34,6 +34,11 @@
 #define STARTUP_BEHAVIOR_POLL_MS 50
 #define STARTUP_BEHAVIOR_TIMEOUT_MS 10000
 #define BOOT_DISCOVERY_TIMEOUT_MS 5000
+#ifdef CONFIG_WATCHER_ANIM_FPS
+#define BOOT_ANIM_INTERVAL_MS (1000U / CONFIG_WATCHER_ANIM_FPS)
+#else
+#define BOOT_ANIM_INTERVAL_MS 100U
+#endif
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;
@@ -41,7 +46,7 @@ static bool s_ble_only_mode = false;
 static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const char *ip_addr) {
     switch (status) {
     case WIFI_STATUS_CONNECTED:
-        ESP_LOGI(TAG, "WiFi provisioning success: ssid=%s ip=%s", ssid ? ssid : "<unknown>",
+        ESP_LOGI(TAG, "WiFi connected: ssid=%s ip=%s", ssid ? ssid : "<unknown>",
                  ip_addr ? ip_addr : "<no-ip>");
         if (s_waiting_for_wifi_provision) {
             boot_anim_set_text("WiFi Connected");
@@ -70,7 +75,7 @@ static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const
 
     case WIFI_STATUS_UNCONFIGURED:
     default:
-        ESP_LOGI(TAG, "WiFi unconfigured, waiting for BLE provisioning");
+        ESP_LOGI(TAG, "WiFi unconfigured");
         if (s_waiting_for_wifi_provision) {
             boot_anim_set_text("Open APP Set WiFi");
         } else if (s_ble_only_mode) {
@@ -187,9 +192,9 @@ void app_main(void) {
     /* 3. Initialize animation catalog and load boot assets only */
     boot_anim_set_text("Boot...");
     if (anim_catalog_init() == 0) {
-        if (emoji_load_type(EMOJI_ANIM_BOOT) > 0) {
-            /* Dedicated startup sequence: boot1.png ~ boot4.png */
-            boot_anim_start_intro(EMOJI_ANIM_BOOT, 4, 120);
+        int boot_frame_count = emoji_load_type(EMOJI_ANIM_BOOT);
+        if (boot_frame_count > 0) {
+            boot_anim_start_intro(EMOJI_ANIM_BOOT, boot_frame_count, BOOT_ANIM_INTERVAL_MS);
         }
         boot_anim_set_text("Preparing...");
     } else {
@@ -234,6 +239,7 @@ void app_main(void) {
         }
         s_waiting_for_wifi_provision = false;
     }
+    s_waiting_for_wifi_provision = false;
     boot_anim_set_progress(55);
 
     /* 7. Service discovery */
@@ -291,7 +297,11 @@ void app_main(void) {
         }
 
         /* Register encoder callbacks only after delayed input devices are attached. */
-        bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
+        if (hal_display_has_knob_input()) {
+            bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
+        } else {
+            ESP_LOGW(TAG, "Skipping %d-click restart callback because knob input is unavailable", RESTART_CLICK_COUNT);
+        }
 
         voice_recorder_init();
         if (voice_recorder_start() != 0) {

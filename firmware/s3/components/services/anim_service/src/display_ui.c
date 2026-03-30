@@ -1,5 +1,6 @@
 #include "display_ui.h"
 #include "hal_display.h"
+#include "esp_log.h"
 #include <ctype.h>
 #include <string.h>
 
@@ -8,10 +9,19 @@
 /* ------------------------------------------------------------------ */
 
 #define MAX_TEXT_LEN 128
+#define TAG "DISPLAY_UI"
 
 static char g_current_text[MAX_TEXT_LEN] = {0};
 static emoji_type_t g_current_emoji = EMOJI_STANDBY;
 static const int DEFAULT_FONT_SIZE = 24;
+
+static emoji_type_t sync_current_emoji_from_hal(void) {
+    int actual_emoji = hal_display_get_current_emoji_id();
+    if (actual_emoji >= 0 && actual_emoji < EMOJI_COUNT) {
+        g_current_emoji = (emoji_type_t)actual_emoji;
+    }
+    return g_current_emoji;
+}
 
 static int text_equals_current(const char *text) {
     if (text == NULL) {
@@ -50,6 +60,7 @@ void display_ui_init(void) {
 
     /* Initialize HAL display */
     hal_display_init();
+    sync_current_emoji_from_hal();
 }
 
 /* ------------------------------------------------------------------ */
@@ -109,6 +120,11 @@ emoji_type_t display_emoji_from_string(const char *emoji_str) {
 
 int display_update(const char *text, const char *emoji, int font_size, display_result_t *out_result) {
     emoji_type_t requested_emoji = EMOJI_UNKNOWN;
+    int text_changed = 0;
+    int emoji_changed = 0;
+    int emoji_request_attempted = 0;
+    emoji_type_t previous_emoji = sync_current_emoji_from_hal();
+    emoji_type_t actual_emoji = previous_emoji;
 
     if (out_result) {
         memset(out_result, 0, sizeof(*out_result));
@@ -117,12 +133,16 @@ int display_update(const char *text, const char *emoji, int font_size, display_r
     if (emoji) {
         requested_emoji = display_emoji_from_string(emoji);
         if (requested_emoji == EMOJI_UNKNOWN) {
+            ESP_LOGW(TAG, "Unknown emoji '%s', falling back to standby", emoji);
             requested_emoji = EMOJI_STANDBY;
         }
     }
 
+    text_changed = (text != NULL && !text_equals_current(text));
+    emoji_changed = (emoji != NULL && requested_emoji != previous_emoji);
+
     /* Update text if provided */
-    if (text && !text_equals_current(text)) {
+    if (text_changed) {
         int fs = (font_size > 0) ? font_size : DEFAULT_FONT_SIZE;
         if (hal_display_set_text(text, fs) != 0) {
             return -1;
@@ -137,15 +157,43 @@ int display_update(const char *text, const char *emoji, int font_size, display_r
     }
 
     /* Update emoji if provided */
-    if (emoji && requested_emoji != g_current_emoji) {
+    if (emoji_changed) {
+        emoji_request_attempted = 1;
         if (hal_display_set_emoji((int)requested_emoji) != 0) {
             return -1;
         }
-        g_current_emoji = requested_emoji;
+        actual_emoji = sync_current_emoji_from_hal();
 
-        if (out_result) {
+        if (out_result && actual_emoji != previous_emoji) {
             out_result->emoji_updated = 1;
-            out_result->emoji_id = (int)requested_emoji;
+            out_result->emoji_id = (int)actual_emoji;
+        }
+    }
+
+    if (text != NULL || emoji != NULL) {
+        if (!text_changed && !emoji_changed) {
+            ESP_LOGI(TAG, "Display update no-op text=%s emoji=%s current_emoji=%d",
+                     text != NULL ? "unchanged" : "skipped",
+                     emoji != NULL ? "unchanged" : "skipped",
+                     (int)g_current_emoji);
+        } else if (emoji_request_attempted && actual_emoji != requested_emoji) {
+            if (text_changed) {
+                ESP_LOGI(TAG,
+                         "Display update applied text; emoji pending requested=%d current_emoji=%d",
+                         (int)requested_emoji,
+                         (int)actual_emoji);
+            } else {
+                ESP_LOGI(TAG,
+                         "Display update accepted emoji request pending requested=%d current_emoji=%d",
+                         (int)requested_emoji,
+                         (int)actual_emoji);
+            }
+        } else if (text_changed && (actual_emoji != previous_emoji)) {
+            ESP_LOGI(TAG, "Display update applied text+emoji emoji_id=%d", (int)actual_emoji);
+        } else if (text_changed) {
+            ESP_LOGI(TAG, "Display update applied text only");
+        } else {
+            ESP_LOGI(TAG, "Display update applied emoji only emoji_id=%d", (int)actual_emoji);
         }
     }
 
@@ -176,5 +224,5 @@ int display_get_text(char *out_buf, int buf_size) {
 /* ------------------------------------------------------------------ */
 
 emoji_type_t display_get_emoji(void) {
-    return g_current_emoji;
+    return sync_current_emoji_from_hal();
 }

@@ -277,7 +277,7 @@ int wifi_provision(const char *ssid, const char *password)
     wifi_refresh_saved_config();
     s_connect_requested = true;
     wifi_set_status(WIFI_STATUS_CONNECTING);
-    ESP_LOGI(TAG, "Provisioned WiFi SSID via BLE: %s", s_saved_ssid);
+    ESP_LOGI(TAG, "Saved WiFi credentials: ssid=%s", s_saved_ssid);
 
     if (wifi_request_connect("wifi_provision") != 0) {
         wifi_set_status(WIFI_STATUS_DISCONNECTED);

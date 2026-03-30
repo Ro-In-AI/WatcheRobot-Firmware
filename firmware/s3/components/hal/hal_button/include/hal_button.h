@@ -18,6 +18,12 @@ typedef void (*button_callback_t)(bool pressed);
 int hal_button_init(button_callback_t callback);
 
 /**
+ * Probe whether the IO-expander-backed button input can be read reliably.
+ * @return true if the backend is readable, false otherwise
+ */
+bool hal_button_io_ready(void);
+
+/**
  * Check if button is currently pressed
  * @return true if pressed, false if not
  */

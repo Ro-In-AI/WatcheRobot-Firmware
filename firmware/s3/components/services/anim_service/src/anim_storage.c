@@ -634,6 +634,51 @@ static void free_hot_cache(anim_type_cache_t *cache) {
     memset(cache, 0, sizeof(*cache));
 }
 
+bool anim_hot_can_build_type(emoji_anim_type_t type, anim_hot_build_budget_t *out_budget) {
+    anim_hot_build_budget_t budget = {0};
+    const anim_catalog_type_info_t *info = NULL;
+
+    if (!anim_catalog_has_type(type)) {
+        if (out_budget != NULL) {
+            *out_budget = budget;
+        }
+        return false;
+    }
+
+    info = anim_catalog_get_type_info(type);
+    if (info == NULL) {
+        if (out_budget != NULL) {
+            *out_budget = budget;
+        }
+        return false;
+    }
+
+    if (info->width > 0 && info->height > 0) {
+        /* Runtime PNG decode may expand some frames beyond RGB565; use a conservative
+         * 3-byte estimate so prechecks do not under-budget and fall back after decode. */
+        budget.estimated_bytes = (size_t)info->width * info->height * 3U * info->frame_count;
+    }
+    budget.free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    if (!hot_cache_lock()) {
+        if (out_budget != NULL) {
+            *out_budget = budget;
+        }
+        return false;
+    }
+    budget.active_bytes = g_active_cache.total_bytes;
+    hot_cache_unlock();
+
+    budget.can_build = budget.estimated_bytes > 0 &&
+                       budget.estimated_bytes + budget.active_bytes <= WATCHER_ANIM_HOT_BUDGET_BYTES &&
+                       budget.free_spiram > budget.estimated_bytes + WATCHER_ANIM_SAFETY_MARGIN_BYTES;
+
+    if (out_budget != NULL) {
+        *out_budget = budget;
+    }
+    return budget.can_build;
+}
+
 int anim_catalog_init(void) {
     if (g_catalog_initialized) {
         return 0;
@@ -718,26 +763,20 @@ const lv_img_dsc_t *anim_warm_get_first_frame(emoji_anim_type_t type) {
 }
 
 int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id) {
+    anim_hot_build_budget_t budget = {0};
+
     if (!anim_catalog_has_type(type)) {
         return -1;
     }
 
     const anim_catalog_type_info_t *info = anim_catalog_get_type_info(type);
-    size_t active_bytes = 0;
     if (!hot_cache_lock()) {
         return -1;
     }
     free_hot_cache(&g_prepared_cache);
-    active_bytes = g_active_cache.total_bytes;
     hot_cache_unlock();
 
-    size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    size_t estimated_bytes = 0;
-    if (info->width > 0 && info->height > 0) {
-        estimated_bytes = (size_t)info->width * info->height * 2U * info->frame_count;
-    }
-    if (estimated_bytes > 0 && (estimated_bytes + active_bytes > WATCHER_ANIM_HOT_BUDGET_BYTES ||
-                                free_spiram <= estimated_bytes + WATCHER_ANIM_SAFETY_MARGIN_BYTES)) {
+    if (!anim_hot_can_build_type(type, &budget)) {
         ESP_LOGW(TAG, "Insufficient PSRAM headroom for %s hot cache", emoji_type_name(type));
         return -1;
     }
@@ -776,7 +815,7 @@ int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id) {
         cache.total_bytes += data_size;
     }
 
-    if (cache.total_bytes + active_bytes > WATCHER_ANIM_HOT_BUDGET_BYTES) {
+    if (cache.total_bytes + budget.active_bytes > WATCHER_ANIM_HOT_BUDGET_BYTES) {
         ESP_LOGW(TAG, "Hot cache budget exceeded for %s (%u KB)", emoji_type_name(type),
                  (unsigned)(cache.total_bytes / 1024U));
         free_hot_cache(&cache);
@@ -824,6 +863,14 @@ bool anim_hot_is_active_type(emoji_anim_type_t type) {
 
 emoji_anim_type_t anim_hot_get_active_type(void) {
     return g_active_cache.is_loaded ? g_active_cache.type : EMOJI_ANIM_NONE;
+}
+
+void anim_hot_release_active(void) {
+    if (!hot_cache_lock()) {
+        return;
+    }
+    free_hot_cache(&g_active_cache);
+    hot_cache_unlock();
 }
 
 int anim_hot_get_frame_count(void) {

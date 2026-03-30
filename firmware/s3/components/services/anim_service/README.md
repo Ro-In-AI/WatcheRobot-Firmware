@@ -75,7 +75,7 @@ emoji_anim_prefetch_type(EMOJI_ANIM_LISTENING);
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `WATCHER_ANIM_FPS` | 30 | Target frame rate |
+| `WATCHER_ANIM_FPS` | 10 | Target frame rate |
 | `WATCHER_ANIM_MAX_FRAMES_PER_TYPE` | 18 | Max frames per type |
 | `WATCHER_ANIM_LAZY_LOAD` | y | Only cache current type |
 | `WATCHER_ANIM_CACHE_RGB565` | y | Enable RGB565 cache |

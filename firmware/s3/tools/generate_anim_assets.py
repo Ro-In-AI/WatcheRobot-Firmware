@@ -9,6 +9,7 @@ Requires Pillow:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import struct
 import sys
@@ -39,17 +40,17 @@ PATH_LEN = 96
 NAME_LEN = 24
 MANIFEST_MAGIC = 0x4D494E41
 MANIFEST_VERSION = 1
-IMPORT_MAPPINGS = (
-    ("watcher-boot", "boot"),
-    ("watcher-error", "error"),
-    ("watcher-happy", "happy"),
-    ("watcher-listening", "listening"),
-    ("watcher-processing", "processing"),
-    ("watcher-processing2", "custom3"),
-    ("watcher-speaking", "speaking"),
-    ("watcher-standby", "standby"),
-    ("watcher-thinking", "thinking"),
-)
+IMPORT_MAP = {
+    "watcher-boot": "boot",
+    "watcher-error": "error",
+    "watcher-happy": "happy",
+    "watcher-listening": "listening",
+    "watcher-processing": "processing",
+    "watcher-processing2": "custom3",
+    "watcher-speaking": "speaking",
+    "watcher-standby": "standby",
+    "watcher-thinking": "thinking",
+}
 
 
 def encode_c_string(value: str, size: int) -> bytes:
@@ -72,46 +73,56 @@ def rgba_to_rgb565(image: Image.Image) -> bytes:
     return bytes(payload)
 
 
+def extract_frame_index(stem: str) -> int:
+    matches = re.findall(r"(\d+)", stem)
+    if not matches:
+        return 0
+    return int(matches[-1])
+
+
 def discover_frames(spiffs_dir: Path, prefix: str) -> list[Path]:
     matches = []
     for path in spiffs_dir.glob(f"{prefix}*.png"):
-        stem = path.stem
-        suffix = stem[len(prefix) :]
-        try:
-            index = int(suffix) if suffix else 0
-        except ValueError:
-            continue
-        matches.append((index, path))
+        matches.append((extract_frame_index(path.stem), path))
     matches.sort(key=lambda item: item[0])
     return [path for _, path in matches[:MAX_FRAMES]]
 
 
-def import_frames(import_dir: Path, spiffs_dir: Path) -> None:
-    if not import_dir.is_dir():
-        raise SystemExit(f"Import directory does not exist: {import_dir}")
+def import_external_assets(source_dir: Path, spiffs_dir: Path) -> dict[str, int]:
+    imported: dict[str, int] = {}
 
-    for _, target_prefix in IMPORT_MAPPINGS:
-        for existing in spiffs_dir.glob(f"{target_prefix}*.png"):
-            existing.unlink()
+    for source_name, target_name in IMPORT_MAP.items():
+        source_anim_dir = source_dir / source_name
+        if not source_anim_dir.is_dir():
+            raise SystemExit(f"Missing source animation directory: {source_anim_dir}")
 
-    for source_name, target_prefix in IMPORT_MAPPINGS:
-        source_dir = import_dir / source_name
-        if not source_dir.is_dir():
-            raise SystemExit(f"Animation source directory does not exist: {source_dir}")
+        source_frames = sorted(source_anim_dir.glob("*.png"), key=lambda path: extract_frame_index(path.stem))
+        if not source_frames:
+            raise SystemExit(f"No PNG frames found under: {source_anim_dir}")
 
-        frames = sorted(source_dir.glob("*.png"))
-        if not frames:
-            raise SystemExit(f"No PNG frames found in animation source: {source_dir}")
+        if len(source_frames) > MAX_FRAMES:
+            print(
+                f"Warning: {source_name} has {len(source_frames)} frames, truncating to {MAX_FRAMES}",
+                file=sys.stderr,
+            )
+            source_frames = source_frames[:MAX_FRAMES]
 
-        for index, frame in enumerate(frames, start=1):
-            shutil.copy2(frame, spiffs_dir / f"{target_prefix}{index}.png")
+        for stale_frame in spiffs_dir.glob(f"{target_name}*.png"):
+            stale_frame.unlink()
 
-        print(f"Imported {len(frames)} frames: {source_name} -> {target_prefix}")
+        for index, frame in enumerate(source_frames, start=1):
+            target_path = spiffs_dir / f"{target_name}{index}.png"
+            shutil.copy2(frame, target_path)
+
+        imported[target_name] = len(source_frames)
+
+    return imported
 
 
-def build_manifest(spiffs_dir: Path, output_dir: Path, default_fps: int) -> None:
+def build_manifest(spiffs_dir: Path, output_dir: Path, default_fps: int) -> dict[str, int]:
     output_dir.mkdir(parents=True, exist_ok=True)
     entries = []
+    manifest_counts: dict[str, int] = {}
 
     for type_id, name in enumerate(ANIM_TYPES):
         frames = discover_frames(spiffs_dir, name)
@@ -145,6 +156,7 @@ def build_manifest(spiffs_dir: Path, output_dir: Path, default_fps: int) -> None
         )
         entry += b"".join(encode_c_string(path, PATH_LEN) for path in frame_paths)
         entries.append(entry)
+        manifest_counts[name] = len(frames)
 
     manifest_path = output_dir / "anim_manifest.bin"
     manifest_path.write_bytes(
@@ -153,13 +165,17 @@ def build_manifest(spiffs_dir: Path, output_dir: Path, default_fps: int) -> None
 
     print(f"Wrote {manifest_path}")
     print(f"Generated {len(entries)} manifest entries in {output_dir}")
+    for name in ANIM_TYPES:
+        if name in manifest_counts:
+            print(f"  {name}: {manifest_counts[name]} frame(s)")
+    return manifest_counts
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spiffs-dir", default="spiffs", help="Path to the SPIFFS asset directory")
     parser.add_argument("--output-dir", default="spiffs/anim", help="Where generated assets should be written")
-    parser.add_argument("--import-dir", help="Directory containing watcher0327png-style animation folders")
+    parser.add_argument("--import-dir", help="Optional external animation directory to import before manifest generation")
     parser.add_argument("--fps", type=int, default=10, help="Default FPS stored in manifest entries")
     args = parser.parse_args()
 
@@ -169,7 +185,14 @@ def main() -> int:
         raise SystemExit(f"SPIFFS directory does not exist: {spiffs_dir}")
 
     if args.import_dir:
-        import_frames(Path(args.import_dir).resolve(), spiffs_dir)
+        import_dir = Path(args.import_dir).resolve()
+        if not import_dir.is_dir():
+            raise SystemExit(f"Import directory does not exist: {import_dir}")
+        imported = import_external_assets(import_dir, spiffs_dir)
+        print(f"Imported animation assets from {import_dir}")
+        for name in IMPORT_MAP.values():
+            if name in imported:
+                print(f"  {name}: {imported[name]} frame(s) imported")
 
     build_manifest(spiffs_dir, output_dir, args.fps)
     return 0

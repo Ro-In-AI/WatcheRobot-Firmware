@@ -517,6 +517,8 @@ static void wake_word_cleanup(void) {
 /* ------------------------------------------------------------------ */
 
 int voice_recorder_start(void) {
+    bool button_ready = hal_button_io_ready();
+
 #ifdef CONFIG_ENABLE_WAKE_WORD
     /* Avoid reserving audio DMA at boot. On S3 this can starve UI/WS/camera
      * of internal heap and lead to resets before the user even starts
@@ -525,10 +527,10 @@ int voice_recorder_start(void) {
     ESP_LOGW(TAG, "Wake word boot activation disabled; audio will start on demand");
 #endif
 
-    /* Initialize button via IO expander */
-    if (hal_button_init(button_callback) != 0) {
-        ESP_LOGE(TAG, "Button init failed");
-        /* Continue anyway - voice recording may still work via other triggers */
+    if (!button_ready) {
+        ESP_LOGW(TAG, "Voice button unavailable, starting recorder without button input");
+    } else if (hal_button_init(button_callback) != 0) {
+        ESP_LOGW(TAG, "Button init failed, continuing without button input");
     } else {
         ESP_LOGI(TAG, "Button initialized via IO expander");
     }
