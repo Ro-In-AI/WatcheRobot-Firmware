@@ -4,17 +4,13 @@
  * Reuses SDK's IO Expander handle to avoid I2C re-initialization conflict
  */
 #include "hal_button.h"
-#include "driver/i2c.h"
 #include "esp_log.h"
-#include "esp_io_expander_pca95xx_16bit.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sensecap-watcher.h"
 
 #define TAG "HAL_BUTTON"
-#define BUTTON_IO_EXPANDER_REG_INPUT 0x00
-#define BUTTON_IO_EXPANDER_TIMEOUT_MS 30
 #define BUTTON_IO_EXPANDER_PROBE_COOLDOWN_MS 5000
 #define BUTTON_IO_EXPANDER_READ_RETRY_COOLDOWN_MS 1000
 
@@ -34,29 +30,22 @@ static int64_t g_last_probe_time_ms = 0;
 static int64_t g_last_read_error_log_ms = 0;
 
 static esp_err_t hal_button_read_level(uint8_t *out_level) {
-    uint8_t reg = BUTTON_IO_EXPANDER_REG_INPUT;
-    uint8_t input_buf[2] = {0};
-
     if (out_level == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (bsp_io_expander_init() == NULL) {
+
+    esp_io_expander_handle_t io_exp = bsp_io_expander_init();
+    if (io_exp == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_err_t ret = i2c_master_write_read_device(BSP_GENERAL_I2C_NUM,
-                                                 ESP_IO_EXPANDER_I2C_PCA9535_ADDRESS_001,
-                                                 &reg,
-                                                 sizeof(reg),
-                                                 input_buf,
-                                                 sizeof(input_buf),
-                                                 pdMS_TO_TICKS(BUTTON_IO_EXPANDER_TIMEOUT_MS));
+    uint32_t level_mask = 0;
+    esp_err_t ret = esp_io_expander_get_level(io_exp, BUTTON_PIN_MASK, &level_mask);
     if (ret != ESP_OK) {
         return ret;
     }
 
-    uint16_t input_state = ((uint16_t)input_buf[1] << 8) | input_buf[0];
-    *out_level = (input_state & BUTTON_PIN_MASK) ? 1U : 0U;
+    *out_level = (level_mask & BUTTON_PIN_MASK) ? 1U : 0U;
     return ESP_OK;
 }
 

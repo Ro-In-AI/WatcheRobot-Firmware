@@ -1,13 +1,11 @@
 /**
  * @file ble_service.h
- * @brief BLE GATT motion-control service
+ * @brief BLE GATT local control and provisioning service
  *
  * Current scope:
- * - Receive servo motion commands over BLE GATT write
- * - Forward commands to hal_servo
- *
- * Not included in current scope:
- * - Wi-Fi provisioning over BLE
+ * - Receive single-servo control commands over BLE GATT write
+ * - Receive AI status downlink for local behavior playback
+ * - Receive Wi-Fi provisioning commands and publish Wi-Fi status
  */
 
 #ifndef BLE_SERVICE_H

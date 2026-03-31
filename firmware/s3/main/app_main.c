@@ -34,6 +34,8 @@
 #define STARTUP_BEHAVIOR_POLL_MS 50
 #define STARTUP_BEHAVIOR_TIMEOUT_MS 10000
 #define BOOT_DISCOVERY_TIMEOUT_MS 5000
+#define CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES (48U * 1024U)
+#define CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES (16U * 1024U)
 #ifdef CONFIG_WATCHER_ANIM_FPS
 #define BOOT_ANIM_INTERVAL_MS (1000U / CONFIG_WATCHER_ANIM_FPS)
 #else
@@ -42,6 +44,13 @@
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;
+
+static bool has_internal_heap_headroom(size_t min_free_bytes, size_t min_largest_block_bytes) {
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    return free_internal >= min_free_bytes && largest_internal >= min_largest_block_bytes;
+}
 
 static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const char *ip_addr) {
     switch (status) {
@@ -99,6 +108,20 @@ static void on_button_multi_click_restart(void) {
 static void run_camera_boot_diag(void) {
 #if CONFIG_WATCHER_CAMERA_BOOT_DIAG
     esp_err_t ret;
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (!has_internal_heap_headroom(CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES,
+                                    CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES)) {
+        ESP_LOGW(TAG,
+                 "Skipping camera boot diagnostic due to low internal heap: free=%u largest=%u "
+                 "(need >=%u / >=%u)",
+                 (unsigned)free_internal,
+                 (unsigned)largest_internal,
+                 (unsigned)CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES,
+                 (unsigned)CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES);
+        return;
+    }
 
     ESP_LOGI(TAG, "Camera boot diagnostic: begin");
     ret = camera_service_init();
@@ -223,6 +246,7 @@ void app_main(void) {
     } else if (ble_ret != ESP_ERR_NOT_SUPPORTED) {
         ESP_LOGW(TAG, "BLE init failed: %s", esp_err_to_name(ble_ret));
     }
+    log_heap_state("after_ble_init");
 
     /* 6. WiFi */
     boot_anim_set_progress(40);
@@ -241,6 +265,7 @@ void app_main(void) {
     }
     s_waiting_for_wifi_provision = false;
     boot_anim_set_progress(55);
+    log_heap_state("after_wifi_ready");
 
     /* 7. Service discovery */
     boot_anim_set_text("Discovering...");
@@ -267,6 +292,7 @@ void app_main(void) {
     } else {
         ESP_LOGW(TAG, "Discovery failed within %d ms, continuing in BLE-only mode", BOOT_DISCOVERY_TIMEOUT_MS);
     }
+    log_heap_state("after_discovery");
 
     if (cloud_ready) {
         /* 8. WebSocket client */
