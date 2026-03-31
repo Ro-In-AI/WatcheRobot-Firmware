@@ -184,6 +184,7 @@
 
 ## 4. 暂不冻结（Freeze Later）
 - BLE 配网 UX / 安全增强（当前已支持基础 SSID/PASS 下发与连接）。
+- BLE `v0.0.97dev` 重构计划见 [BLE_GATT_PROTOCOL_BRIDGE.md](D:\GithubRep\WatcheRobot-Firmware\firmware\s3\docs\BLE_GATT_PROTOCOL_BRIDGE.md)；当前目标只覆盖单舵机控制、状态下放和 BLE 配网，不定义舵机角度回传。
 - OTA 真正写分区与校验切换流程（当前为 stub / nack 占位）。
 - 更复杂的视频多路复用、分片与重传策略。
 - SSCMA 推理结果对云侧的结构化上报协议。
