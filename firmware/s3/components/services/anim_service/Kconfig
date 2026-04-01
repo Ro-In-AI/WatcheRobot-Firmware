@@ -28,11 +28,12 @@ menu "Watcher Animation Service"
 
     config WATCHER_ANIM_HOT_BUDGET_KB
         int "Hot cache budget (KB)"
-        default 4096
+        default 2048
         range 1024 8192
         help
-            Budget for active and inactive hot caches used for double-buffered
-            animation switching. 4096KB covers two 24-frame 206x206 animations.
+            Budget for the hot animation cache used during async switching.
+            Large transitions can release the active hot cache, show the warm
+            preview, and rebuild the next animation inside this budget.
 
     config WATCHER_ANIM_SAFETY_MARGIN_KB
         int "Animation safety margin (KB)"

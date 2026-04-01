@@ -51,6 +51,30 @@ typedef struct __attribute__((packed)) {
 } anim_manifest_entry_t;
 
 static const uint8_t PNG_HEADER[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+
+#ifdef CONFIG_WATCHER_ANIM_DEBUG_PERF
+#define ANIM_DEBUG_PERF_ENABLED 1
+#else
+#define ANIM_DEBUG_PERF_ENABLED 0
+#endif
+
+#define PNG_IHDR_SIZE 13U
+#define PNG_COLOR_TYPE_GRAYSCALE 0U
+#define PNG_COLOR_TYPE_RGB 2U
+#define PNG_COLOR_TYPE_INDEXED 3U
+#define PNG_COLOR_TYPE_GRAYSCALE_ALPHA 4U
+#define PNG_COLOR_TYPE_RGBA 6U
+
+#if LV_COLOR_DEPTH == 16
+#define ANIM_HOT_OPAQUE_BPP 2U
+#define ANIM_HOT_OPAQUE_MODE_NAME "opaque-16bpp"
+#else
+#define ANIM_HOT_OPAQUE_BPP (((LV_COLOR_DEPTH) + 7U) / 8U)
+#define ANIM_HOT_OPAQUE_MODE_NAME "opaque-native"
+#endif
+
+#define ANIM_HOT_CONSERVATIVE_BPP 3U
+
 static const char *emoji_names[EMOJI_ANIM_COUNT] = {
     "boot",
     "happy",
@@ -99,6 +123,168 @@ static void hot_cache_unlock(void) {
     if (g_hot_cache_mutex != NULL) {
         xSemaphoreGive(g_hot_cache_mutex);
     }
+}
+
+static uint32_t read_be32(const uint8_t *data) {
+    return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) | ((uint32_t)data[2] << 8) | (uint32_t)data[3];
+}
+
+static bool skip_file_bytes(FILE *f, size_t bytes) {
+    return fseek(f, (long)bytes, SEEK_CUR) == 0;
+}
+
+static bool inspect_png_budget_class(const char *filepath, uint16_t *out_width, uint16_t *out_height, bool *out_use_conservative) {
+    FILE *f = fopen(filepath, "rb");
+    if (f == NULL) {
+        return false;
+    }
+
+    uint8_t header[sizeof(PNG_HEADER)] = {0};
+    if (fread(header, 1, sizeof(header), f) != sizeof(header) || memcmp(header, PNG_HEADER, sizeof(PNG_HEADER)) != 0) {
+        fclose(f);
+        return false;
+    }
+
+    bool seen_ihdr = false;
+    bool use_conservative = true;
+    uint16_t width = 0;
+    uint16_t height = 0;
+
+    for (;;) {
+        uint8_t chunk_header[8] = {0};
+        if (fread(chunk_header, 1, sizeof(chunk_header), f) != sizeof(chunk_header)) {
+            break;
+        }
+
+        uint32_t chunk_len = read_be32(chunk_header);
+        const uint8_t *chunk_type = &chunk_header[4];
+
+        if (memcmp(chunk_type, "IHDR", 4) == 0) {
+            if (chunk_len != PNG_IHDR_SIZE) {
+                break;
+            }
+
+            uint8_t ihdr[PNG_IHDR_SIZE] = {0};
+            if (fread(ihdr, 1, sizeof(ihdr), f) != sizeof(ihdr)) {
+                break;
+            }
+
+            width = (uint16_t)read_be32(ihdr);
+            height = (uint16_t)read_be32(&ihdr[4]);
+            uint8_t color_type = ihdr[9];
+            seen_ihdr = true;
+
+            if (width == 0 || height == 0) {
+                break;
+            }
+
+            switch (color_type) {
+                case PNG_COLOR_TYPE_GRAYSCALE:
+                case PNG_COLOR_TYPE_RGB:
+                case PNG_COLOR_TYPE_INDEXED:
+                    use_conservative = false;
+                    break;
+                case PNG_COLOR_TYPE_GRAYSCALE_ALPHA:
+                case PNG_COLOR_TYPE_RGBA:
+                    use_conservative = true;
+                    break;
+                default:
+                    use_conservative = true;
+                    break;
+            }
+        } else if (memcmp(chunk_type, "tRNS", 4) == 0) {
+            use_conservative = true;
+            if (!skip_file_bytes(f, chunk_len)) {
+                break;
+            }
+        } else {
+            if (!skip_file_bytes(f, chunk_len)) {
+                break;
+            }
+        }
+
+        if (!skip_file_bytes(f, 4U)) {
+            break;
+        }
+
+        if (memcmp(chunk_type, "IDAT", 4) == 0 || memcmp(chunk_type, "IEND", 4) == 0) {
+            if (seen_ihdr) {
+                if (out_width != NULL) {
+                    *out_width = width;
+                }
+                if (out_height != NULL) {
+                    *out_height = height;
+                }
+                if (out_use_conservative != NULL) {
+                    *out_use_conservative = use_conservative;
+                }
+                fclose(f);
+                return true;
+            }
+            break;
+        }
+    }
+
+    fclose(f);
+    return false;
+}
+
+static size_t anim_hot_estimate_frame_bytes(uint16_t width, uint16_t height, bool use_conservative) {
+    if (width == 0 || height == 0) {
+        return 0;
+    }
+
+    const size_t bytes_per_pixel = use_conservative ? ANIM_HOT_CONSERVATIVE_BPP : (size_t)ANIM_HOT_OPAQUE_BPP;
+    return (size_t)width * (size_t)height * bytes_per_pixel;
+}
+
+static size_t anim_hot_metadata_overhead_bytes(int frame_count) {
+    if (frame_count <= 0) {
+        return sizeof(anim_type_cache_t);
+    }
+
+    return sizeof(anim_type_cache_t) + ((size_t)frame_count * sizeof(anim_cached_frame_t));
+}
+
+static size_t anim_hot_estimate_type_bytes(const anim_catalog_type_info_t *info, bool *out_used_conservative) {
+    if (info == NULL || info->frame_count <= 0) {
+        if (out_used_conservative != NULL) {
+            *out_used_conservative = true;
+        }
+        return 0;
+    }
+
+    bool used_conservative = false;
+    size_t total_bytes = anim_hot_metadata_overhead_bytes(info->frame_count);
+    for (int i = 0; i < info->frame_count; ++i) {
+        uint16_t frame_width = info->width;
+        uint16_t frame_height = info->height;
+        bool use_conservative = true;
+        bool inspected = inspect_png_budget_class(info->frame_paths[i], &frame_width, &frame_height, &use_conservative);
+        if (!inspected) {
+            use_conservative = true;
+        }
+
+        size_t frame_bytes = anim_hot_estimate_frame_bytes(frame_width, frame_height, use_conservative);
+        if (frame_bytes == 0) {
+            if (out_used_conservative != NULL) {
+                *out_used_conservative = true;
+            }
+            return 0;
+        }
+
+        total_bytes += frame_bytes;
+        used_conservative = used_conservative || use_conservative;
+    }
+
+    if (out_used_conservative != NULL) {
+        *out_used_conservative = used_conservative;
+    }
+    return total_bytes;
+}
+
+static const char *anim_hot_budget_mode_name(bool used_conservative) {
+    return used_conservative ? "conservative-alpha/unknown" : ANIM_HOT_OPAQUE_MODE_NAME;
 }
 
 static void reset_catalog(void) {
@@ -637,6 +823,7 @@ static void free_hot_cache(anim_type_cache_t *cache) {
 bool anim_hot_can_build_type(emoji_anim_type_t type, anim_hot_build_budget_t *out_budget) {
     anim_hot_build_budget_t budget = {0};
     const anim_catalog_type_info_t *info = NULL;
+    bool used_conservative = true;
 
     if (!anim_catalog_has_type(type)) {
         if (out_budget != NULL) {
@@ -653,11 +840,7 @@ bool anim_hot_can_build_type(emoji_anim_type_t type, anim_hot_build_budget_t *ou
         return false;
     }
 
-    if (info->width > 0 && info->height > 0) {
-        /* Runtime PNG decode may expand some frames beyond RGB565; use a conservative
-         * 3-byte estimate so prechecks do not under-budget and fall back after decode. */
-        budget.estimated_bytes = (size_t)info->width * info->height * 3U * info->frame_count;
-    }
+    budget.estimated_bytes = anim_hot_estimate_type_bytes(info, &used_conservative);
     budget.free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 
     if (!hot_cache_lock()) {
@@ -672,6 +855,32 @@ bool anim_hot_can_build_type(emoji_anim_type_t type, anim_hot_build_budget_t *ou
     budget.can_build = budget.estimated_bytes > 0 &&
                        budget.estimated_bytes + budget.active_bytes <= WATCHER_ANIM_HOT_BUDGET_BYTES &&
                        budget.free_spiram > budget.estimated_bytes + WATCHER_ANIM_SAFETY_MARGIN_BYTES;
+
+    if (budget.estimated_bytes > 0) {
+        if (!budget.can_build) {
+            ESP_LOGW(TAG,
+                     "Hot cache precheck rejected for %s "
+                     "(estimated=%u KB active=%u KB free=%u KB safety=%u KB hot_budget=%u KB estimate_mode=%s)",
+                     emoji_type_name(type),
+                     (unsigned)(budget.estimated_bytes / 1024U),
+                     (unsigned)(budget.active_bytes / 1024U),
+                     (unsigned)(budget.free_spiram / 1024U),
+                     (unsigned)(WATCHER_ANIM_SAFETY_MARGIN_BYTES / 1024U),
+                     (unsigned)(WATCHER_ANIM_HOT_BUDGET_BYTES / 1024U),
+                     anim_hot_budget_mode_name(used_conservative));
+        } else if (ANIM_DEBUG_PERF_ENABLED) {
+            ESP_LOGI(TAG,
+                     "Hot cache precheck accepted for %s "
+                     "(estimated=%u KB active=%u KB free=%u KB safety=%u KB hot_budget=%u KB estimate_mode=%s)",
+                     emoji_type_name(type),
+                     (unsigned)(budget.estimated_bytes / 1024U),
+                     (unsigned)(budget.active_bytes / 1024U),
+                     (unsigned)(budget.free_spiram / 1024U),
+                     (unsigned)(WATCHER_ANIM_SAFETY_MARGIN_BYTES / 1024U),
+                     (unsigned)(WATCHER_ANIM_HOT_BUDGET_BYTES / 1024U),
+                     anim_hot_budget_mode_name(used_conservative));
+        }
+    }
 
     if (out_budget != NULL) {
         *out_budget = budget;
@@ -820,6 +1029,16 @@ int anim_hot_build_type(emoji_anim_type_t type, uint32_t generation_id) {
                  (unsigned)(cache.total_bytes / 1024U));
         free_hot_cache(&cache);
         return -1;
+    }
+
+    if (ANIM_DEBUG_PERF_ENABLED) {
+        ESP_LOGI(TAG,
+                 "Hot cache built for %s (estimated=%u KB actual=%u KB active=%u KB budget=%u KB)",
+                 emoji_type_name(type),
+                 (unsigned)(budget.estimated_bytes / 1024U),
+                 (unsigned)(cache.total_bytes / 1024U),
+                 (unsigned)(budget.active_bytes / 1024U),
+                 (unsigned)(WATCHER_ANIM_HOT_BUDGET_BYTES / 1024U));
     }
 
     cache.is_loaded = true;
