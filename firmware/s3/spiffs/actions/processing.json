@@ -1,7 +1,7 @@
 {
   "scene_name": "Scene",
-  "frame_start": 1,
-  "frame_end": 240,
+  "frame_start": 0,
+  "frame_end": 80,
   "fps": 10,
   "animated_objects": [
     {

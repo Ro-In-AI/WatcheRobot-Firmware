@@ -1,7 +1,7 @@
 {
   "scene_name": "Scene",
-  "frame_start": 1,
-  "frame_end": 120,
+  "frame_start": 0,
+  "frame_end": 40,
   "fps": 10,
   "animated_objects": [
     {
@@ -10,27 +10,27 @@
       "action_name": "底部轴动作",
       "keyframe_data": [
         {
-          "frame_number": 1,
+          "frame_number": 0,
           "active_axis": "z",
           "rotation_angle": 90.0
         },
         {
-          "frame_number": 15,
+          "frame_number": 5,
           "active_axis": "z",
           "rotation_angle": 55.0
         },
         {
-          "frame_number": 40,
+          "frame_number": 13,
           "active_axis": "z",
           "rotation_angle": 125.0
         },
         {
-          "frame_number": 70,
+          "frame_number": 23,
           "active_axis": "z",
           "rotation_angle": 70.0
         },
         {
-          "frame_number": 90,
+          "frame_number": 30,
           "active_axis": "z",
           "rotation_angle": 90.0
         }
@@ -42,7 +42,7 @@
       "action_name": "头轴动作.001",
       "keyframe_data": [
         {
-          "frame_number": 1,
+          "frame_number": 0,
           "active_axis": "x",
           "rotation_angle": 110.0
         }
