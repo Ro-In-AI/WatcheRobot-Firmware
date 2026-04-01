@@ -45,6 +45,7 @@
 #define WS_AUDIO_WORKER_WAIT_MS 20
 
 static esp_websocket_client_handle_t s_ws_client = NULL;
+static bool s_ws_started = false;
 static bool s_socket_connected = false;
 static bool s_hello_acknowledged = false;
 static bool s_tts_playing = false;
@@ -1049,6 +1050,7 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
     switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
         ESP_LOGI(TAG, "WebSocket connected");
+        s_ws_started = true;
         s_socket_connected = true;
         s_hello_acknowledged = false;
         s_waiting_for_response = false;
@@ -1062,6 +1064,7 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
 
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "WebSocket disconnected");
+        s_ws_started = false;
         if (camera_service_is_streaming()) {
             ESP_LOGW(TAG, "stopping camera stream on WebSocket disconnect");
             camera_service_stop_stream();
@@ -1174,6 +1177,11 @@ int ws_client_start(void) {
         return -1;
     }
 
+    if (s_ws_started) {
+        ESP_LOGI(TAG, "WebSocket client already started");
+        return 0;
+    }
+
     ESP_LOGI(TAG, "Starting WebSocket client (URL: %s)", s_ws_server_url);
     ret = esp_websocket_client_start(s_ws_client);
     if (ret != ESP_OK) {
@@ -1181,11 +1189,18 @@ int ws_client_start(void) {
         return -1;
     }
 
+    s_ws_started = true;
     ESP_LOGI(TAG, "WebSocket start requested");
     return 0;
 }
 
 void ws_client_stop(void) {
+    if (s_ws_client == NULL) {
+        ws_reset_session_state();
+        s_ws_started = false;
+        return;
+    }
+
     if (camera_service_is_streaming()) {
         camera_service_stop_stream();
     }
@@ -1204,13 +1219,27 @@ void ws_client_stop(void) {
         }
     }
 
-    if (s_ws_client != NULL) {
-        esp_websocket_client_stop(s_ws_client);
-        esp_websocket_client_destroy(s_ws_client);
-        s_ws_client = NULL;
+    if (s_ws_started) {
+        esp_err_t err = esp_websocket_client_stop(s_ws_client);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "WebSocket stop returned: %s", esp_err_to_name(err));
+        }
     }
 
+    s_ws_started = false;
     ws_reset_session_state();
+}
+
+void ws_client_deinit(void) {
+    if (s_ws_client == NULL) {
+        s_ws_started = false;
+        ws_reset_session_state();
+        return;
+    }
+
+    ws_client_stop();
+    esp_websocket_client_destroy(s_ws_client);
+    s_ws_client = NULL;
 }
 
 int ws_client_send_binary(const uint8_t *data, int len) {
@@ -1227,6 +1256,10 @@ int ws_client_send_text(const char *text) {
 
 int ws_client_is_connected(void) {
     return s_socket_connected ? 1 : 0;
+}
+
+int ws_client_is_started(void) {
+    return s_ws_started ? 1 : 0;
 }
 
 int ws_client_is_session_ready(void) {
