@@ -31,7 +31,7 @@
 #define TAG "MAIN"
 
 /* Physical restart: click count to trigger reboot */
-#define RESTART_CLICK_COUNT 5
+#define RESTART_CLICK_COUNT 3
 #define STARTUP_BEHAVIOR_POLL_MS 50
 #define STARTUP_BEHAVIOR_TIMEOUT_MS 10000
 #define BOOT_DISCOVERY_TIMEOUT_MS 5000
@@ -153,6 +153,27 @@ static void on_button_multi_click_restart(void) {
     behavior_state_set_with_text("error", "Rebooting...", 0);
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
+}
+
+static void init_runtime_inputs_and_restart_path(void) {
+    int input_ret;
+    bool knob_ready;
+
+    input_ret = hal_display_input_init();
+    knob_ready = hal_display_has_knob_input();
+
+    ESP_LOGI(TAG, "Delayed input init result=%d knob_ready=%d", input_ret, knob_ready ? 1 : 0);
+
+    if (input_ret != 0) {
+        ESP_LOGW(TAG, "Delayed display input initialization failed; continuing with degraded input availability");
+    }
+
+    if (knob_ready) {
+        bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
+        ESP_LOGI(TAG, "Registered %d-click restart callback", RESTART_CLICK_COUNT);
+    } else {
+        ESP_LOGW(TAG, "Skipping %d-click restart callback because knob input is unavailable", RESTART_CLICK_COUNT);
+    }
 }
 
 static void run_camera_boot_diag(void) {
@@ -419,18 +440,8 @@ void app_main(void) {
     s_waiting_for_wifi_provision = false;
     log_heap_state("before_ui_init");
     hal_display_ui_init();
+    init_runtime_inputs_and_restart_path();
     if (cloud_ready) {
-        if (hal_display_input_init() != 0) {
-            ESP_LOGW(TAG, "Delayed display input initialization failed");
-        }
-
-        /* Register encoder callbacks only after delayed input devices are attached. */
-        if (hal_display_has_knob_input()) {
-            bsp_set_btn_multi_click_cb(RESTART_CLICK_COUNT, on_button_multi_click_restart);
-        } else {
-            ESP_LOGW(TAG, "Skipping %d-click restart callback because knob input is unavailable", RESTART_CLICK_COUNT);
-        }
-
         voice_recorder_init();
         if (voice_recorder_start() != 0) {
             ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
