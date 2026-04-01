@@ -32,6 +32,8 @@ set(EXTRA_COMPONENT_DIRS
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(WatcheRobot-S3)
+# Keep custom generators on the same interpreter as the active ESP-IDF build.
+idf_build_get_property(project_python PYTHON)
 
 if(DEFINED CONFIG_WATCHER_ANIM_FPS)
     set(ANIM_DEFAULT_FPS ${CONFIG_WATCHER_ANIM_FPS})
@@ -42,7 +44,7 @@ endif()
 set(ANIM_IMPORT_DIR ${CMAKE_SOURCE_DIR}/assets/watcher0327png)
 
 add_custom_target(anim_assets_gen
-    COMMAND py -3 ${CMAKE_SOURCE_DIR}/tools/generate_anim_assets.py
+    COMMAND ${project_python} ${CMAKE_SOURCE_DIR}/tools/generate_anim_assets.py
             --spiffs-dir ${CMAKE_SOURCE_DIR}/spiffs
             --output-dir ${CMAKE_SOURCE_DIR}/spiffs/anim
             --import-dir ${ANIM_IMPORT_DIR}
