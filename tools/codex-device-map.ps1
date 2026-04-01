@@ -65,7 +65,7 @@ function Read-CodexDeviceMap {
     )
 
     if (-not (Test-Path $Path)) {
-        throw "未找到设备映射文件: $Path。请先复制 .codex\device-map.example.toml 到 .codex\local\device-map.toml，并填写本机串口。"
+        throw "未找到设备映射文件: $Path。请先创建该文件，或从 .codex\device-map.example.toml 复制一份后按当前共享路径填写本机串口。"
     }
 
     $devices = @{}
