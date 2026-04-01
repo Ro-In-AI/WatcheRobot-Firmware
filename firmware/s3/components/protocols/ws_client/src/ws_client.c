@@ -8,6 +8,7 @@
 #include "behavior_state_service.h"
 #include "camera_service.h"
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
@@ -30,8 +31,10 @@
 #define WS_DEFAULT_URL "ws://[IP_ADDRESS]"
 #define WS_NETWORK_TIMEOUT_MS 30000
 #define WS_URL_MAX_LEN 128
-#define WS_BUFFER_SIZE 65536
-#define WS_TASK_STACK 12288
+/* The protocol already handles fragmented frames, so a small client buffer is enough and keeps heap pressure down. */
+#define WS_BUFFER_SIZE 4096
+/* Local ws:// transport does not need a large client task stack; oversized stacks starve internal heap for LCD DMA. */
+#define WS_TASK_STACK 6144
 #define WS_TASK_PRIO 8
 #define WS_SEND_TIMEOUT_MS 5000
 #define WS_RESPONSE_TIMEOUT_MS 30000
@@ -43,6 +46,8 @@
 #define WS_AUDIO_WORKER_STACK 4096
 #define WS_AUDIO_WORKER_PRIO 6
 #define WS_AUDIO_WORKER_WAIT_MS 20
+#define WS_HELLO_UI_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
+#define WS_HELLO_UI_MIN_INTERNAL_LARGEST_BYTES (12U * 1024U)
 
 static esp_websocket_client_handle_t s_ws_client = NULL;
 static bool s_ws_started = false;
@@ -121,6 +126,7 @@ static void ws_audio_worker_task(void *arg);
 static int ws_send_binary_packet(ws_frame_type_t frame_type, uint8_t flags, const uint8_t *payload, size_t len);
 static int ws_send_audio_packet(const uint8_t *data, size_t len, uint8_t flags);
 static bool ws_audio_session_ready(void);
+static bool ws_client_has_hello_ui_headroom(void);
 
 static void ws_log_send_blocked(bool binary, int len, bool allow_before_session) {
     int64_t now_us = esp_timer_get_time();
@@ -152,6 +158,14 @@ static void ws_log_send_blocked(bool binary, int len, bool allow_before_session)
 
 static bool ws_audio_session_ready(void) {
     return s_ws_client != NULL && s_socket_connected && s_hello_acknowledged;
+}
+
+static bool ws_client_has_hello_ui_headroom(void) {
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    return free_internal >= WS_HELLO_UI_MIN_INTERNAL_FREE_BYTES &&
+           largest_internal >= WS_HELLO_UI_MIN_INTERNAL_LARGEST_BYTES;
 }
 
 static void ws_audio_update_stats_locked(void) {
@@ -1276,7 +1290,16 @@ void ws_client_mark_hello_acked(void) {
     }
 
     s_hello_acknowledged = true;
-    behavior_state_set("happy");
+    if (ws_client_has_hello_ui_headroom()) {
+        behavior_state_set("happy");
+    } else {
+        size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ESP_LOGW(TAG,
+                 "Skipping hello-ack happy state due to low internal heap: free=%u largest=%u",
+                 (unsigned)free_internal,
+                 (unsigned)largest_internal);
+    }
     if (ws_send_device_firmware() < 0) {
         ESP_LOGW(TAG, "failed to send evt.device.firmware");
     }

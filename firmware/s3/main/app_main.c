@@ -8,6 +8,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+#include "anim_player.h"
 #include "anim_storage.h"
 #include "behavior_state_service.h"
 #include "ble_service.h"
@@ -17,6 +18,7 @@
 #include "control_ingress.h"
 #include "discovery_client.h"
 #include "display_ui.h"
+#include "esp_lvgl_port.h"
 #include "hal_display.h"
 #include "hal_servo.h"
 #include "ota_service.h"
@@ -41,6 +43,10 @@
 #define CLOUD_PROTOCOL_RETRY_DELAY_MS 5000
 #define WIFI_RESUME_MIN_INTERNAL_FREE_BYTES (28U * 1024U)
 #define WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES (16U * 1024U)
+#define WS_START_MIN_INTERNAL_FREE_BYTES (20U * 1024U)
+#define WS_START_MIN_INTERNAL_LARGEST_BYTES (12U * 1024U)
+#define CLOUD_RUNTIME_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
+#define CLOUD_RUNTIME_MIN_INTERNAL_LARGEST_BYTES (12U * 1024U)
 #define CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES (48U * 1024U)
 #define CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES (16U * 1024U)
 #ifdef CONFIG_WATCHER_ANIM_FPS
@@ -155,6 +161,53 @@ static bool transport_has_wifi_resume_headroom(void)
     }
 
     return true;
+}
+
+static bool transport_has_ws_start_headroom(void)
+{
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (free_internal < WS_START_MIN_INTERNAL_FREE_BYTES ||
+        largest_internal < WS_START_MIN_INTERNAL_LARGEST_BYTES) {
+        ESP_LOGW(TAG,
+                 "Deferring WebSocket start due to low internal heap: free=%u largest=%u (need >=%u / >=%u)",
+                 (unsigned)free_internal,
+                 (unsigned)largest_internal,
+                 (unsigned)WS_START_MIN_INTERNAL_FREE_BYTES,
+                 (unsigned)WS_START_MIN_INTERNAL_LARGEST_BYTES);
+        return false;
+    }
+
+    return true;
+}
+
+static bool transport_has_cloud_runtime_headroom(void)
+{
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (free_internal < CLOUD_RUNTIME_MIN_INTERNAL_FREE_BYTES ||
+        largest_internal < CLOUD_RUNTIME_MIN_INTERNAL_LARGEST_BYTES) {
+        ESP_LOGW(TAG,
+                 "Deferring cloud runtime due to low internal heap: free=%u largest=%u (need >=%u / >=%u)",
+                 (unsigned)free_internal,
+                 (unsigned)largest_internal,
+                 (unsigned)CLOUD_RUNTIME_MIN_INTERNAL_FREE_BYTES,
+                 (unsigned)CLOUD_RUNTIME_MIN_INTERNAL_LARGEST_BYTES);
+        return false;
+    }
+
+    return true;
+}
+
+static void transport_quiet_display_motion(void)
+{
+    if (lvgl_port_lock(0)) {
+        emoji_anim_stop();
+        lvgl_port_unlock();
+        ESP_LOGI(TAG, "Paused emoji animation while bringing up cloud transport");
+    }
 }
 
 static void transport_sync_boot_state(void)
@@ -407,6 +460,10 @@ static void ensure_cloud_runtime_started(void) {
         return;
     }
 
+    if (!transport_has_cloud_runtime_headroom()) {
+        return;
+    }
+
     voice_recorder_init();
     if (voice_recorder_start() != 0) {
         ESP_LOGE(TAG, "Failed to start voice recorder (non-fatal)");
@@ -631,8 +688,16 @@ static void transport_handle_discovery_results(bool ble_connected) {
         }
 
         free(ws_url);
-        ensure_cloud_runtime_started();
 
+        if (!transport_has_ws_start_headroom()) {
+            log_heap_state("ws_start_deferred");
+            transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
+            transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED, "waiting ws heap headroom");
+            continue;
+        }
+
+        log_heap_state("before_ws_start");
+        transport_quiet_display_motion();
         if (ws_client_start() != 0) {
             transport_stop_ws("ws start failed");
             transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
@@ -724,6 +789,7 @@ static void transport_coordinator_tick(void) {
     }
 
     if (ws_client_is_session_ready()) {
+        ensure_cloud_runtime_started();
         transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_READY, "ws session ready");
         return;
     }
