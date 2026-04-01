@@ -11,6 +11,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.1] - 2026-04-01
+
+### Added
+- Earlier physical restart availability through delayed input initialization immediately after boot UI setup
+
+### Fixed
+- Button-based restart no longer depends on cloud readiness before becoming available
+- Boot-time input probing now emits clearer diagnostics around IO expander readiness and delayed input attachment
+
+### Changed
+- Physical restart trigger is reduced from 5 short presses to 3 short presses
+- Runtime input initialization and restart callback registration now run after boot UI setup regardless of cloud connection state
+
+### Notes
+- Release focus: make local recovery and BLE-side bring-up easier during ongoing integration and provisioning validation
+
+---
+
 ## [0.1.0-beta] - 2026-03-30
 
 ### Added

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(PROJECT_VER "0.1.0-beta")
+set(PROJECT_VER "0.1.1")
 
 # Extra component directories (nested structure)
 # ESP-IDF only scans components/ directly, so we need to specify subdirectories

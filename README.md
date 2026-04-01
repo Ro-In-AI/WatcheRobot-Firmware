@@ -22,14 +22,14 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current beta release target: `0.1.0-beta`
-- This beta summarizes the current integrated `main` branch:
-  - BLE provisioning is enabled for first-time Wi-Fi setup and recovery after local credential cleanup
-  - Startup display, state transitions, and provisioning handoff are more stable during cloud bring-up
-  - Local SFX, cloud TTS, and WebSocket recording/upload paths have all been hardened for smoother voice sessions
-  - SPIFFS-based behavior actions and animation assets now work together as the main local expression pipeline
-  - Multi-device local automation is available for repeated flashing and parallel device validation
-- `0.1.0` remains reserved for the fully validated stable milestone after end-to-end joint debugging closes out
+- Current release target: `0.1.1`
+- This release builds on the integrated mainline and focuses on bring-up convenience:
+  - BLE provisioning remains available for first-time Wi-Fi setup and recovery after credential cleanup
+  - Startup display, state transitions, and provisioning handoff remain hardened during cloud bring-up
+  - Physical restart is now reachable earlier in boot and requires only 3 short presses
+  - Runtime input initialization now happens right after boot UI setup instead of waiting for cloud readiness
+  - Local SFX, cloud TTS, SPIFFS behavior actions, and multi-device flashing workflow remain part of the current mainline stack
+- The branch continues to support joint debugging, provisioning validation, and local multi-device integration testing
 
 ---
 
