@@ -77,6 +77,7 @@ static uint16_t s_conn_id = 0;
 static bool s_connected = false;
 static bool s_notify_enabled = false;
 static bool s_stack_ready = false;
+static ble_service_connection_callback_t s_connection_cb = NULL;
 
 typedef enum {
     BLE_PROTOCOL_MODE_LEGACY = 0,
@@ -133,6 +134,13 @@ static void ble_gatts_profile_event_handler(esp_gatts_cb_event_t event,
                                             esp_ble_gatts_cb_param_t *param);
 static void ble_send_text_notification(const char *text);
 static void ble_send_current_wifi_status_notification(void);
+
+static void ble_notify_connection_changed(bool connected)
+{
+    if (s_connection_cb != NULL) {
+        s_connection_cb(connected);
+    }
+}
 
 static void ble_set_response(char *response, size_t response_len, const char *text)
 {
@@ -440,7 +448,9 @@ static esp_err_t ble_parse_wifi_config(const char *payload, char *response, size
     }
 
     ESP_LOGI(TAG, "BLE WiFi provisioning request received for SSID: %s", ssid->valuestring);
-    int ret = wifi_provision(ssid->valuestring, password->valuestring);
+    int ret = s_connected
+                  ? wifi_store_credentials(ssid->valuestring, password->valuestring)
+                  : wifi_provision(ssid->valuestring, password->valuestring);
     cJSON_Delete(root);
 
     if (ret != 0) {
@@ -448,7 +458,7 @@ static esp_err_t ble_parse_wifi_config(const char *payload, char *response, size
         return ESP_FAIL;
     }
 
-    ble_set_response(response, response_len, "WIFI_CONNECTING\n");
+    ble_set_response(response, response_len, s_connected ? "WIFI_SAVED\n" : "WIFI_CONNECTING\n");
     return ESP_OK;
 }
 
@@ -1162,6 +1172,7 @@ static void ble_gatts_profile_event_handler(esp_gatts_cb_event_t event,
             s_notify_enabled = false;
             s_protocol_mode = BLE_PROTOCOL_MODE_LEGACY;
             ESP_LOGI(TAG, "BLE client connected, conn_id=%d", s_conn_id);
+            ble_notify_connection_changed(true);
             break;
 
         case ESP_GATTS_DISCONNECT_EVT:
@@ -1170,6 +1181,7 @@ static void ble_gatts_profile_event_handler(esp_gatts_cb_event_t event,
             s_protocol_mode = BLE_PROTOCOL_MODE_LEGACY;
             ESP_LOGI(TAG, "BLE client disconnected (reason=0x%x), restart adv",
                      param->disconnect.reason);
+            ble_notify_connection_changed(false);
             esp_ble_gap_start_advertising(&s_adv_params);
             break;
 
@@ -1341,6 +1353,11 @@ bool ble_service_is_connected(void)
     return s_connected;
 }
 
+void ble_service_register_connection_callback(ble_service_connection_callback_t cb)
+{
+    s_connection_cb = cb;
+}
+
 #else
 
 #include "esp_err.h"
@@ -1366,6 +1383,11 @@ esp_err_t ble_service_stop_advertising(void)
 bool ble_service_is_connected(void)
 {
     return false;
+}
+
+void ble_service_register_connection_callback(ble_service_connection_callback_t cb)
+{
+    (void)cb;
 }
 
 #endif

@@ -39,6 +39,8 @@
 #define CLOUD_DISCOVERY_TIMEOUT_MS 5000
 #define CLOUD_RETRY_DELAY_MS 2000
 #define CLOUD_PROTOCOL_RETRY_DELAY_MS 5000
+#define WIFI_RESUME_MIN_INTERNAL_FREE_BYTES (28U * 1024U)
+#define WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES (16U * 1024U)
 #define CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES (48U * 1024U)
 #define CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES (16U * 1024U)
 #ifdef CONFIG_WATCHER_ANIM_FPS
@@ -60,9 +62,18 @@ typedef enum {
 
 typedef enum {
     IDLE_HINT_READY = 0,
-    IDLE_HINT_BLE_READY,
-    IDLE_HINT_BLE_NO_WIFI,
+    IDLE_HINT_BLE_CONNECTED,
+    IDLE_HINT_WIFI_SETUP_REQUIRED,
+    IDLE_HINT_WIFI_RECOVERING,
+    IDLE_HINT_WIFI_FAILED,
+    IDLE_HINT_CLOUD_CONNECTING,
 } idle_hint_mode_t;
+
+typedef struct {
+    const char *text;
+    int font_size;
+    bool alert;
+} idle_hint_view_t;
 
 typedef struct {
     uint32_t generation;
@@ -77,6 +88,7 @@ static bool s_ws_router_ready = false;
 static bool s_ws_stack_ready = false;
 static bool s_discovery_initialized = false;
 static bool s_last_ble_connected = false;
+static bool s_wifi_failed_since_last_success = false;
 static transport_state_t s_transport_state = TRANSPORT_BLE_IDLE_NO_CREDENTIALS;
 static volatile bool s_discovery_inflight = false;
 static uint32_t s_discovery_generation = 0;
@@ -126,6 +138,38 @@ static bool transport_retry_due(void) {
     return s_next_cloud_attempt_us == 0 || esp_timer_get_time() >= s_next_cloud_attempt_us;
 }
 
+static void on_ble_connection_changed(bool connected);
+
+static bool transport_has_wifi_resume_headroom(void)
+{
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (free_internal < WIFI_RESUME_MIN_INTERNAL_FREE_BYTES ||
+        largest_internal < WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES) {
+        ESP_LOGW(TAG,
+                 "Deferring WiFi resume due to low internal heap: free=%u largest=%u",
+                 (unsigned)free_internal,
+                 (unsigned)largest_internal);
+        return false;
+    }
+
+    return true;
+}
+
+static void transport_sync_boot_state(void)
+{
+    s_last_ble_connected = ble_service_is_connected();
+
+    if (s_last_ble_connected) {
+        s_transport_state = TRANSPORT_BLE_ACTIVE;
+    } else if (wifi_has_credentials() == 1) {
+        s_transport_state = TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED;
+    } else {
+        s_transport_state = TRANSPORT_BLE_IDLE_NO_CREDENTIALS;
+    }
+}
+
 #if CONFIG_WATCHER_CAMERA_BOOT_DIAG
 static bool has_internal_heap_headroom(size_t min_free_bytes, size_t min_largest_block_bytes) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -140,30 +184,35 @@ static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const
     case WIFI_STATUS_CONNECTED:
         ESP_LOGI(TAG, "WiFi connected: ssid=%s ip=%s", ssid ? ssid : "<unknown>",
                  ip_addr ? ip_addr : "<no-ip>");
+        s_wifi_failed_since_last_success = false;
         if (!s_boot_completed && s_waiting_for_wifi_provision) {
-            boot_anim_set_text("WiFi Connected");
+            boot_anim_set_text("Wi-Fi connected");
         }
         break;
 
     case WIFI_STATUS_CONNECTING:
         ESP_LOGI(TAG, "WiFi connecting: ssid=%s", ssid ? ssid : "<unknown>");
         if (!s_boot_completed && s_waiting_for_wifi_provision) {
-            boot_anim_set_text("Connecting WiFi...");
+            boot_anim_set_text("Connecting Wi-Fi...");
         }
         break;
 
     case WIFI_STATUS_DISCONNECTED:
         ESP_LOGW(TAG, "WiFi connect failed or disconnected: ssid=%s", ssid ? ssid : "<unknown>");
+        if (!ble_service_is_connected() && wifi_has_credentials() == 1) {
+            s_wifi_failed_since_last_success = true;
+        }
         if (!s_boot_completed && s_waiting_for_wifi_provision) {
-            boot_anim_set_text("WiFi Failed, Retry");
+            boot_anim_set_text("Wi-Fi failed");
         }
         break;
 
     case WIFI_STATUS_UNCONFIGURED:
     default:
         ESP_LOGI(TAG, "WiFi unconfigured");
+        s_wifi_failed_since_last_success = false;
         if (!s_boot_completed && s_waiting_for_wifi_provision) {
-            boot_anim_set_text("Open APP Set WiFi");
+            boot_anim_set_text("Reconnect BLE to set Wi-Fi");
         }
         break;
     }
@@ -244,21 +293,79 @@ static void wait_for_behavior_idle(uint32_t timeout_ms) {
 }
 
 static idle_hint_mode_t get_idle_hint_mode(void) {
+    if (ble_service_is_connected()) {
+        return IDLE_HINT_BLE_CONNECTED;
+    }
+
+    if (wifi_has_credentials() != 1) {
+        return IDLE_HINT_WIFI_SETUP_REQUIRED;
+    }
+
     if (s_transport_state == TRANSPORT_BLE_IDLE_CLOUD_READY) {
         return IDLE_HINT_READY;
     }
 
-    if (ble_service_is_connected() || wifi_has_credentials() != 1) {
-        return IDLE_HINT_BLE_NO_WIFI;
+    if (wifi_is_connected() == 1) {
+        return IDLE_HINT_CLOUD_CONNECTING;
     }
 
-    return IDLE_HINT_BLE_READY;
+    if (s_wifi_failed_since_last_success) {
+        return IDLE_HINT_WIFI_FAILED;
+    }
+
+    switch (s_transport_state) {
+    case TRANSPORT_BLE_IDLE_WIFI_STARTING:
+    case TRANSPORT_BLE_IDLE_WIFI_CONNECTING:
+    case TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED:
+        return IDLE_HINT_WIFI_RECOVERING;
+
+    case TRANSPORT_BLE_IDLE_DISCOVERING:
+    case TRANSPORT_BLE_IDLE_WS_CONNECTING:
+        return IDLE_HINT_CLOUD_CONNECTING;
+
+    case TRANSPORT_BLE_IDLE_NO_CREDENTIALS:
+        return IDLE_HINT_WIFI_SETUP_REQUIRED;
+
+    case TRANSPORT_BLE_ACTIVE:
+        return IDLE_HINT_BLE_CONNECTED;
+
+    case TRANSPORT_BLE_IDLE_CLOUD_READY:
+        return IDLE_HINT_READY;
+
+    default:
+        return IDLE_HINT_WIFI_RECOVERING;
+    }
+}
+
+static idle_hint_view_t get_idle_hint_view(idle_hint_mode_t mode)
+{
+    switch (mode) {
+    case IDLE_HINT_BLE_CONNECTED:
+        return (idle_hint_view_t){ .text = "BLE connected", .font_size = 0, .alert = false };
+
+    case IDLE_HINT_WIFI_SETUP_REQUIRED:
+        return (idle_hint_view_t){ .text = "Reconnect BLE to set Wi-Fi", .font_size = 20, .alert = true };
+
+    case IDLE_HINT_WIFI_RECOVERING:
+        return (idle_hint_view_t){ .text = "Reconnecting Wi-Fi...", .font_size = 22, .alert = false };
+
+    case IDLE_HINT_WIFI_FAILED:
+        return (idle_hint_view_t){ .text = "Wi-Fi failed. Reconnect BLE.", .font_size = 20, .alert = true };
+
+    case IDLE_HINT_CLOUD_CONNECTING:
+        return (idle_hint_view_t){ .text = "Connecting cloud...", .font_size = 22, .alert = false };
+
+    case IDLE_HINT_READY:
+    default:
+        return (idle_hint_view_t){ .text = "Ready!", .font_size = 0, .alert = false };
+    }
 }
 
 static void apply_idle_hint_if_needed(void) {
     static idle_hint_mode_t s_last_applied_hint = IDLE_HINT_READY;
     static bool s_hint_initialized = false;
     idle_hint_mode_t desired_hint = get_idle_hint_mode();
+    idle_hint_view_t view = get_idle_hint_view(desired_hint);
 
     if (behavior_state_is_busy() || behavior_state_is_action_active()) {
         return;
@@ -268,20 +375,7 @@ static void apply_idle_hint_if_needed(void) {
         return;
     }
 
-    switch (desired_hint) {
-    case IDLE_HINT_BLE_NO_WIFI:
-        (void)behavior_state_set_with_text_style("standby", "BLE Ready but no WiFi", 24, true);
-        break;
-
-    case IDLE_HINT_READY:
-        (void)behavior_state_set_with_text_style("standby", "Ready!", 0, false);
-        break;
-
-    case IDLE_HINT_BLE_READY:
-    default:
-        (void)behavior_state_set_with_text_style("standby", "BLE Ready", 0, false);
-        break;
-    }
+    (void)behavior_state_set_with_text_style("standby", view.text, view.font_size, view.alert);
 
     s_last_applied_hint = desired_hint;
     s_hint_initialized = true;
@@ -437,6 +531,12 @@ static void transport_begin_wifi_resume(const char *reason) {
         return;
     }
 
+    if (!transport_has_wifi_resume_headroom()) {
+        transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
+        transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED, "waiting heap headroom");
+        return;
+    }
+
     if (wifi_is_connect_requested() == 1) {
         transport_set_state(wifi_sta_is_started() == 1
                                 ? TRANSPORT_BLE_IDLE_WIFI_CONNECTING
@@ -537,11 +637,26 @@ static void transport_handle_discovery_results(bool ble_connected) {
 
 static void transport_suspend_for_ble(void) {
     ESP_LOGI(TAG, "BLE connected, pausing WiFi/WS background activity");
+    s_wifi_failed_since_last_success = false;
     transport_cancel_discovery("ble connected");
     transport_stop_ws("ble connected");
     wifi_suspend_for_ble();
     transport_schedule_retry(0);
     transport_set_state(TRANSPORT_BLE_ACTIVE, "ble connected");
+}
+
+static void on_ble_connection_changed(bool connected)
+{
+    s_last_ble_connected = connected;
+
+    if (connected) {
+        transport_suspend_for_ble();
+        return;
+    }
+
+    ESP_LOGI(TAG, "BLE disconnected, allowing WiFi/WS recovery");
+    transport_schedule_retry(0);
+    transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED, "ble disconnected");
 }
 
 static void transport_coordinator_tick(void) {
@@ -670,6 +785,7 @@ void app_main(void) {
     {
         esp_err_t ble_ret = ble_service_init();
         if (ble_ret == ESP_OK) {
+            ble_service_register_connection_callback(on_ble_connection_changed);
             ble_ret = ble_service_start_advertising();
             if (ble_ret != ESP_OK) {
                 ESP_LOGW(TAG, "BLE advertising start failed: %s", esp_err_to_name(ble_ret));
@@ -685,17 +801,13 @@ void app_main(void) {
     boot_anim_set_text("WiFi...");
     wifi_init();
     wifi_register_status_callback(on_wifi_status_changed);
-    if (wifi_has_credentials() == 1 && !ble_service_is_connected()) {
-        if (wifi_resume_background() == 0) {
-            ESP_LOGI(TAG, "Boot WiFi resume accepted; cloud coordinator will continue after boot");
-        } else {
-            s_waiting_for_wifi_provision = true;
-            boot_anim_set_text("BLE Ready");
-            ESP_LOGI(TAG, "Unable to resume WiFi at boot, continuing with BLE-only local control");
-        }
+    if (wifi_has_credentials() == 1) {
+        s_waiting_for_wifi_provision = false;
+        boot_anim_set_text("Preparing...");
+        ESP_LOGI(TAG, "Stored WiFi credentials detected; deferring WiFi resume until startup settles");
     } else {
         s_waiting_for_wifi_provision = true;
-        boot_anim_set_text("BLE Ready");
+        boot_anim_set_text("Reconnect BLE to set Wi-Fi");
         ESP_LOGI(TAG, "BLE local control is ready without immediate cloud bring-up");
     }
     boot_anim_set_progress(55);
@@ -706,8 +818,6 @@ void app_main(void) {
     boot_anim_set_text("BLE Ready");
     vTaskDelay(pdMS_TO_TICKS(500));
     boot_anim_finish();
-    s_boot_completed = true;
-    s_waiting_for_wifi_provision = false;
 
     log_heap_state("before_ui_init");
     hal_display_ui_init();
@@ -719,6 +829,8 @@ void app_main(void) {
 
     run_camera_boot_diag();
     log_heap_state("after_camera_diag");
+    s_boot_completed = true;
+    transport_sync_boot_state();
     ESP_LOGI(TAG, "WatcheRobot ready (transport=%s, ble=%s)",
              transport_state_to_string(s_transport_state),
              ble_service_is_connected() ? "connected" : "advertising");

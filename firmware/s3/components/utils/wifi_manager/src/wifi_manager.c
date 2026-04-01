@@ -128,20 +128,6 @@ static void wifi_apply_sta_defaults(wifi_sta_config_t *sta_cfg,
     sta_cfg->failure_retry_cnt = 3;
 }
 
-static void wifi_log_sta_security_profile(const wifi_sta_config_t *sta_cfg,
-                                          const char *source)
-{
-    ESP_LOGI(TAG,
-             "STA security profile (%s): auth_threshold=%d pmf_capable=%d pmf_required=%d sae_pwe=%d sae_pk=%d retry=%u",
-             source,
-             sta_cfg->threshold.authmode,
-             sta_cfg->pmf_cfg.capable ? 1 : 0,
-             sta_cfg->pmf_cfg.required ? 1 : 0,
-             sta_cfg->sae_pwe_h2e,
-             sta_cfg->sae_pk_mode,
-             (unsigned)sta_cfg->failure_retry_cnt);
-}
-
 static void wifi_notify_status(void)
 {
     for (size_t i = 0; i < WIFI_STATUS_CALLBACK_MAX; ++i) {
@@ -194,7 +180,6 @@ static int wifi_normalize_saved_sta_config(const char *source)
         return -1;
     }
 
-    wifi_log_sta_security_profile(&normalized_cfg.sta, source);
     return 0;
 }
 
@@ -438,8 +423,6 @@ int wifi_provision(const char *ssid, const char *password)
 
     wifi_config_t wifi_cfg = {0};
     wifi_apply_sta_defaults(&wifi_cfg.sta, ssid, ssid_len, password, pass_len);
-    wifi_log_sta_security_profile(&wifi_cfg.sta, "wifi_provision");
-
     if (wifi_start_if_needed() != 0) {
         return -1;
     }
@@ -487,8 +470,6 @@ int wifi_store_credentials(const char *ssid, const char *password)
 
     wifi_config_t wifi_cfg = {0};
     wifi_apply_sta_defaults(&wifi_cfg.sta, ssid, ssid_len, password, pass_len);
-    wifi_log_sta_security_profile(&wifi_cfg.sta, "wifi_store_credentials");
-
     if (wifi_start_if_needed() != 0) {
         return -1;
     }
