@@ -821,7 +821,7 @@ bool hal_display_has_knob_input(void) {
     return s_knob_indev != NULL;
 }
 
-int hal_display_set_text(const char *text, int font_size) {
+int hal_display_set_text_with_style(const char *text, int font_size, bool alert_text) {
     if (!is_initialized || !label_text) {
         ESP_LOGW(TAG, "Display not initialized");
         return -1;
@@ -834,22 +834,29 @@ int hal_display_set_text(const char *text, int font_size) {
 #define MAX_DISPLAY_CHARS 30
     char truncated[MAX_DISPLAY_CHARS + 4];
     int len = strlen(text);
+    lv_color_t text_color = alert_text ? lv_palette_main(LV_PALETTE_RED) : lv_color_white();
 
     if (len > MAX_DISPLAY_CHARS) {
         strncpy(truncated, text, MAX_DISPLAY_CHARS);
         strcpy(truncated + MAX_DISPLAY_CHARS, "...");
         ESP_LOGI(TAG, "Set text (truncated): '%s' -> '%s'", text, truncated);
         lvgl_port_lock(0);
+        lv_obj_set_style_text_color(label_text, text_color, 0);
         lv_label_set_text(label_text, truncated);
         lvgl_port_unlock();
     } else {
         ESP_LOGI(TAG, "Set text: '%s' (size %d)", text, font_size);
         lvgl_port_lock(0);
+        lv_obj_set_style_text_color(label_text, text_color, 0);
         lv_label_set_text(label_text, text);
         lvgl_port_unlock();
     }
 
     return 0;
+}
+
+int hal_display_set_text(const char *text, int font_size) {
+    return hal_display_set_text_with_style(text, font_size, false);
 }
 
 int hal_display_set_emoji(int emoji_id) {

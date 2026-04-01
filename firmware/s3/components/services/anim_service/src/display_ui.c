@@ -118,7 +118,11 @@ emoji_type_t display_emoji_from_string(const char *emoji_str) {
 /* Public: Update display                                             */
 /* ------------------------------------------------------------------ */
 
-int display_update(const char *text, const char *emoji, int font_size, display_result_t *out_result) {
+int display_update_with_style(const char *text,
+                              const char *emoji,
+                              int font_size,
+                              display_text_style_t text_style,
+                              display_result_t *out_result) {
     emoji_type_t requested_emoji = EMOJI_UNKNOWN;
     int text_changed = 0;
     int emoji_changed = 0;
@@ -144,7 +148,7 @@ int display_update(const char *text, const char *emoji, int font_size, display_r
     /* Update text if provided */
     if (text_changed) {
         int fs = (font_size > 0) ? font_size : DEFAULT_FONT_SIZE;
-        if (hal_display_set_text(text, fs) != 0) {
+        if (hal_display_set_text_with_style(text, fs, text_style == DISPLAY_TEXT_STYLE_ALERT) != 0) {
             return -1;
         }
         /* Store current text */
@@ -198,6 +202,10 @@ int display_update(const char *text, const char *emoji, int font_size, display_r
     }
 
     return 0;
+}
+
+int display_update(const char *text, const char *emoji, int font_size, display_result_t *out_result) {
+    return display_update_with_style(text, emoji, font_size, DISPLAY_TEXT_STYLE_NORMAL, out_result);
 }
 
 /* ------------------------------------------------------------------ */

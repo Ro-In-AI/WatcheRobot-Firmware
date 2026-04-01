@@ -21,6 +21,7 @@ set(EXTRA_COMPONENT_DIRS
     "components/services/anim_service"
     "components/services/behavior_state_service"
     "components/services/camera_service"
+    "components/services/control_ingress"
     "components/services/ota_service"
     "components/services/sfx_service"
     "components/services/voice_service"

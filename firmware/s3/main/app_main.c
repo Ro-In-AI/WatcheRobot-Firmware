@@ -12,6 +12,7 @@
 #include "boot_anim.h"
 #include "bsp_watcher.h"
 #include "camera_service.h"
+#include "control_ingress.h"
 #include "discovery_client.h"
 #include "display_ui.h"
 #include "hal_display.h"
@@ -44,6 +45,15 @@
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_ble_only_mode = false;
+static bool s_wifi_paused_for_ble = false;
+static bool s_ws_paused_for_ble = false;
+static bool s_cloud_session_configured = false;
+
+typedef enum {
+    IDLE_HINT_READY = 0,
+    IDLE_HINT_BLE_READY,
+    IDLE_HINT_BLE_NO_WIFI,
+} idle_hint_mode_t;
 
 static bool has_internal_heap_headroom(size_t min_free_bytes, size_t min_largest_block_bytes) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -57,40 +67,80 @@ static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const
     case WIFI_STATUS_CONNECTED:
         ESP_LOGI(TAG, "WiFi connected: ssid=%s ip=%s", ssid ? ssid : "<unknown>",
                  ip_addr ? ip_addr : "<no-ip>");
+        if (s_wifi_paused_for_ble) {
+            break;
+        }
         if (s_waiting_for_wifi_provision) {
             boot_anim_set_text("WiFi Connected");
-        } else if (s_ble_only_mode) {
-            behavior_state_set_with_text("happy", ip_addr ? ip_addr : "WiFi Connected", 0);
         }
         break;
 
     case WIFI_STATUS_CONNECTING:
         ESP_LOGI(TAG, "WiFi connecting: ssid=%s", ssid ? ssid : "<unknown>");
+        if (s_wifi_paused_for_ble) {
+            break;
+        }
         if (s_waiting_for_wifi_provision) {
             boot_anim_set_text("Connecting WiFi...");
-        } else if (s_ble_only_mode) {
-            behavior_state_set_with_text("processing", ssid ? ssid : "Connecting WiFi...", 0);
         }
         break;
 
     case WIFI_STATUS_DISCONNECTED:
         ESP_LOGW(TAG, "WiFi connect failed or disconnected: ssid=%s", ssid ? ssid : "<unknown>");
+        if (s_wifi_paused_for_ble) {
+            break;
+        }
         if (s_waiting_for_wifi_provision) {
             boot_anim_set_text("WiFi Failed, Retry");
-        } else if (s_ble_only_mode) {
-            behavior_state_set_with_text("error", "WiFi Failed, Retry", 0);
         }
         break;
 
     case WIFI_STATUS_UNCONFIGURED:
     default:
         ESP_LOGI(TAG, "WiFi unconfigured");
+        if (s_wifi_paused_for_ble) {
+            break;
+        }
         if (s_waiting_for_wifi_provision) {
             boot_anim_set_text("Open APP Set WiFi");
-        } else if (s_ble_only_mode) {
-            behavior_state_set_with_text("standby", "Open APP Set WiFi", 0);
         }
         break;
+    }
+}
+
+static void handle_ble_transport_gate(bool ble_connected) {
+    static bool last_ble_connected = false;
+
+    if (ble_connected == last_ble_connected) {
+        if (!ble_connected &&
+            s_ws_paused_for_ble &&
+            s_cloud_session_configured &&
+            wifi_is_connected() == 1 &&
+            !ws_client_is_connected()) {
+            ESP_LOGI(TAG, "BLE released, resuming WebSocket session");
+            ws_client_start();
+            s_ws_paused_for_ble = false;
+        }
+        return;
+    }
+
+    last_ble_connected = ble_connected;
+
+    if (ble_connected) {
+        ESP_LOGI(TAG, "BLE connected, pausing WiFi/WS background activity");
+        s_wifi_paused_for_ble = true;
+        if (ws_client_is_connected() || ws_client_is_session_ready()) {
+            ws_client_stop();
+            s_ws_paused_for_ble = s_cloud_session_configured;
+        }
+        wifi_disconnect();
+        return;
+    }
+
+    ESP_LOGI(TAG, "BLE disconnected, resuming WiFi/WS background activity");
+    s_wifi_paused_for_ble = false;
+    if (wifi_has_credentials() == 1) {
+        wifi_connect_async();
     }
 }
 
@@ -172,11 +222,11 @@ static int ensure_boot_wifi_connection(void) {
         ESP_LOGI(TAG, "Connecting to stored WiFi credentials");
     }
 
-    if (wifi_connect() == 0) {
+    if (wifi_connect_async() == 0) {
         return 0;
     }
 
-    ESP_LOGW(TAG, "Stored WiFi connect timed out, waiting for BLE provisioning");
+    ESP_LOGW(TAG, "Unable to start WiFi background connect, continuing with BLE-only local control");
     return -1;
 }
 
@@ -191,6 +241,50 @@ static void wait_for_behavior_idle(uint32_t timeout_ms) {
     if (behavior_state_is_busy()) {
         ESP_LOGW(TAG, "Timed out waiting for startup behavior to settle after %lu ms", (unsigned long)waited_ms);
     }
+}
+
+static idle_hint_mode_t get_idle_hint_mode(void) {
+    if (ble_service_is_connected() && wifi_is_connected() != 1) {
+        return IDLE_HINT_BLE_NO_WIFI;
+    }
+
+    if (s_cloud_session_configured && wifi_is_connected() == 1) {
+        return IDLE_HINT_READY;
+    }
+
+    return IDLE_HINT_BLE_READY;
+}
+
+static void apply_idle_hint_if_needed(void) {
+    static idle_hint_mode_t s_last_applied_hint = IDLE_HINT_READY;
+    static bool s_hint_initialized = false;
+    idle_hint_mode_t desired_hint = get_idle_hint_mode();
+
+    if (behavior_state_is_busy() || behavior_state_is_action_active()) {
+        return;
+    }
+
+    if (s_hint_initialized && desired_hint == s_last_applied_hint) {
+        return;
+    }
+
+    switch (desired_hint) {
+    case IDLE_HINT_BLE_NO_WIFI:
+        (void)behavior_state_set_with_text_style("standby", "BLE Ready but no WiFi", 24, true);
+        break;
+
+    case IDLE_HINT_READY:
+        (void)behavior_state_set_with_text_style("standby", "Ready!", 0, false);
+        break;
+
+    case IDLE_HINT_BLE_READY:
+    default:
+        (void)behavior_state_set_with_text_style("standby", "BLE Ready", 0, false);
+        break;
+    }
+
+    s_last_applied_hint = desired_hint;
+    s_hint_initialized = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -234,6 +328,12 @@ void app_main(void) {
     boot_anim_set_text("State...");
     behavior_state_init();
 
+    esp_err_t ingress_ret = control_ingress_init();
+    if (ingress_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Control ingress init failed: %s", esp_err_to_name(ingress_ret));
+        return;
+    }
+
     /* 5.5 BLE control + provisioning */
     boot_anim_set_progress(35);
     boot_anim_set_text("BLE...");
@@ -255,42 +355,43 @@ void app_main(void) {
     wifi_register_status_callback(on_wifi_status_changed);
     if (ensure_boot_wifi_connection() != 0) {
         s_waiting_for_wifi_provision = true;
-        boot_anim_set_text("Open APP Set WiFi");
-        ESP_LOGI(TAG, "Waiting for WiFi credentials via BLE provisioning");
-        if (wifi_wait_for_connection(-1) != 0) {
-            ESP_LOGE(TAG, "Waiting for WiFi connection failed");
-            return;
-        }
-        s_waiting_for_wifi_provision = false;
+        boot_anim_set_text("BLE Ready");
+        ESP_LOGI(TAG, "BLE local control is ready without WiFi/WebSocket");
+    } else {
+        ESP_LOGI(TAG, "WiFi connect is running in background; BLE local control remains available");
     }
-    s_waiting_for_wifi_provision = false;
     boot_anim_set_progress(55);
     log_heap_state("after_wifi_ready");
 
     /* 7. Service discovery */
-    boot_anim_set_text("Discovering...");
-    discovery_init();
-    server_info_t server_info = {0};
-    if (discovery_start_with_timeout(&server_info, BOOT_DISCOVERY_TIMEOUT_MS) == 0) {
-        if (server_info.protocol_version[0] == '\0' ||
-            strcmp(server_info.protocol_version, WATCHER_PROTOCOL_VERSION) != 0) {
-            ESP_LOGE(TAG, "Protocol mismatch: server=%s expected=%s",
-                     server_info.protocol_version[0] != '\0' ? server_info.protocol_version : "<missing>",
-                     WATCHER_PROTOCOL_VERSION);
-            boot_anim_show_error("Protocol Mismatch");
-            return;
-        }
+    if (wifi_is_connected() == 1) {
+        boot_anim_set_text("Discovering...");
+        discovery_init();
+        server_info_t server_info = {0};
+        if (discovery_start_with_timeout(&server_info, BOOT_DISCOVERY_TIMEOUT_MS) == 0) {
+            if (server_info.protocol_version[0] == '\0' ||
+                strcmp(server_info.protocol_version, WATCHER_PROTOCOL_VERSION) != 0) {
+                ESP_LOGE(TAG, "Protocol mismatch: server=%s expected=%s",
+                         server_info.protocol_version[0] != '\0' ? server_info.protocol_version : "<missing>",
+                         WATCHER_PROTOCOL_VERSION);
+                boot_anim_show_error("Protocol Mismatch");
+                return;
+            }
 
-        ESP_LOGI(TAG, "Server: %s:%u protocol=%s", server_info.ip, server_info.port, server_info.protocol_version);
-        boot_anim_set_progress(65);
-        char *ws_url = discovery_get_ws_url(&server_info);
-        if (ws_url) {
-            ws_client_set_server_url(ws_url);
-            free(ws_url);
-            cloud_ready = true;
+            ESP_LOGI(TAG, "Server: %s:%u protocol=%s", server_info.ip, server_info.port, server_info.protocol_version);
+            boot_anim_set_progress(65);
+            char *ws_url = discovery_get_ws_url(&server_info);
+            if (ws_url) {
+                ws_client_set_server_url(ws_url);
+                free(ws_url);
+                cloud_ready = true;
+                s_cloud_session_configured = true;
+            }
+        } else {
+            ESP_LOGW(TAG, "Discovery failed within %d ms, continuing in BLE-only mode", BOOT_DISCOVERY_TIMEOUT_MS);
         }
     } else {
-        ESP_LOGW(TAG, "Discovery failed within %d ms, continuing in BLE-only mode", BOOT_DISCOVERY_TIMEOUT_MS);
+        ESP_LOGI(TAG, "Skipping discovery until WiFi is connected; BLE local control continues immediately");
     }
     log_heap_state("after_discovery");
 
@@ -315,6 +416,7 @@ void app_main(void) {
     }
     vTaskDelay(pdMS_TO_TICKS(500));
     boot_anim_finish();
+    s_waiting_for_wifi_provision = false;
     log_heap_state("before_ui_init");
     hal_display_ui_init();
     if (cloud_ready) {
@@ -337,7 +439,8 @@ void app_main(void) {
 
     behavior_state_set("boot");
     wait_for_behavior_idle(STARTUP_BEHAVIOR_TIMEOUT_MS);
-    behavior_state_set_text(cloud_ready ? "Ready!" : "BLE Ready", 0);
+    behavior_state_set_text_style(cloud_ready ? "Ready!" : "BLE Ready", 0, false);
+    apply_idle_hint_if_needed();
     log_heap_state("after_ui_init");
     if (cloud_ready) {
         ws_client_start();
@@ -357,6 +460,8 @@ void app_main(void) {
     esp_task_wdt_add(NULL);
     while (1) {
         esp_task_wdt_reset();
+        handle_ble_transport_gate(ble_service_is_connected());
+        apply_idle_hint_if_needed();
         ws_tts_timeout_check();
         vTaskDelay(pdMS_TO_TICKS(100));
     }

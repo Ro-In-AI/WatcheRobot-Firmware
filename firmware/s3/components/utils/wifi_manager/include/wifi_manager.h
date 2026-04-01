@@ -24,6 +24,12 @@ int wifi_init(void);
 int wifi_connect(void);
 
 /**
+ * Start WiFi connection in background without waiting for an IP address.
+ * @return 0 when the connect request is accepted, -1 on error
+ */
+int wifi_connect_async(void);
+
+/**
  * Wait until WiFi gets an IP address.
  * @param timeout_ms Timeout in milliseconds. Pass a negative value to wait forever.
  * @return 0 on success, -1 on timeout/error
@@ -36,6 +42,13 @@ int wifi_wait_for_connection(int timeout_ms);
  * @return 0 on success, -1 on validation or WiFi API error
  */
 int wifi_provision(const char *ssid, const char *password);
+
+/**
+ * Save WiFi credentials without starting a connection attempt.
+ * Intended for BLE-only provisioning flows that should wait until BLE disconnects.
+ * @return 0 on success, -1 on validation or WiFi API error
+ */
+int wifi_store_credentials(const char *ssid, const char *password);
 
 /**
  * Clear stored WiFi credentials.

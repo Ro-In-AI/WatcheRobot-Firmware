@@ -7,6 +7,7 @@
 
 #include "camera_service.h"
 #include "behavior_state_service.h"
+#include "control_ingress.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -16,6 +17,7 @@
 #include "ws_client.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -454,60 +456,24 @@ static bool ws_contains_nocase(const char *haystack, const char *needle) {
     return false;
 }
 
-static void ws_normalize_resource_name(const char *raw, char *out, size_t out_size) {
-    const char *base;
-    const char *ext;
+static void ws_copy_string(char *dst, size_t dst_size, const char *src) {
     size_t len;
-    size_t i;
 
-    if (out == NULL || out_size == 0) {
+    if (dst == NULL || dst_size == 0) {
         return;
     }
 
-    out[0] = '\0';
-    if (raw == NULL || raw[0] == '\0') {
+    if (src == NULL) {
+        dst[0] = '\0';
         return;
     }
 
-    base = raw;
-    for (i = 0; raw[i] != '\0'; ++i) {
-        if (raw[i] == '/' || raw[i] == '\\') {
-            base = &raw[i + 1];
-        }
+    len = strlen(src);
+    if (len >= dst_size) {
+        len = dst_size - 1;
     }
-
-    ext = strrchr(base, '.');
-    len = (ext != NULL && ext > base) ? (size_t)(ext - base) : strlen(base);
-    if (len >= out_size) {
-        len = out_size - 1;
-    }
-
-    for (i = 0; i < len; ++i) {
-        out[i] = (char)tolower((unsigned char)base[i]);
-    }
-    out[len] = '\0';
-}
-
-static bool ws_append_state_candidate(const char **candidates, size_t *count, size_t max_count, const char *candidate) {
-    size_t i;
-
-    if (candidates == NULL || count == NULL || candidate == NULL || candidate[0] == '\0') {
-        return false;
-    }
-
-    for (i = 0; i < *count; ++i) {
-        if (strcasecmp(candidates[i], candidate) == 0) {
-            return false;
-        }
-    }
-
-    if (*count >= max_count) {
-        return false;
-    }
-
-    candidates[*count] = candidate;
-    (*count)++;
-    return true;
+    memcpy(dst, src, len);
+    dst[len] = '\0';
 }
 
 #if SERVO_POSITION_REPORT_ENABLED
@@ -656,16 +622,21 @@ void on_sys_ack_handler(const ws_sys_ack_t *msg) {
 }
 
 void on_sys_nack_handler(const ws_sys_nack_t *msg) {
+    control_state_text_request_t req = {0};
+
     if (msg == NULL) {
         return;
     }
 
     ESP_LOGW(TAG, "sys.nack: type=%s command_id=%s code=%d reason=%s", msg->type, msg->command_id, msg->code,
              msg->reason);
-    if (strcmp(msg->type, "sys.client.hello") == 0) {
-        behavior_state_set_with_text("error", msg->reason[0] != '\0' ? msg->reason : "Hello Rejected", 0);
-    } else if (msg->reason[0] != '\0') {
-        behavior_state_set_with_text("error", msg->reason, 0);
+    snprintf(req.state_id, sizeof(req.state_id), "%s", "error");
+    snprintf(req.text, sizeof(req.text), "%s",
+             msg->reason[0] != '\0' ? msg->reason :
+             (strcmp(msg->type, "sys.client.hello") == 0 ? "Hello Rejected" : ""));
+
+    if (req.text[0] != '\0' && control_ingress_submit_state_text(&req) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to enqueue error state update");
     }
 }
 
@@ -682,36 +653,42 @@ void on_session_resume_handler(void) {
 }
 
 void on_servo_handler(const ws_servo_cmd_t *cmd) {
+    control_servo_request_t req = {0};
     esp_err_t ret;
-    int x_deg;
-    int y_deg;
     int duration_ms;
 
     if (cmd == NULL) {
         return;
     }
 
-    if (!cmd->has_x || !cmd->has_y) {
+    if (!cmd->has_x && !cmd->has_y) {
         ws_send_sys_nack("ctrl.servo.angle", NULL, "invalid_servo_payload");
         return;
     }
 
-    x_deg = (int)(cmd->x_deg + 0.5f);
-    y_deg = (int)(cmd->y_deg + 0.5f);
+    req.has_x = cmd->has_x;
+    req.has_y = cmd->has_y;
+    req.x_deg = (int)(cmd->x_deg + 0.5f);
+    req.y_deg = (int)(cmd->y_deg + 0.5f);
     duration_ms = cmd->duration_ms;
     if (duration_ms <= 0) {
         ws_send_sys_nack("ctrl.servo.angle", NULL, "invalid_duration_ms");
         return;
     }
-    if (x_deg < 0 || x_deg > 180 || y_deg < 0 || y_deg > 180) {
+    req.duration_ms = duration_ms;
+    if ((req.has_x && (req.x_deg < 0 || req.x_deg > 180)) ||
+        (req.has_y && (req.y_deg < 0 || req.y_deg > 180))) {
         ws_send_sys_nack("ctrl.servo.angle", NULL, "angle_out_of_range");
         return;
     }
 
-    ESP_LOGI(TAG, "servo command: x=%d y=%d duration_ms=%d", x_deg, y_deg, duration_ms);
-    ret = hal_servo_move_sync(x_deg, y_deg, duration_ms);
+    ESP_LOGI(TAG, "servo command: has_x=%d x=%d has_y=%d y=%d duration_ms=%d",
+             req.has_x, req.x_deg, req.has_y, req.y_deg, duration_ms);
+    ret = control_ingress_submit_servo(&req);
     if (ret == ESP_OK) {
         ws_send_sys_ack("ctrl.servo.angle", NULL);
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        ws_send_sys_nack("ctrl.servo.angle", NULL, "busy");
     } else {
         ws_send_device_error(WS_DEVICE_ERROR_CODE_SERVO, "servo_move_failed");
         ws_send_sys_nack("ctrl.servo.angle", NULL, "servo_move_failed");
@@ -719,6 +696,7 @@ void on_servo_handler(const ws_servo_cmd_t *cmd) {
 }
 
 void on_state_set_handler(const ws_state_cmd_t *cmd) {
+    control_state_set_request_t req = {0};
     esp_err_t ret;
 
     if (cmd == NULL || cmd->state_id[0] == '\0') {
@@ -726,11 +704,12 @@ void on_state_set_handler(const ws_state_cmd_t *cmd) {
         return;
     }
 
-    ret = behavior_state_set(cmd->state_id);
+    snprintf(req.state_id, sizeof(req.state_id), "%s", cmd->state_id);
+    ret = control_ingress_submit_state_set(&req);
     if (ret == ESP_OK) {
         ws_send_sys_ack("ctrl.robot.state.set", cmd->command_id);
-    } else if (ret == ESP_ERR_NOT_FOUND) {
-        ws_send_sys_nack("ctrl.robot.state.set", cmd->command_id, "unknown_state_id");
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        ws_send_sys_nack("ctrl.robot.state.set", cmd->command_id, "busy");
     } else {
         ws_send_sys_nack("ctrl.robot.state.set", cmd->command_id, "state_set_failed");
     }
@@ -921,119 +900,62 @@ void on_capture_handler(const ws_capture_cmd_t *cmd) {
 }
 
 void on_asr_result_handler(const ws_text_event_t *event) {
+    control_state_text_request_t req = {0};
+
     if (event == NULL) {
         return;
     }
 
     ESP_LOGI(TAG, "ASR result: %s", event->text);
-    behavior_state_set_with_text("processing", event->text[0] != '\0' ? event->text : "Listening...", 0);
+    snprintf(req.state_id, sizeof(req.state_id), "%s", "processing");
+    snprintf(req.text, sizeof(req.text), "%s", event->text[0] != '\0' ? event->text : "Listening...");
+    if (control_ingress_submit_state_text(&req) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to enqueue ASR state update");
+    }
 }
 
 void on_ai_status_handler(const ws_ai_status_t *event) {
-    char action_state_id[WS_STATE_ID_MAX];
-    char status_state_id[WS_STATE_ID_MAX];
-    char fallback_state_id[WS_STATE_ID_MAX];
-    char image_name[WS_STATE_ID_MAX];
-    char sound_id[WS_STATE_ID_MAX];
-    const char *state_candidates[3] = {0};
-    const char *action_candidates[3] = {0};
-    size_t state_candidate_count = 0;
-    size_t action_candidate_count = 0;
-    const char *selected_action_id = NULL;
-    const char *text;
-    esp_err_t ret = ESP_ERR_NOT_FOUND;
-    size_t i;
+    control_ai_status_request_t req = {0};
+    esp_err_t ret;
 
     if (event == NULL) {
         return;
     }
 
-    ws_normalize_resource_name(event->action_file, action_state_id, sizeof(action_state_id));
-    ws_normalize_resource_name(event->status, status_state_id, sizeof(status_state_id));
-    ws_normalize_resource_name(event->image_name, image_name, sizeof(image_name));
-    ws_normalize_resource_name(event->sound_file, sound_id, sizeof(sound_id));
-    ws_normalize_resource_name(ws_ai_status_to_emoji(event->status, event->message),
-                               fallback_state_id,
-                               sizeof(fallback_state_id));
-
-    text = event->message[0] != '\0' ? event->message : NULL;
-
-    ws_append_state_candidate(state_candidates, &state_candidate_count, 3, action_state_id);
-    ws_append_state_candidate(state_candidates, &state_candidate_count, 3, status_state_id);
-    ws_append_state_candidate(state_candidates, &state_candidate_count, 3, fallback_state_id);
-    ws_append_state_candidate(action_candidates, &action_candidate_count, 3, action_state_id);
-    ws_append_state_candidate(action_candidates, &action_candidate_count, 3, status_state_id);
-    ws_append_state_candidate(action_candidates, &action_candidate_count, 3, fallback_state_id);
-
-    for (i = 0; i < action_candidate_count; ++i) {
-        if (behavior_state_has_action(action_candidates[i])) {
-            selected_action_id = action_candidates[i];
-            break;
-        }
-    }
-    if (selected_action_id == NULL &&
-        (action_state_id[0] != '\0' || status_state_id[0] != '\0' || fallback_state_id[0] != '\0')) {
-        ESP_LOGW(TAG,
-                 "No SPIFFS action matched candidates: action_file=%s status=%s fallback=%s",
-                 action_state_id[0] != '\0' ? action_state_id : "<none>",
-                 status_state_id[0] != '\0' ? status_state_id : "<none>",
-                 fallback_state_id[0] != '\0' ? fallback_state_id : "<none>");
-    }
-
     ESP_LOGI(TAG,
-             "AI status: status=%s message=%s image=%s action=%s sound=%s selected_action=%s",
+             "AI status: status=%s message=%s image=%s action=%s sound=%s",
              event->status,
              event->message,
              event->image_name,
              event->action_file,
-             event->sound_file,
-             selected_action_id != NULL ? selected_action_id : "<none>");
+             event->sound_file);
 
-    for (i = 0; i < state_candidate_count; ++i) {
-        ret = behavior_state_set_with_resources_and_action(state_candidates[i],
-                                                           text,
-                                                           0,
-                                                           image_name[0] != '\0' ? image_name : NULL,
-                                                           sound_id[0] != '\0' ? sound_id : NULL,
-                                                           selected_action_id);
-        if (ret != ESP_ERR_NOT_FOUND) {
-            break;
-        }
-    }
+    ws_copy_string(req.status, sizeof(req.status), event->status);
+    ws_copy_string(req.message, sizeof(req.message), event->message);
+    ws_copy_string(req.image_name, sizeof(req.image_name), event->image_name);
+    ws_copy_string(req.action_file, sizeof(req.action_file), event->action_file);
+    ws_copy_string(req.sound_file, sizeof(req.sound_file), event->sound_file);
 
-    if (ret == ESP_ERR_NOT_FOUND) {
-        ret = behavior_state_set_with_resources_and_action("standby",
-                                                           text,
-                                                           0,
-                                                           image_name[0] != '\0' ? image_name : NULL,
-                                                           sound_id[0] != '\0' ? sound_id : NULL,
-                                                           selected_action_id);
-        if (ret == ESP_ERR_NOT_FOUND) {
-            ESP_LOGW(TAG,
-                     "AI status has no local match, keeping current state=%s status=%s action=%s image=%s fallback=%s "
-                     "selected_action=%s",
-                     behavior_state_get_current(),
-                     event->status,
-                     action_state_id,
-                     image_name,
-                     fallback_state_id,
-                     selected_action_id != NULL ? selected_action_id : "<none>");
-        }
-    }
-
-    if (ret != ESP_OK && text != NULL) {
-        behavior_state_set_text(text, 0);
+    ret = control_ingress_submit_ai_status(&req);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to enqueue AI status update: %s", esp_err_to_name(ret));
     }
 }
 
 void on_ai_thinking_handler(const ws_ai_thinking_t *event) {
+    control_state_text_request_t req = {0};
+
     if (event == NULL) {
         return;
     }
 
     ESP_LOGI(TAG, "AI thinking: kind=%s content=%s", event->kind, event->content);
     if (event->content[0] != '\0') {
-        behavior_state_set_with_text("thinking", event->content, 0);
+        snprintf(req.state_id, sizeof(req.state_id), "%s", "thinking");
+        snprintf(req.text, sizeof(req.text), "%s", event->content);
+        if (control_ingress_submit_state_text(&req) != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to enqueue thinking state update");
+        }
     }
 }
 

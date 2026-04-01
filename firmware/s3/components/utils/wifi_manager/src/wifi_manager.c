@@ -214,6 +214,37 @@ int wifi_connect(void)
     return wifi_wait_for_connection(WIFI_WAIT_TIMEOUT_MS);
 }
 
+int wifi_connect_async(void)
+{
+    if (!s_initialized) {
+        ESP_LOGE(TAG, "WiFi not initialized");
+        return -1;
+    }
+
+    if (wifi_start_if_needed() != 0) {
+        return -1;
+    }
+
+    wifi_refresh_saved_config();
+    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+
+    if (!s_credentials_present) {
+        ESP_LOGW(TAG, "No stored WiFi credentials; BLE can continue without cloud");
+        wifi_set_status(WIFI_STATUS_UNCONFIGURED);
+        return -1;
+    }
+
+    s_connect_requested = true;
+    wifi_set_status(WIFI_STATUS_CONNECTING);
+    ESP_LOGI(TAG, "Starting background WiFi connect to SSID: %s", s_saved_ssid);
+    if (wifi_request_connect("wifi_connect_async") != 0) {
+        wifi_set_status(WIFI_STATUS_DISCONNECTED);
+        return -1;
+    }
+
+    return 0;
+}
+
 int wifi_wait_for_connection(int timeout_ms)
 {
     if (!s_initialized || wifi_event_group == NULL) {
@@ -284,6 +315,51 @@ int wifi_provision(const char *ssid, const char *password)
         return -1;
     }
 
+    return 0;
+}
+
+int wifi_store_credentials(const char *ssid, const char *password)
+{
+    if (!s_initialized || !ssid || !password) {
+        return -1;
+    }
+
+    size_t ssid_len = strlen(ssid);
+    size_t pass_len = strlen(password);
+    if (ssid_len == 0 || ssid_len >= sizeof(((wifi_config_t *)0)->sta.ssid) ||
+        pass_len >= sizeof(((wifi_config_t *)0)->sta.password)) {
+        ESP_LOGE(TAG, "Invalid WiFi credentials length");
+        return -1;
+    }
+
+    wifi_config_t wifi_cfg = {0};
+    memcpy(wifi_cfg.sta.ssid, ssid, ssid_len);
+    memcpy(wifi_cfg.sta.password, password, pass_len);
+    wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_cfg.sta.pmf_cfg.capable = true;
+    wifi_cfg.sta.pmf_cfg.required = false;
+    wifi_cfg.sta.failure_retry_cnt = 3;
+
+    if (wifi_start_if_needed() != 0) {
+        return -1;
+    }
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    if (esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save WiFi config");
+        return -1;
+    }
+
+    wifi_refresh_saved_config();
+    s_connect_requested = false;
+    s_connection_in_progress = false;
+    is_connected = false;
+    s_ip_addr[0] = '\0';
+    xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+    wifi_set_status(WIFI_STATUS_DISCONNECTED);
+    ESP_LOGI(TAG, "Saved WiFi credentials without immediate connect: ssid=%s", s_saved_ssid);
     return 0;
 }
 

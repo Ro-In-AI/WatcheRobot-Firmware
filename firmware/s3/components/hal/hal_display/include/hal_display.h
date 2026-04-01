@@ -12,6 +12,15 @@
 int hal_display_set_text(const char *text, int font_size);
 
 /**
+ * Set text on display with an explicit text style.
+ * @param text Text to display
+ * @param font_size Font size
+ * @param alert_text True for alert styling, false for normal styling
+ * @return 0 on success, -1 on error
+ */
+int hal_display_set_text_with_style(const char *text, int font_size, bool alert_text);
+
+/**
  * Set emoji image on display
  * @param emoji_id Emoji type ID (emoji_type_t)
  * @return 0 on success, -1 on error

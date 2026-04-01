@@ -17,6 +17,7 @@ idf_component_register(
         behavior_state_service
         anim_service
         camera_service
+        control_ingress
         ota_service
         # Utils
         wifi_manager

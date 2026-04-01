@@ -20,6 +20,11 @@ typedef enum {
     EMOJI_UNKNOWN = -1,
 } emoji_type_t;
 
+typedef enum {
+    DISPLAY_TEXT_STYLE_NORMAL = 0,
+    DISPLAY_TEXT_STYLE_ALERT,
+} display_text_style_t;
+
 /* Display update result */
 typedef struct {
     int text_updated;  /* Non-zero if text was updated */
@@ -50,6 +55,21 @@ emoji_type_t display_emoji_from_string(const char *emoji_str);
 int display_update(const char *text, const char *emoji, int font_size, display_result_t *out_result);
 
 /**
+ * Update display with text and optional emoji using an explicit text style.
+ * @param text Text to display (can be NULL)
+ * @param emoji Emoji string like "happy", "processing", "error" (can be NULL)
+ * @param font_size Font size (0 for default)
+ * @param text_style Text style to apply when text is updated
+ * @param out_result Output result (can be NULL)
+ * @return 0 on success, -1 on error
+ */
+int display_update_with_style(const char *text,
+                              const char *emoji,
+                              int font_size,
+                              display_text_style_t text_style,
+                              display_result_t *out_result);
+
+/**
  * Get current text
  * @param out_buf Output buffer
  * @param buf_size Buffer size
@@ -73,6 +93,15 @@ emoji_type_t display_get_emoji(void);
  * @return 0 on success, -1 on error
  */
 int hal_display_set_text(const char *text, int font_size);
+
+/**
+ * Set text on display (HAL) with an explicit text style.
+ * @param text Text to display
+ * @param font_size Font size
+ * @param alert_text True for alert styling, false for normal styling
+ * @return 0 on success, -1 on error
+ */
+int hal_display_set_text_with_style(const char *text, int font_size, bool alert_text);
 
 /**
  * Set emoji image on display (HAL)

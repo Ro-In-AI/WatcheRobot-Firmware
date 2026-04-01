@@ -109,6 +109,7 @@ typedef struct {
     char text_override[BEHAVIOR_TEXT_LEN];
     int text_override_font_size;
     bool text_override_valid;
+    bool text_override_alert;
     char anim_override[BEHAVIOR_STATE_ID_LEN];
     bool anim_override_valid;
     bool suppress_state_sound_events;
@@ -1083,6 +1084,7 @@ static void behavior_reset_runtime_locked(void) {
     s_ctx.text_override[0] = '\0';
     s_ctx.text_override_font_size = 0;
     s_ctx.text_override_valid = false;
+    s_ctx.text_override_alert = false;
     s_ctx.anim_override[0] = '\0';
     s_ctx.anim_override_valid = false;
     s_ctx.suppress_state_sound_events = false;
@@ -1156,7 +1158,13 @@ static void behavior_refresh_display_locked(void) {
         anim = s_ctx.anim_override;
     }
 
-    if (display_update(text, anim, font_size, NULL) != 0) {
+    if (display_update_with_style(text,
+                                  anim,
+                                  font_size,
+                                  s_ctx.text_override_valid && s_ctx.text_override_alert
+                                      ? DISPLAY_TEXT_STYLE_ALERT
+                                      : DISPLAY_TEXT_STYLE_NORMAL,
+                                  NULL) != 0) {
         ESP_LOGW(TAG, "Display refresh failed for state '%s'", s_ctx.current_state_id);
     }
 }
@@ -1210,7 +1218,13 @@ static void behavior_dispatch_expression_locked(const behavior_expression_event_
         font_size = event->font_size;
     }
 
-    if (display_update(text, anim, font_size, NULL) != 0) {
+    if (display_update_with_style(text,
+                                  anim,
+                                  font_size,
+                                  s_ctx.text_override_valid && s_ctx.text_override_alert
+                                      ? DISPLAY_TEXT_STYLE_ALERT
+                                      : DISPLAY_TEXT_STYLE_NORMAL,
+                                  NULL) != 0) {
         ESP_LOGW(TAG, "Display update failed for state '%s'", s_ctx.current_state_id);
     }
 }
@@ -1345,6 +1359,7 @@ static uint32_t behavior_non_loop_done_at_ms_locked(void) {
 static esp_err_t behavior_schedule_state_locked(const char *state_id,
                                                 const char *text,
                                                 int font_size,
+                                                bool alert_text,
                                                 const char *anim_id,
                                                 const char *sound_id,
                                                 const char *action_id) {
@@ -1367,12 +1382,16 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
             s_ctx.text_override_valid = (text != NULL);
             behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
             s_ctx.text_override_font_size = font_size;
+            s_ctx.text_override_alert = alert_text;
             behavior_set_anim_override_locked(anim_id);
             (void)behavior_apply_sound_override_locked(sound_id);
-            if (display_update(s_ctx.text_override_valid ? s_ctx.text_override : NULL,
-                               s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
-                               s_ctx.text_override_font_size,
-                               NULL) != 0) {
+            if (display_update_with_style(s_ctx.text_override_valid ? s_ctx.text_override : NULL,
+                                          s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
+                                          s_ctx.text_override_font_size,
+                                          s_ctx.text_override_valid && s_ctx.text_override_alert
+                                              ? DISPLAY_TEXT_STYLE_ALERT
+                                              : DISPLAY_TEXT_STYLE_NORMAL,
+                                          NULL) != 0) {
                 ESP_LOGW(TAG, "Fallback standby display update failed");
             }
             return ESP_OK;
@@ -1392,16 +1411,20 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
         s_ctx.text_override_valid = (text != NULL);
         behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
         s_ctx.text_override_font_size = font_size;
+        s_ctx.text_override_alert = alert_text;
         behavior_set_anim_override_locked(anim_id);
         s_ctx.suppress_state_sound_events = false;
         s_ctx.wait_for_local_sfx_completion = false;
         s_ctx.hold_logged = false;
         (void)behavior_apply_sound_override_locked(sound_id);
         behavior_log_action_start_locked(effective_state_id, action_def);
-        if (display_update(text,
-                           s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
-                           font_size,
-                           NULL) != 0) {
+        if (display_update_with_style(text,
+                                      s_ctx.anim_override_valid ? s_ctx.anim_override : s_ctx.catalog.default_state,
+                                      font_size,
+                                      s_ctx.text_override_valid && s_ctx.text_override_alert
+                                          ? DISPLAY_TEXT_STYLE_ALERT
+                                          : DISPLAY_TEXT_STYLE_NORMAL,
+                                      NULL) != 0) {
             ESP_LOGW(TAG, "Fallback standby display update failed");
         }
         return ESP_OK;
@@ -1416,6 +1439,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
         s_ctx.text_override_valid = (text != NULL);
         behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
         s_ctx.text_override_font_size = font_size;
+        s_ctx.text_override_alert = alert_text;
         behavior_set_anim_override_locked(anim_id);
         if (behavior_apply_sound_override_locked(sound_id)) {
             s_ctx.suppress_state_sound_events = true;
@@ -1439,6 +1463,7 @@ static esp_err_t behavior_schedule_state_locked(const char *state_id,
     s_ctx.text_override_valid = (text != NULL);
     behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
     s_ctx.text_override_font_size = font_size;
+    s_ctx.text_override_alert = alert_text;
     behavior_set_anim_override_locked(anim_id);
     s_ctx.wait_for_local_sfx_completion = false;
     s_ctx.suppress_state_sound_events = behavior_apply_sound_override_locked(sound_id);
@@ -1502,6 +1527,7 @@ static void behavior_task(void *arg) {
                             s_ctx.text_override[0] = '\0';
                             s_ctx.text_override_font_size = 0;
                             s_ctx.text_override_valid = false;
+                            s_ctx.text_override_alert = false;
                             s_ctx.anim_override[0] = '\0';
                             s_ctx.anim_override_valid = false;
                             s_ctx.suppress_state_sound_events = false;
@@ -1621,28 +1647,13 @@ esp_err_t behavior_state_load(void) {
     return ESP_OK;
 }
 
-esp_err_t behavior_state_set(const char *state_id) {
-    return behavior_state_set_with_resources(state_id, NULL, 0, NULL, NULL);
-}
-
-esp_err_t behavior_state_set_with_text(const char *state_id, const char *text, int font_size) {
-    return behavior_state_set_with_resources(state_id, text, font_size, NULL, NULL);
-}
-
-esp_err_t behavior_state_set_with_resources(const char *state_id,
-                                            const char *text,
-                                            int font_size,
-                                            const char *anim_id,
-                                            const char *sound_id) {
-    return behavior_state_set_with_resources_and_action(state_id, text, font_size, anim_id, sound_id, NULL);
-}
-
-esp_err_t behavior_state_set_with_resources_and_action(const char *state_id,
-                                                       const char *text,
-                                                       int font_size,
-                                                       const char *anim_id,
-                                                       const char *sound_id,
-                                                       const char *action_id) {
+static esp_err_t behavior_state_set_with_resources_and_action_internal(const char *state_id,
+                                                                       const char *text,
+                                                                       int font_size,
+                                                                       bool alert_text,
+                                                                       const char *anim_id,
+                                                                       const char *sound_id,
+                                                                       const char *action_id) {
     esp_err_t ret;
     char resolved_state[BEHAVIOR_STATE_ID_LEN] = {0};
 
@@ -1659,14 +1670,15 @@ esp_err_t behavior_state_set_with_resources_and_action(const char *state_id,
     }
 
     ESP_LOGI(TAG,
-             "State request state=%s action=%s text=%s anim_override=%s sound_override=%s font=%d",
+             "State request state=%s action=%s text=%s anim_override=%s sound_override=%s font=%d alert=%d",
              state_id,
              action_id != NULL ? action_id : "<none>",
              text != NULL ? text : "<unchanged>",
              anim_id != NULL ? anim_id : "<default>",
              sound_id != NULL ? sound_id : "<default>",
-             font_size);
-    ret = behavior_schedule_state_locked(state_id, text, font_size, anim_id, sound_id, action_id);
+             font_size,
+             alert_text ? 1 : 0);
+    ret = behavior_schedule_state_locked(state_id, text, font_size, alert_text, anim_id, sound_id, action_id);
     if (ret == ESP_OK) {
         behavior_copy_string(resolved_state, sizeof(resolved_state), s_ctx.current_state_id);
     }
@@ -1679,7 +1691,41 @@ esp_err_t behavior_state_set_with_resources_and_action(const char *state_id,
     return ret;
 }
 
+esp_err_t behavior_state_set(const char *state_id) {
+    return behavior_state_set_with_resources(state_id, NULL, 0, NULL, NULL);
+}
+
+esp_err_t behavior_state_set_with_text(const char *state_id, const char *text, int font_size) {
+    return behavior_state_set_with_text_style(state_id, text, font_size, false);
+}
+
+esp_err_t behavior_state_set_with_text_style(const char *state_id, const char *text, int font_size, bool alert_text) {
+    return behavior_state_set_with_resources_and_action_internal(state_id, text, font_size, alert_text, NULL, NULL, NULL);
+}
+
+esp_err_t behavior_state_set_with_resources(const char *state_id,
+                                            const char *text,
+                                            int font_size,
+                                            const char *anim_id,
+                                            const char *sound_id) {
+    return behavior_state_set_with_resources_and_action(state_id, text, font_size, anim_id, sound_id, NULL);
+}
+
+esp_err_t behavior_state_set_with_resources_and_action(const char *state_id,
+                                                       const char *text,
+                                                       int font_size,
+                                                       const char *anim_id,
+                                                       const char *sound_id,
+                                                       const char *action_id) {
+    return behavior_state_set_with_resources_and_action_internal(
+        state_id, text, font_size, false, anim_id, sound_id, action_id);
+}
+
 esp_err_t behavior_state_set_text(const char *text, int font_size) {
+    return behavior_state_set_text_style(text, font_size, false);
+}
+
+esp_err_t behavior_state_set_text_style(const char *text, int font_size, bool alert_text) {
     if (behavior_state_init() != ESP_OK) {
         return ESP_FAIL;
     }
@@ -1691,9 +1737,14 @@ esp_err_t behavior_state_set_text(const char *text, int font_size) {
     s_ctx.text_override_valid = (text != NULL);
     behavior_copy_string(s_ctx.text_override, sizeof(s_ctx.text_override), text);
     s_ctx.text_override_font_size = font_size;
+    s_ctx.text_override_alert = alert_text;
     behavior_unlock();
 
-    if (display_update(text, NULL, font_size, NULL) != 0) {
+    if (display_update_with_style(text,
+                                  NULL,
+                                  font_size,
+                                  alert_text ? DISPLAY_TEXT_STYLE_ALERT : DISPLAY_TEXT_STYLE_NORMAL,
+                                  NULL) != 0) {
         return ESP_FAIL;
     }
 

@@ -23,7 +23,7 @@
 #include <string.h>
 #include <strings.h>
 
-#include "behavior_state_service.h"
+#include "control_ingress.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
@@ -352,52 +352,70 @@ static void ble_format_wifi_status(char *response, size_t response_len)
 
 static void ble_send_current_wifi_status_notification(void)
 {
-    char response[GATTS_CHAR_VAL_LEN_MAX + 1];
+    char *response = calloc(1, GATTS_CHAR_VAL_LEN_MAX + 1);
 
-    if (s_protocol_mode == BLE_PROTOCOL_MODE_JSON) {
-        if (ble_format_wifi_status_json(response, sizeof(response)) == ESP_OK) {
-            ble_send_text_notification(response);
-        }
+    if (response == NULL) {
+        ESP_LOGW(TAG, "BLE wifi status alloc failed");
         return;
     }
 
-    ble_format_wifi_status(response, sizeof(response));
+    if (s_protocol_mode == BLE_PROTOCOL_MODE_JSON) {
+        if (ble_format_wifi_status_json(response, GATTS_CHAR_VAL_LEN_MAX + 1) == ESP_OK) {
+            ble_send_text_notification(response);
+        }
+        free(response);
+        return;
+    }
+
+    ble_format_wifi_status(response, GATTS_CHAR_VAL_LEN_MAX + 1);
     ble_send_text_notification(response);
+    free(response);
 }
 
 static void ble_wifi_status_callback(wifi_status_t status, const char *ssid, const char *ip_addr)
 {
-    char response[GATTS_CHAR_VAL_LEN_MAX + 1];
+    char *response = calloc(1, GATTS_CHAR_VAL_LEN_MAX + 1);
+
+    if (response == NULL) {
+        ESP_LOGW(TAG, "BLE wifi callback alloc failed");
+        return;
+    }
 
     if (s_protocol_mode == BLE_PROTOCOL_MODE_JSON) {
-        if (ble_format_wifi_status_json_with_values(status, ssid, ip_addr, response, sizeof(response)) == ESP_OK) {
+        if (ble_format_wifi_status_json_with_values(status,
+                                                    ssid,
+                                                    ip_addr,
+                                                    response,
+                                                    GATTS_CHAR_VAL_LEN_MAX + 1) == ESP_OK) {
             ble_send_text_notification(response);
         }
+        free(response);
         return;
     }
 
     switch (status) {
         case WIFI_STATUS_CONNECTED:
-            snprintf(response, sizeof(response), "WIFI_CONNECTED:%s:%s\n",
+            snprintf(response, GATTS_CHAR_VAL_LEN_MAX + 1, "WIFI_CONNECTED:%s:%s\n",
                      ssid ? ssid : "",
                      ip_addr ? ip_addr : "");
             break;
 
         case WIFI_STATUS_CONNECTING:
-            snprintf(response, sizeof(response), "WIFI_CONNECTING:%s\n", ssid ? ssid : "");
+            snprintf(response, GATTS_CHAR_VAL_LEN_MAX + 1, "WIFI_CONNECTING:%s\n", ssid ? ssid : "");
             break;
 
         case WIFI_STATUS_DISCONNECTED:
-            snprintf(response, sizeof(response), "WIFI_DISCONNECTED:%s\n", ssid ? ssid : "");
+            snprintf(response, GATTS_CHAR_VAL_LEN_MAX + 1, "WIFI_DISCONNECTED:%s\n", ssid ? ssid : "");
             break;
 
         case WIFI_STATUS_UNCONFIGURED:
         default:
-            snprintf(response, sizeof(response), "WIFI_UNCONFIGURED\n");
+            snprintf(response, GATTS_CHAR_VAL_LEN_MAX + 1, "WIFI_UNCONFIGURED\n");
             break;
     }
 
     ble_send_text_notification(response);
+    free(response);
 }
 
 static esp_err_t ble_parse_wifi_config(const char *payload, char *response, size_t response_len)
@@ -477,15 +495,77 @@ static struct gatts_profile_inst s_profile_tab[PROFILE_NUM] = {
     },
 };
 
+static void ble_cache_text_value(const char *text)
+{
+    size_t len;
+
+    if (text == NULL || s_handle_table[IDX_CHAR_VAL_CMD] == 0) {
+        return;
+    }
+
+    len = strlen(text);
+    if (len > GATTS_CHAR_VAL_LEN_MAX) {
+        len = GATTS_CHAR_VAL_LEN_MAX;
+    }
+
+    if (len == 0) {
+        return;
+    }
+
+    esp_err_t ret = esp_ble_gatts_set_attr_value(s_handle_table[IDX_CHAR_VAL_CMD],
+                                                 (uint16_t)len,
+                                                 (const uint8_t *)text);
+    if (ret != ESP_OK) {
+        ESP_LOGD(TAG, "BLE cache value failed: %s", esp_err_to_name(ret));
+    }
+}
+
+static void ble_send_write_response(esp_gatt_if_t gatts_if,
+                                    const esp_ble_gatts_cb_param_t *param,
+                                    esp_gatt_status_t status,
+                                    const char *text)
+{
+    esp_gatt_rsp_t rsp = {0};
+    size_t len = 0;
+
+    if (param == NULL || !param->write.need_rsp) {
+        return;
+    }
+
+    rsp.attr_value.handle = param->write.handle;
+    rsp.attr_value.offset = param->write.offset;
+    rsp.attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
+
+    if (text != NULL && status == ESP_GATT_OK) {
+        len = strlen(text);
+        if (len > GATTS_CHAR_VAL_LEN_MAX) {
+            len = GATTS_CHAR_VAL_LEN_MAX;
+        }
+        rsp.attr_value.len = (uint16_t)len;
+        if (len > 0) {
+            memcpy(rsp.attr_value.value, text, len);
+        }
+    }
+
+    esp_err_t ret = esp_ble_gatts_send_response(gatts_if,
+                                                param->write.conn_id,
+                                                param->write.trans_id,
+                                                status,
+                                                &rsp);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "BLE send response failed: %s", esp_err_to_name(ret));
+    }
+}
+
 static void ble_send_text_notification(const char *text)
 {
     if (!text) {
         return;
     }
 
+    ble_cache_text_value(text);
+
     if (!s_connected || !s_notify_enabled || s_gatts_if == ESP_GATT_IF_NONE) {
-        ESP_LOGW(TAG, "BLE notify skipped (connected=%d notify=%d if=%d): %s",
-                 s_connected, s_notify_enabled, s_gatts_if, text);
         return;
     }
 
@@ -509,6 +589,7 @@ static void ble_send_text_notification(const char *text)
 
 static esp_err_t ble_parse_and_send_servo(char axis, const char *payload)
 {
+    control_servo_request_t req = {0};
     if (!payload || payload[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
     }
@@ -528,8 +609,12 @@ static esp_err_t ble_parse_and_send_servo(char axis, const char *payload)
         }
     }
 
-    char axis_id[2] = {(char)toupper((unsigned char)axis), '\0'};
-    return hal_servo_send_cmd(axis_id, (int)angle, duration_ms);
+    req.has_x = (toupper((unsigned char)axis) == 'X');
+    req.has_y = (toupper((unsigned char)axis) == 'Y');
+    req.x_deg = (int)angle;
+    req.y_deg = (int)angle;
+    req.duration_ms = duration_ms;
+    return control_ingress_submit_servo(&req);
 }
 
 static esp_err_t ble_parse_set_servo(const char *params)
@@ -553,6 +638,7 @@ static esp_err_t ble_parse_set_servo(const char *params)
 
 static esp_err_t ble_parse_servo_move(const char *params)
 {
+    control_servo_request_t req = {0};
     if (!params) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -581,8 +667,12 @@ static esp_err_t ble_parse_servo_move(const char *params)
         target = (direction > 0) ? CONFIG_WATCHER_SERVO_Y_MAX_DEG : CONFIG_WATCHER_SERVO_Y_MIN_DEG;
     }
 
-    const char axis_id[2] = {(servo_id == 0) ? 'X' : 'Y', '\0'};
-    return hal_servo_send_cmd(axis_id, target, CONFIG_WATCHER_BLE_CMD_DEFAULT_DURATION_MS);
+    req.has_x = (servo_id == 0);
+    req.has_y = (servo_id == 1);
+    req.x_deg = target;
+    req.y_deg = target;
+    req.duration_ms = CONFIG_WATCHER_BLE_CMD_DEFAULT_DURATION_MS;
+    return control_ingress_submit_servo(&req);
 }
 
 static esp_err_t ble_process_line(const char *line, char *response, size_t response_len)
@@ -592,18 +682,21 @@ static esp_err_t ble_process_line(const char *line, char *response, size_t respo
     }
 
     if ((line[0] == 'X' || line[0] == 'x' || line[0] == 'Y' || line[0] == 'y') && line[1] == ':') {
-        ble_set_response(response, response_len, "OK\n");
-        return ble_parse_and_send_servo(line[0], line + 2);
+        esp_err_t ret = ble_parse_and_send_servo(line[0], line + 2);
+        ble_set_response(response, response_len, ret == ESP_ERR_TIMEOUT ? "ERR_BUSY\n" : "OK\n");
+        return ret;
     }
 
     if (strncmp(line, "SET_SERVO:", 10) == 0) {
-        ble_set_response(response, response_len, "OK\n");
-        return ble_parse_set_servo(line + 10);
+        esp_err_t ret = ble_parse_set_servo(line + 10);
+        ble_set_response(response, response_len, ret == ESP_ERR_TIMEOUT ? "ERR_BUSY\n" : "OK\n");
+        return ret;
     }
 
     if (strncmp(line, "SERVO_MOVE:", 11) == 0) {
-        ble_set_response(response, response_len, "OK\n");
-        return ble_parse_servo_move(line + 11);
+        esp_err_t ret = ble_parse_servo_move(line + 11);
+        ble_set_response(response, response_len, ret == ESP_ERR_TIMEOUT ? "ERR_BUSY\n" : "OK\n");
+        return ret;
     }
 
     if (strncmp(line, "WIFI_CONFIG:", 12) == 0) {
@@ -643,209 +736,6 @@ static const char *ble_skip_whitespace(const char *text)
     return text;
 }
 
-static bool ble_contains_nocase(const char *haystack, const char *needle)
-{
-    size_t needle_len;
-
-    if (haystack == NULL || needle == NULL || needle[0] == '\0') {
-        return false;
-    }
-
-    needle_len = strlen(needle);
-    while (*haystack != '\0') {
-        if (strncasecmp(haystack, needle, needle_len) == 0) {
-            return true;
-        }
-        haystack++;
-    }
-
-    return false;
-}
-
-static void ble_normalize_resource_name(const char *raw, char *out, size_t out_size)
-{
-    char raw_copy[128];
-    const char *input = raw;
-    const char *base;
-    const char *ext;
-    size_t len;
-    size_t i;
-
-    if (out == NULL || out_size == 0) {
-        return;
-    }
-
-    out[0] = '\0';
-    if (raw == NULL || raw[0] == '\0') {
-        return;
-    }
-
-    if (raw == out) {
-        snprintf(raw_copy, sizeof(raw_copy), "%s", raw);
-        input = raw_copy;
-    }
-
-    base = input;
-    for (i = 0; input[i] != '\0'; ++i) {
-        if (input[i] == '/' || input[i] == '\\') {
-            base = &input[i + 1];
-        }
-    }
-
-    ext = strrchr(base, '.');
-    len = (ext != NULL && ext > base) ? (size_t)(ext - base) : strlen(base);
-    if (len >= out_size) {
-        len = out_size - 1;
-    }
-
-    for (i = 0; i < len; ++i) {
-        out[i] = (char)tolower((unsigned char)base[i]);
-    }
-    out[len] = '\0';
-}
-
-static bool ble_append_state_candidate(const char **candidates, size_t *count, size_t max_count, const char *candidate)
-{
-    size_t i;
-
-    if (candidates == NULL || count == NULL || candidate == NULL || candidate[0] == '\0') {
-        return false;
-    }
-
-    for (i = 0; i < *count; ++i) {
-        if (strcasecmp(candidates[i], candidate) == 0) {
-            return false;
-        }
-    }
-
-    if (*count >= max_count) {
-        return false;
-    }
-
-    candidates[*count] = candidate;
-    (*count)++;
-    return true;
-}
-
-static const char *ble_ai_status_to_fallback(const char *status, const char *message)
-{
-    if (ble_contains_nocase(status, "observing") || ble_contains_nocase(message, "observing")) {
-        return "custom3";
-    }
-    if (ble_contains_nocase(status, "listening") || ble_contains_nocase(message, "listening")) {
-        return "listening";
-    }
-    if (ble_contains_nocase(status, "thinking") || ble_contains_nocase(message, "thinking")) {
-        return "thinking";
-    }
-    if (ble_contains_nocase(status, "processing") || ble_contains_nocase(status, "analyzing") ||
-        ble_contains_nocase(message, "processing") || ble_contains_nocase(message, "analyzing")) {
-        return "processing";
-    }
-    if (ble_contains_nocase(status, "speaking") || ble_contains_nocase(message, "speaking")) {
-        return "speaking";
-    }
-    if (ble_contains_nocase(status, "idle") || ble_contains_nocase(message, "idle")) {
-        return "standby";
-    }
-    if (ble_contains_nocase(status, "done") || ble_contains_nocase(status, "completed") ||
-        ble_contains_nocase(message, "done") || ble_contains_nocase(message, "completed")) {
-        return "happy";
-    }
-    if (ble_contains_nocase(status, "error") || ble_contains_nocase(status, "fail") ||
-        ble_contains_nocase(message, "error") || ble_contains_nocase(message, "fail")) {
-        return "error";
-    }
-    return NULL;
-}
-
-static esp_err_t ble_apply_ai_status_json(cJSON *data, char *reason, size_t reason_len)
-{
-    char status[64];
-    char message[256];
-    char image_name[64];
-    char action_state_id[64];
-    char status_state_id[64];
-    char sound_id[64];
-    char fallback_state_id[64];
-    const char *state_candidates[3] = {0};
-    const char *action_candidates[3] = {0};
-    size_t state_candidate_count = 0;
-    size_t action_candidate_count = 0;
-    const char *selected_action_id = NULL;
-    const char *text = NULL;
-    esp_err_t ret = ESP_ERR_NOT_FOUND;
-    size_t i;
-
-    if (reason != NULL && reason_len > 0) {
-        reason[0] = '\0';
-    }
-
-    ble_copy_json_string(data, "status", status, sizeof(status));
-    ble_copy_json_string(data, "message", message, sizeof(message));
-    ble_copy_json_string(data, "image_name", image_name, sizeof(image_name));
-    ble_copy_json_string(data, "sound_file", sound_id, sizeof(sound_id));
-    ble_copy_json_string(data, "action_file", action_state_id, sizeof(action_state_id));
-    ble_normalize_resource_name(action_state_id, action_state_id, sizeof(action_state_id));
-    ble_normalize_resource_name(status, status_state_id, sizeof(status_state_id));
-    ble_normalize_resource_name(image_name, image_name, sizeof(image_name));
-    ble_normalize_resource_name(sound_id, sound_id, sizeof(sound_id));
-    ble_normalize_resource_name(ble_ai_status_to_fallback(status, message), fallback_state_id, sizeof(fallback_state_id));
-
-    if (status[0] == '\0') {
-        ble_set_response(reason, reason_len, "invalid_status_payload");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    text = message[0] != '\0' ? message : NULL;
-    ble_append_state_candidate(state_candidates, &state_candidate_count, 3, action_state_id);
-    ble_append_state_candidate(state_candidates, &state_candidate_count, 3, status_state_id);
-    ble_append_state_candidate(state_candidates, &state_candidate_count, 3, fallback_state_id);
-    ble_append_state_candidate(action_candidates, &action_candidate_count, 3, action_state_id);
-    ble_append_state_candidate(action_candidates, &action_candidate_count, 3, status_state_id);
-    ble_append_state_candidate(action_candidates, &action_candidate_count, 3, fallback_state_id);
-
-    for (i = 0; i < action_candidate_count; ++i) {
-        if (behavior_state_has_action(action_candidates[i])) {
-            selected_action_id = action_candidates[i];
-            break;
-        }
-    }
-
-    for (i = 0; i < state_candidate_count; ++i) {
-        ret = behavior_state_set_with_resources_and_action(state_candidates[i],
-                                                           text,
-                                                           0,
-                                                           image_name[0] != '\0' ? image_name : NULL,
-                                                           sound_id[0] != '\0' ? sound_id : NULL,
-                                                           selected_action_id);
-        if (ret != ESP_ERR_NOT_FOUND) {
-            break;
-        }
-    }
-
-    if (ret == ESP_ERR_NOT_FOUND) {
-        ret = behavior_state_set_with_resources_and_action("standby",
-                                                           text,
-                                                           0,
-                                                           image_name[0] != '\0' ? image_name : NULL,
-                                                           sound_id[0] != '\0' ? sound_id : NULL,
-                                                           selected_action_id);
-    }
-
-    if (ret == ESP_ERR_NOT_FOUND && text != NULL) {
-        ret = behavior_state_set_text(text, 0);
-    }
-
-    if (ret == ESP_ERR_NOT_FOUND) {
-        ble_set_response(reason, reason_len, "unknown_ai_status");
-    } else if (ret != ESP_OK) {
-        ble_set_response(reason, reason_len, "ai_status_apply_failed");
-    }
-
-    return ret;
-}
-
 static esp_err_t ble_process_json_payload(const char *json_text,
                                           char *response,
                                           size_t response_len,
@@ -856,7 +746,7 @@ static esp_err_t ble_process_json_payload(const char *json_text,
     cJSON *type_item = NULL;
     cJSON *value_item = NULL;
     char command_id[48];
-    char reason[64];
+    char message_type_buf[48];
     const char *message_type = NULL;
 
     if (send_wifi_status_after_response != NULL) {
@@ -878,9 +768,9 @@ static esp_err_t ble_process_json_payload(const char *json_text,
     }
 
     message_type = type_item->valuestring;
+    snprintf(message_type_buf, sizeof(message_type_buf), "%s", message_type);
+    message_type = message_type_buf;
     ble_copy_json_string(data, "command_id", command_id, sizeof(command_id));
-    reason[0] = '\0';
-
     if (strcmp(message_type, "ctrl.servo.angle") == 0) {
         cJSON *x_item = cJSON_GetObjectItem(data, "x_deg");
         cJSON *y_item = cJSON_GetObjectItem(data, "y_deg");
@@ -888,8 +778,7 @@ static esp_err_t ble_process_json_payload(const char *json_text,
         bool has_x = cJSON_IsNumber(x_item);
         bool has_y = cJSON_IsNumber(y_item);
         int duration_ms = CONFIG_WATCHER_BLE_CMD_DEFAULT_DURATION_MS;
-        servo_axis_t axis;
-        int angle_deg;
+        control_servo_request_t req = {0};
         esp_err_t ret;
 
         if (has_x == has_y) {
@@ -907,16 +796,24 @@ static esp_err_t ble_process_json_payload(const char *json_text,
             return ESP_ERR_INVALID_ARG;
         }
 
-        axis = has_x ? SERVO_AXIS_X : SERVO_AXIS_Y;
-        angle_deg = has_x ? (int)(x_item->valuedouble + 0.5) : (int)(y_item->valuedouble + 0.5);
-        if (angle_deg < 0 || angle_deg > 180) {
+        req.has_x = has_x;
+        req.has_y = has_y;
+        req.x_deg = has_x ? (int)(x_item->valuedouble + 0.5) : 0;
+        req.y_deg = has_y ? (int)(y_item->valuedouble + 0.5) : 0;
+        req.duration_ms = duration_ms;
+        if ((has_x && (req.x_deg < 0 || req.x_deg > 180)) ||
+            (has_y && (req.y_deg < 0 || req.y_deg > 180))) {
             cJSON_Delete(root);
             ble_build_sys_nack_json(message_type, command_id, "angle_out_of_range", 400, response, response_len);
             return ESP_ERR_INVALID_ARG;
         }
 
-        ret = hal_servo_move_smooth(axis, angle_deg, duration_ms);
+        ret = control_ingress_submit_servo(&req);
         cJSON_Delete(root);
+        if (ret == ESP_ERR_TIMEOUT) {
+            ble_build_sys_nack_json(message_type, command_id, "busy", 503, response, response_len);
+            return ret;
+        }
         if (ret != ESP_OK) {
             ble_build_sys_nack_json(message_type, command_id, "servo_move_failed", 500, response, response_len);
             return ret;
@@ -925,12 +822,31 @@ static esp_err_t ble_process_json_payload(const char *json_text,
     }
 
     if (strcmp(message_type, "evt.ai.status") == 0) {
-        esp_err_t ret = ble_apply_ai_status_json(data, reason, sizeof(reason));
+        control_ai_status_request_t req = {0};
+        esp_err_t ret;
+
+        ble_copy_json_string(data, "status", req.status, sizeof(req.status));
+        ble_copy_json_string(data, "message", req.message, sizeof(req.message));
+        ble_copy_json_string(data, "image_name", req.image_name, sizeof(req.image_name));
+        ble_copy_json_string(data, "action_file", req.action_file, sizeof(req.action_file));
+        ble_copy_json_string(data, "sound_file", req.sound_file, sizeof(req.sound_file));
+
+        if (req.status[0] == '\0') {
+            cJSON_Delete(root);
+            ble_build_sys_nack_json(message_type, command_id, "invalid_status_payload", 400, response, response_len);
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        ret = control_ingress_submit_ai_status(&req);
         cJSON_Delete(root);
+        if (ret == ESP_ERR_TIMEOUT) {
+            ble_build_sys_nack_json(message_type, command_id, "busy", 503, response, response_len);
+            return ret;
+        }
         if (ret != ESP_OK) {
             ble_build_sys_nack_json(message_type,
                                     command_id,
-                                    reason[0] != '\0' ? reason : "ai_status_apply_failed",
+                                    "ai_status_apply_failed",
                                     400,
                                     response,
                                     response_len);
@@ -941,6 +857,7 @@ static esp_err_t ble_process_json_payload(const char *json_text,
 
     if (strcmp(message_type, "ctrl.robot.state.set") == 0) {
         char state_id[32];
+        control_state_set_request_t req = {0};
         esp_err_t ret;
 
         ble_copy_json_string(data, "state_id", state_id, sizeof(state_id));
@@ -950,7 +867,12 @@ static esp_err_t ble_process_json_payload(const char *json_text,
             return ESP_ERR_INVALID_ARG;
         }
 
-        ret = behavior_state_set(state_id);
+        snprintf(req.state_id, sizeof(req.state_id), "%s", state_id);
+        ret = control_ingress_submit_state_set(&req);
+        if (ret == ESP_ERR_TIMEOUT) {
+            ble_build_sys_nack_json(message_type, command_id, "busy", 503, response, response_len);
+            return ret;
+        }
         if (ret != ESP_OK) {
             ble_build_sys_nack_json(message_type, command_id, "state_set_failed", 400, response, response_len);
             return ret;
@@ -971,7 +893,7 @@ static esp_err_t ble_process_json_payload(const char *json_text,
             return ESP_ERR_INVALID_ARG;
         }
 
-        ret = wifi_provision(ssid, password);
+        ret = s_connected ? wifi_store_credentials(ssid, password) : wifi_provision(ssid, password);
         if (ret != 0) {
             ble_build_sys_nack_json(message_type, command_id, "wifi_config_failed", 500, response, response_len);
             return ESP_FAIL;
@@ -1008,7 +930,12 @@ static esp_err_t ble_process_json_payload(const char *json_text,
     }
 
     value_item = cJSON_GetObjectItem(root, "type");
-    message_type = cJSON_IsString(value_item) ? value_item->valuestring : "unknown";
+    if (cJSON_IsString(value_item) && value_item->valuestring != NULL) {
+        snprintf(message_type_buf, sizeof(message_type_buf), "%s", value_item->valuestring);
+    } else {
+        snprintf(message_type_buf, sizeof(message_type_buf), "%s", "unknown");
+    }
+    message_type = message_type_buf;
     cJSON_Delete(root);
     ble_build_sys_nack_json(message_type, command_id, "unsupported_type", 400, response, response_len);
     return ESP_ERR_NOT_SUPPORTED;
@@ -1019,24 +946,37 @@ static esp_err_t ble_process_payload(const uint8_t *data, uint16_t len,
                                      size_t response_len,
                                      bool *send_wifi_status_after_response)
 {
+    char *buffer = NULL;
+    size_t copy_len;
+    esp_err_t final_ret = ESP_OK;
+
     if (!data || len == 0) {
         ble_set_response(response, response_len, "ERR\n");
         return ESP_ERR_INVALID_ARG;
     }
 
-    char buffer[GATTS_CHAR_VAL_LEN_MAX + 1];
-    size_t copy_len = (len < GATTS_CHAR_VAL_LEN_MAX) ? len : GATTS_CHAR_VAL_LEN_MAX;
+    copy_len = (len < GATTS_CHAR_VAL_LEN_MAX) ? len : GATTS_CHAR_VAL_LEN_MAX;
+    buffer = calloc(1, copy_len + 1);
+    if (buffer == NULL) {
+        ble_set_response(response, response_len, "ERR_NO_MEM\n");
+        return ESP_ERR_NO_MEM;
+    }
+
     memcpy(buffer, data, copy_len);
     buffer[copy_len] = '\0';
 
     if (ble_skip_whitespace(buffer)[0] == '{') {
         s_protocol_mode = BLE_PROTOCOL_MODE_JSON;
-        return ble_process_json_payload(ble_skip_whitespace(buffer), response, response_len, send_wifi_status_after_response);
+        final_ret = ble_process_json_payload(ble_skip_whitespace(buffer),
+                                             response,
+                                             response_len,
+                                             send_wifi_status_after_response);
+        free(buffer);
+        return final_ret;
     }
 
     char *ptr = buffer;
     char *line = buffer;
-    esp_err_t final_ret = ESP_OK;
 
     s_protocol_mode = BLE_PROTOCOL_MODE_LEGACY;
 
@@ -1072,6 +1012,7 @@ static esp_err_t ble_process_payload(const uint8_t *data, uint16_t len,
         line = ptr;
     }
 
+    free(buffer);
     return final_ret;
 }
 
@@ -1172,27 +1113,42 @@ static void ble_gatts_profile_event_handler(esp_gatts_cb_event_t event,
                     }
                 } else if (s_handle_table[IDX_CHAR_VAL_CMD] == param->write.handle &&
                            param->write.value && param->write.len > 0) {
-                    char response[GATTS_CHAR_VAL_LEN_MAX + 1];
+                    char *response = calloc(1, GATTS_CHAR_VAL_LEN_MAX + 1);
+                    const char *reply_text = NULL;
                     bool send_wifi_status_after_response = false;
-                    esp_err_t ret = ble_process_payload(param->write.value,
-                                                        param->write.len,
-                                                        response,
-                                                        sizeof(response),
-                                                        &send_wifi_status_after_response);
+                    esp_err_t ret;
+
+                    if (response == NULL) {
+                        ble_send_write_response(gatts_if, param, ESP_GATT_NO_RESOURCES, NULL);
+                        ESP_LOGW(TAG, "BLE response alloc failed");
+                        break;
+                    }
+
+                    ret = ble_process_payload(param->write.value,
+                                              param->write.len,
+                                              response,
+                                              GATTS_CHAR_VAL_LEN_MAX + 1,
+                                              &send_wifi_status_after_response);
+                    reply_text = response[0] != '\0' ? response : (ret == ESP_OK ? "OK\n" : "ERR\n");
+
+                    ble_cache_text_value(reply_text);
+                    ble_send_write_response(gatts_if, param, ESP_GATT_OK, reply_text);
+
                     if (ret == ESP_OK) {
-                        ble_send_text_notification(response[0] != '\0' ? response : "OK\n");
-                        if (send_wifi_status_after_response) {
+                        if (!param->write.need_rsp) {
+                            ble_send_text_notification(reply_text);
+                        }
+                        if (send_wifi_status_after_response && s_notify_enabled) {
                             ble_send_current_wifi_status_notification();
                         }
                     } else {
-                        ble_send_text_notification(response[0] != '\0' ? response : "ERR\n");
+                        if (!param->write.need_rsp) {
+                            ble_send_text_notification(reply_text);
+                        }
                         ESP_LOGW(TAG, "BLE motion command rejected: %s", esp_err_to_name(ret));
                     }
-                }
 
-                if (param->write.need_rsp) {
-                    esp_ble_gatts_send_response(gatts_if, param->write.conn_id,
-                                                param->write.trans_id, ESP_GATT_OK, NULL);
+                    free(response);
                 }
             } else if (param->write.need_rsp) {
                 esp_ble_gatts_send_response(gatts_if, param->write.conn_id,

@@ -7,6 +7,7 @@ idf_component_register(
     REQUIRES "json" "esp_event"
     PRIV_REQUIRES
         "camera_service"
+        "control_ingress"
         "esp_wifi"
         "freertos"
         "hal_audio"
