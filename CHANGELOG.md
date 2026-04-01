@@ -11,6 +11,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.2alpha] - 2026-04-01
+
+### Added
+- BLE-priority transport coordinator for cloud recovery after BLE sessions release control
+
+### Fixed
+- BLE / Wi-Fi / WebSocket handoff is more stable after BLE disconnects
+- Cloud recovery path is less fragile during provisioning, reconnect, and local-control-first bring-up
+
+### Changed
+- Firmware version is now tracked as `0.1.2alpha`
+- Main transport flow now prioritizes BLE control sessions while coordinating Wi-Fi resume, discovery, and WebSocket recovery in the background
+- Current mainline also includes the earlier 3-click restart path and delayed input initialization improvements from `0.1.1`
+
+### Notes
+- Release focus: BLE-priority transport recovery and continued local bring-up validation
+
+---
+
 ## [0.1.1] - 2026-04-01
 
 ### Added

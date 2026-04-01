@@ -22,9 +22,10 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current release target: `0.1.1`
-- This release builds on the integrated mainline and focuses on bring-up convenience:
+- Current release target: `0.1.2alpha`
+- This release builds on the integrated mainline and focuses on BLE-priority recovery and bring-up convenience:
   - BLE provisioning remains available for first-time Wi-Fi setup and recovery after credential cleanup
+  - BLE sessions now take priority while Wi-Fi, discovery, and WebSocket recovery are coordinated after BLE disconnects
   - Startup display, state transitions, and provisioning handoff remain hardened during cloud bring-up
   - Physical restart is now reachable earlier in boot and requires only 3 short presses
   - Runtime input initialization now happens right after boot UI setup instead of waiting for cloud readiness
