@@ -303,15 +303,6 @@ static void note_frame_switch(emoji_anim_type_t type) {
         return;
     }
 
-    double actual_fps = ((double)g_fps_diag.frame_switches * 1000000.0) / (double)elapsed_us;
-    ESP_LOGI(TAG,
-             "Playback FPS type=%s actual=%.2f target=%d frames=%lu window_ms=%lu",
-             anim_type_name_or_none(type),
-             actual_fps,
-             emoji_anim_get_fps(),
-             (unsigned long)g_fps_diag.frame_switches,
-             (unsigned long)(elapsed_us / 1000ULL));
-
     g_fps_diag.window_start_us = now_us;
     g_fps_diag.frame_switches = 0;
 }

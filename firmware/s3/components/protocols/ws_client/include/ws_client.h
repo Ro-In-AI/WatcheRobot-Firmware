@@ -79,6 +79,11 @@ int ws_client_start(void);
 void ws_client_stop(void);
 
 /**
+ * Destroy the current WebSocket client handle.
+ */
+void ws_client_deinit(void);
+
+/**
  * Send binary data via WebSocket
  * @param data Data buffer
  * @param len Data length
@@ -97,6 +102,11 @@ int ws_client_send_text(const char *text);
  * Check if WebSocket is connected
  */
 int ws_client_is_connected(void);
+
+/**
+ * Check if the WebSocket transport has been started.
+ */
+int ws_client_is_started(void);
 
 /**
  * Check if the WebSocket session is ready for business traffic.

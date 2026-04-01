@@ -30,6 +30,12 @@ int wifi_connect(void);
 int wifi_connect_async(void);
 
 /**
+ * Resume background WiFi connectivity after BLE releases transport ownership.
+ * @return 0 when the resume request is accepted, -1 on error
+ */
+int wifi_resume_background(void);
+
+/**
  * Wait until WiFi gets an IP address.
  * @param timeout_ms Timeout in milliseconds. Pass a negative value to wait forever.
  * @return 0 on success, -1 on timeout/error
@@ -89,8 +95,23 @@ void wifi_register_status_callback(wifi_status_callback_t cb);
 int wifi_is_connected(void);
 
 /**
+ * Return 1 if the STA driver has emitted START, otherwise 0.
+ */
+int wifi_sta_is_started(void);
+
+/**
+ * Return 1 if a background connect has been requested, otherwise 0.
+ */
+int wifi_is_connect_requested(void);
+
+/**
  * Disconnect WiFi
  */
 void wifi_disconnect(void);
+
+/**
+ * Suspend WiFi reconnect activity while BLE owns the transport.
+ */
+void wifi_suspend_for_ble(void);
 
 #endif /* WIFI_CLIENT_H */
