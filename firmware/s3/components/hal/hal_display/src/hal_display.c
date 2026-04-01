@@ -792,19 +792,28 @@ int hal_display_ui_init(void) {
 }
 
 int hal_display_input_init(void) {
+    bool button_ready;
+
     if (inputs_initialized) {
+        ESP_LOGI(TAG, "Delayed display inputs already initialized (knob=%d touch=%d)",
+                 s_knob_indev != NULL ? 1 : 0,
+                 s_touch_indev != NULL ? 1 : 0);
         return 0;
     }
 
     if (hal_display_minimal_init() != 0) {
+        ESP_LOGW(TAG, "Delayed display inputs aborted because minimal display init is unavailable");
         return -1;
     }
 
     ESP_LOGI(TAG, "Initializing delayed display inputs...");
 
-    if (hal_button_io_ready()) {
+    button_ready = hal_button_io_ready();
+    ESP_LOGI(TAG, "Button IO ready probe result=%d", button_ready ? 1 : 0);
+
+    if (button_ready) {
         if (hal_display_init_knob_input() == NULL) {
-            ESP_LOGW(TAG, "Knob input initialization failed");
+            ESP_LOGW(TAG, "Knob input initialization failed after successful button probe");
         }
     } else {
         ESP_LOGW(TAG, "Skipping knob input initialization because IO expander button probe failed");
@@ -814,6 +823,10 @@ int hal_display_input_init(void) {
     }
 
     inputs_initialized = (s_knob_indev != NULL) || (s_touch_indev != NULL);
+    ESP_LOGI(TAG, "Delayed display inputs ready: knob=%d touch=%d any=%d",
+             s_knob_indev != NULL ? 1 : 0,
+             s_touch_indev != NULL ? 1 : 0,
+             inputs_initialized ? 1 : 0);
     return inputs_initialized ? 0 : -1;
 }
 

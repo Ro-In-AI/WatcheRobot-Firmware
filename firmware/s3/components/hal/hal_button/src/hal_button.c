@@ -55,15 +55,18 @@ bool hal_button_io_ready(void) {
 
     if (g_probe_cached) {
         if (g_probe_ready) {
+            ESP_LOGI(TAG, "IO expander button probe cached as ready");
             return true;
         }
         if (now_ms - g_last_probe_time_ms < BUTTON_IO_EXPANDER_PROBE_COOLDOWN_MS) {
+            ESP_LOGW(TAG,
+                     "IO expander button probe still cooling down (%lld ms remaining)",
+                     (long long)(BUTTON_IO_EXPANDER_PROBE_COOLDOWN_MS - (now_ms - g_last_probe_time_ms)));
             return false;
         }
     }
 
     esp_err_t ret = hal_button_read_level(&level);
-    (void)level;
     g_last_probe_time_ms = now_ms;
     g_probe_cached = true;
     g_probe_ready = (ret == ESP_OK);
@@ -73,6 +76,7 @@ bool hal_button_io_ready(void) {
         return false;
     }
 
+    ESP_LOGI(TAG, "IO expander button probe succeeded (level=%u)", (unsigned)level);
     return true;
 }
 
