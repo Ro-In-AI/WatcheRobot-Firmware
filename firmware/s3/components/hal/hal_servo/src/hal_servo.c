@@ -47,7 +47,7 @@
 #define DUTY_MAX (SERVO_MAX_PULSE_US * DUTY_RESOLUTION / SERVO_PERIOD_US) /* ~1638 */
 
 /* Smooth move task configuration */
-#define SERVO_TASK_STACK_SIZE 2048
+#define SERVO_TASK_STACK_SIZE 4096
 #define SERVO_TASK_PRIORITY 5
 #define SERVO_CMD_QUEUE_SIZE 100
 
