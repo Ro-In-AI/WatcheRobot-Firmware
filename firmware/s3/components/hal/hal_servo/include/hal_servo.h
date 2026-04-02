@@ -30,6 +30,10 @@ typedef enum {
  * Configures GPIO 19 (X axis) and GPIO 20 (Y axis) as LEDC PWM channels
  * and starts the smooth-move background task.
  *
+ * Startup defaults:
+ *   - X axis: 90°
+ *   - Y axis: 120° (clamped to the configured Y soft limits)
+ *
  * @note Must be called before any hal_servo_set_angle() calls.
  * @note GPIO 19/20 are repurposed from UART (MCU communication removed in v2.0).
  *
