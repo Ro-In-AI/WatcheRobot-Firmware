@@ -415,14 +415,9 @@ esp_err_t hal_servo_init(void) {
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG,
-             "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, startup=[%d,%d]deg, Y limits=[%d,%d]deg",
-             CONFIG_WATCHER_SERVO_X_GPIO,
-             CONFIG_WATCHER_SERVO_Y_GPIO,
-             SERVO_X_DEFAULT_DEG,
-             SERVO_Y_DEFAULT_DEG,
-             CONFIG_WATCHER_SERVO_Y_MIN_DEG,
-             CONFIG_WATCHER_SERVO_Y_MAX_DEG);
+    ESP_LOGI(TAG, "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, startup=[%d,%d]deg, Y limits=[%d,%d]deg",
+             CONFIG_WATCHER_SERVO_X_GPIO, CONFIG_WATCHER_SERVO_Y_GPIO, SERVO_X_DEFAULT_DEG, SERVO_Y_DEFAULT_DEG,
+             CONFIG_WATCHER_SERVO_Y_MIN_DEG, CONFIG_WATCHER_SERVO_Y_MAX_DEG);
 
     return ESP_OK;
 }
