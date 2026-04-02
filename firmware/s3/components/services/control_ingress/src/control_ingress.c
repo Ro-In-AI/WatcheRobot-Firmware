@@ -330,6 +330,8 @@ esp_err_t control_ingress_submit_servo(const control_servo_request_t *req) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    (void)hal_servo_drop_pending();
+
     if (req->has_x && req->has_y) {
         return hal_servo_move_sync(req->x_deg, req->y_deg, req->duration_ms);
     }

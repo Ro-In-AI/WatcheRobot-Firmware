@@ -1190,6 +1190,7 @@ static void behavior_dispatch_motion_locked(const behavior_motion_event_t *event
         return;
     }
 
+    (void)hal_servo_drop_pending();
     if (hal_servo_move_sync(event->x_deg, event->y_deg, event->duration_ms) != ESP_OK) {
         ESP_LOGW(TAG, "Servo motion failed: x=%d y=%d duration=%d", event->x_deg, event->y_deg, event->duration_ms);
     }

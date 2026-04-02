@@ -72,6 +72,16 @@ esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_m
 esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms);
 
 /**
+ * @brief Drop all pending servo commands that have not started executing yet.
+ *
+ * The currently executing command, if any, is not interrupted. This is useful
+ * for latest-wins control paths where stale queued motions should be discarded.
+ *
+ * @return Number of dropped pending commands
+ */
+int hal_servo_drop_pending(void);
+
+/**
  * @brief Send servo command by axis name string (for WebSocket handler).
  *
  * Convenience wrapper for on_servo_handler: maps id string "X"/"Y" to
