@@ -22,15 +22,16 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current release target: `0.1.2alpha`
-- This release builds on the integrated mainline and focuses on BLE-priority recovery and bring-up convenience:
-  - BLE provisioning remains available for first-time Wi-Fi setup and recovery after credential cleanup
-  - BLE sessions now take priority while Wi-Fi, discovery, and WebSocket recovery are coordinated after BLE disconnects
-  - Startup display, state transitions, and provisioning handoff remain hardened during cloud bring-up
-  - Physical restart is now reachable earlier in boot and requires only 3 short presses
-  - Runtime input initialization now happens right after boot UI setup instead of waiting for cloud readiness
-  - Local SFX, cloud TTS, SPIFFS behavior actions, and multi-device flashing workflow remain part of the current mainline stack
-- The branch continues to support joint debugging, provisioning validation, and local multi-device integration testing
+- Current release target: `v0.1.3`
+- `v0.1.3` is the recommended baseline for stable **BLE** and **Wi-Fi** testing on the current ESP32-S3 mainline:
+  - BLE provisioning is stable enough for first-time Wi-Fi setup and credential recovery validation
+  - BLE disconnect to Wi-Fi reconnect handoff is hardened for repeated local test cycles
+  - Low-memory BLE-to-Wi-Fi recovery now pauses optional cloud runtime work before retrying Wi-Fi
+  - Recording-time UI updates are guarded under low internal heap to reduce LCD flush failures during connectivity testing
+  - WebSocket runtime memory usage is reduced so BLE / Wi-Fi bring-up is less likely to be blocked by internal heap pressure
+  - Runtime input initialization still happens right after boot UI setup, and physical restart remains available with 3 short presses
+- This release is suitable for repeated BLE pairing, Wi-Fi provisioning, disconnect/reconnect, and local multi-device regression testing
+- Cloud voice throughput and end-to-end server-side interaction remain under active tuning, but BLE and Wi-Fi validation should use `v0.1.3` as the primary test baseline
 
 ---
 

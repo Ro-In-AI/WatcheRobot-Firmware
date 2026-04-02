@@ -11,6 +11,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.3] - 2026-04-02
+
+### Added
+- Staged low-memory BLE-to-Wi-Fi recovery flow that can pause BLE advertising, reclaim optional cloud runtime memory, and retry Wi-Fi with a degraded largest-block threshold after repeated heap defers
+
+### Fixed
+- BLE and Wi-Fi recovery is more stable on low-internal-heap devices after BLE disconnects
+- Recording start is less likely to trigger LCD flush `ESP_ERR_NO_MEM` failures when internal heap headroom is too small
+- WebSocket runtime teardown now releases more resources cleanly before reconnect attempts
+
+### Changed
+- Firmware version is now tracked as `v0.1.3`
+- WebSocket client runtime now uses smaller default buffers, dynamic client buffering, and PSRAM-backed audio frame storage to preserve internal RAM for BLE, Wi-Fi, and LCD DMA
+- Listening animation assets were refreshed and the generated SPIFFS animation manifest was updated
+
+### Notes
+- Release focus: stable BLE provisioning and Wi-Fi validation on the current mainline
+- `v0.1.3` is the recommended baseline for repeated BLE pairing, Wi-Fi provisioning, disconnect/reconnect, and recovery-path testing
+
+---
+
 ## [0.1.2alpha] - 2026-04-01
 
 ### Added
