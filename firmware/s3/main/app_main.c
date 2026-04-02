@@ -43,8 +43,11 @@
 #define CLOUD_PROTOCOL_RETRY_DELAY_MS 5000
 #define WIFI_RESUME_MIN_INTERNAL_FREE_BYTES (28U * 1024U)
 #define WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES (16U * 1024U)
-#define WS_START_MIN_INTERNAL_FREE_BYTES (20U * 1024U)
-#define WS_START_MIN_INTERNAL_LARGEST_BYTES (12U * 1024U)
+#define WIFI_RESUME_RECOVERY_MIN_INTERNAL_LARGEST_BYTES (12U * 1024U)
+#define WIFI_RESUME_LOW_MEMORY_RECOVERY_DEFERS 3U
+#define WS_START_MIN_INTERNAL_FREE_BYTES (30U * 1024U)
+#define WS_START_MIN_INTERNAL_LARGEST_BYTES (15U * 1024U)
+#define WS_START_DISPLAY_SETTLE_MS 150U
 #define CLOUD_RUNTIME_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
 #define CLOUD_RUNTIME_MIN_INTERNAL_LARGEST_BYTES (12U * 1024U)
 #define CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES (48U * 1024U)
@@ -95,10 +98,14 @@ static bool s_ws_stack_ready = false;
 static bool s_discovery_initialized = false;
 static bool s_last_ble_connected = false;
 static bool s_wifi_failed_since_last_success = false;
+static bool s_low_memory_recovery_active = false;
+static bool s_ble_advertising_paused_for_recovery = false;
 static transport_state_t s_transport_state = TRANSPORT_BLE_IDLE_NO_CREDENTIALS;
 static volatile bool s_discovery_inflight = false;
+static uint32_t s_consecutive_wifi_resume_defers = 0;
 static uint32_t s_discovery_generation = 0;
 static int64_t s_next_cloud_attempt_us = 0;
+static int64_t s_wifi_recovery_started_us = 0;
 static QueueHandle_t s_discovery_result_queue = NULL;
 
 static const char *transport_state_to_string(transport_state_t state) {
@@ -145,18 +152,32 @@ static bool transport_retry_due(void) {
 }
 
 static void on_ble_connection_changed(bool connected);
+static void log_heap_state(const char *stage);
+static void transport_cancel_discovery(const char *reason);
+static void transport_stop_ws(const char *reason);
+static void transport_set_ble_recovery_advertising_paused(bool paused, const char *reason);
+static void transport_suspend_cloud_runtime_for_low_memory(const char *reason);
+static void transport_enter_low_memory_recovery(const char *reason);
+static void transport_reset_low_memory_recovery(const char *reason);
+static void wait_for_behavior_idle(uint32_t timeout_ms);
 
 static bool transport_has_wifi_resume_headroom(void)
 {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t min_largest_internal = s_low_memory_recovery_active
+                                      ? WIFI_RESUME_RECOVERY_MIN_INTERNAL_LARGEST_BYTES
+                                      : WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES;
 
     if (free_internal < WIFI_RESUME_MIN_INTERNAL_FREE_BYTES ||
-        largest_internal < WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES) {
+        largest_internal < min_largest_internal) {
         ESP_LOGW(TAG,
-                 "Deferring WiFi resume due to low internal heap: free=%u largest=%u",
+                 "Deferring WiFi resume due to low internal heap: free=%u largest=%u (need >=%u / >=%u)%s",
                  (unsigned)free_internal,
-                 (unsigned)largest_internal);
+                 (unsigned)largest_internal,
+                 (unsigned)WIFI_RESUME_MIN_INTERNAL_FREE_BYTES,
+                 (unsigned)min_largest_internal,
+                 s_low_memory_recovery_active ? " [low-memory recovery]" : "");
         return false;
     }
 
@@ -210,6 +231,13 @@ static void transport_quiet_display_motion(void)
     }
 }
 
+static void transport_prepare_display_for_ws_start(void)
+{
+    transport_quiet_display_motion();
+    wait_for_behavior_idle(WS_START_DISPLAY_SETTLE_MS);
+    vTaskDelay(pdMS_TO_TICKS(WS_START_DISPLAY_SETTLE_MS));
+}
+
 static void transport_sync_boot_state(void)
 {
     s_last_ble_connected = ble_service_is_connected();
@@ -238,6 +266,7 @@ static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const
         ESP_LOGI(TAG, "WiFi connected: ssid=%s ip=%s", ssid ? ssid : "<unknown>",
                  ip_addr ? ip_addr : "<no-ip>");
         s_wifi_failed_since_last_success = false;
+        transport_reset_low_memory_recovery("wifi connected");
         if (!s_boot_completed && s_waiting_for_wifi_provision) {
             boot_anim_set_text("Wi-Fi connected");
         }
@@ -264,6 +293,7 @@ static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const
     default:
         ESP_LOGI(TAG, "WiFi unconfigured");
         s_wifi_failed_since_last_success = false;
+        transport_reset_low_memory_recovery("wifi unconfigured");
         if (!s_boot_completed && s_waiting_for_wifi_provision) {
             boot_anim_set_text("Reconnect BLE to set Wi-Fi");
         }
@@ -351,6 +381,105 @@ static void log_heap_state(const char *stage) {
              (unsigned)(largest_internal / 1024U),
              (unsigned)(free_spiram / 1024U),
              (unsigned)(largest_spiram / 1024U));
+}
+
+static void transport_set_ble_recovery_advertising_paused(bool paused, const char *reason) {
+    esp_err_t err;
+
+    if (ble_service_is_connected()) {
+        s_ble_advertising_paused_for_recovery = false;
+        return;
+    }
+
+    if (paused) {
+        if (s_ble_advertising_paused_for_recovery) {
+            return;
+        }
+
+        err = ble_service_stop_advertising();
+        if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+            s_ble_advertising_paused_for_recovery = true;
+            ESP_LOGI(TAG, "Paused BLE advertising for low-memory recovery (%s)", reason ? reason : "no reason");
+        } else if (err != ESP_ERR_NOT_SUPPORTED) {
+            ESP_LOGW(TAG,
+                     "Failed to pause BLE advertising for low-memory recovery: %s",
+                     esp_err_to_name(err));
+        }
+        return;
+    }
+
+    if (!s_ble_advertising_paused_for_recovery) {
+        return;
+    }
+
+    err = ble_service_start_advertising();
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+        s_ble_advertising_paused_for_recovery = false;
+        ESP_LOGI(TAG, "Resumed BLE advertising after low-memory recovery (%s)", reason ? reason : "no reason");
+    } else if (err != ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGW(TAG,
+                 "Failed to resume BLE advertising after low-memory recovery: %s",
+                 esp_err_to_name(err));
+    }
+}
+
+static void transport_suspend_cloud_runtime_for_low_memory(const char *reason) {
+    ESP_LOGW(TAG, "Suspending cloud runtime for low-memory recovery (%s)", reason ? reason : "no reason");
+    log_heap_state("lowmem_recovery_before_reclaim");
+    transport_cancel_discovery("low memory recovery");
+
+    transport_stop_ws("low memory recovery");
+    log_heap_state("lowmem_recovery_after_ws_stop");
+
+    ws_client_deinit();
+    s_ws_stack_ready = false;
+    log_heap_state("lowmem_recovery_after_ws_deinit");
+
+    voice_recorder_stop();
+    s_cloud_runtime_started = false;
+    log_heap_state("lowmem_recovery_after_voice_stop");
+}
+
+static void transport_enter_low_memory_recovery(const char *reason) {
+    if (s_low_memory_recovery_active) {
+        return;
+    }
+
+    s_low_memory_recovery_active = true;
+    s_wifi_recovery_started_us = esp_timer_get_time();
+    ESP_LOGW(TAG,
+             "Entering low-memory WiFi recovery after %u deferred resume attempts (%s)",
+             (unsigned)s_consecutive_wifi_resume_defers,
+             reason ? reason : "no reason");
+
+    transport_set_ble_recovery_advertising_paused(true, reason);
+    transport_suspend_cloud_runtime_for_low_memory(reason);
+}
+
+static void transport_reset_low_memory_recovery(const char *reason) {
+    int64_t duration_ms = 0;
+    bool had_active_recovery = s_low_memory_recovery_active;
+
+    if (s_wifi_recovery_started_us > 0) {
+        duration_ms = (esp_timer_get_time() - s_wifi_recovery_started_us) / 1000LL;
+    }
+
+    s_consecutive_wifi_resume_defers = 0;
+    s_low_memory_recovery_active = false;
+    s_wifi_recovery_started_us = 0;
+
+    if (ble_service_is_connected()) {
+        s_ble_advertising_paused_for_recovery = false;
+    } else {
+        transport_set_ble_recovery_advertising_paused(false, reason);
+    }
+
+    if (had_active_recovery) {
+        ESP_LOGI(TAG,
+                 "Exiting low-memory WiFi recovery after %lld ms (%s)",
+                 duration_ms,
+                 reason ? reason : "no reason");
+    }
 }
 
 static void wait_for_behavior_idle(uint32_t timeout_ms) {
@@ -588,6 +717,7 @@ static int transport_prepare_ws_client(const char *ws_url) {
 static void transport_begin_wifi_resume(const char *reason) {
     if (wifi_has_credentials() != 1) {
         s_waiting_for_wifi_provision = true;
+        transport_reset_low_memory_recovery("missing credentials");
         transport_stop_ws("missing credentials");
         transport_set_state(TRANSPORT_BLE_IDLE_NO_CREDENTIALS, reason);
         return;
@@ -596,12 +726,7 @@ static void transport_begin_wifi_resume(const char *reason) {
     s_waiting_for_wifi_provision = false;
 
     if (wifi_is_connected() == 1) {
-        return;
-    }
-
-    if (!transport_has_wifi_resume_headroom()) {
-        transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
-        transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED, "waiting heap headroom");
+        transport_reset_low_memory_recovery("wifi already connected");
         return;
     }
 
@@ -612,6 +737,24 @@ static void transport_begin_wifi_resume(const char *reason) {
                             reason);
         return;
     }
+
+    if (!transport_has_wifi_resume_headroom()) {
+        s_consecutive_wifi_resume_defers += 1U;
+        if (!s_low_memory_recovery_active &&
+            s_consecutive_wifi_resume_defers >= WIFI_RESUME_LOW_MEMORY_RECOVERY_DEFERS) {
+            transport_enter_low_memory_recovery("repeated low internal heap");
+        }
+
+        if (!transport_has_wifi_resume_headroom()) {
+            transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
+            transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED,
+                                s_low_memory_recovery_active ? "low-memory recovery waiting heap headroom"
+                                                             : "waiting heap headroom");
+            return;
+        }
+    }
+
+    s_consecutive_wifi_resume_defers = 0;
 
     if (wifi_resume_background() == 0) {
         transport_set_state(wifi_sta_is_started() == 1
@@ -689,6 +832,8 @@ static void transport_handle_discovery_results(bool ble_connected) {
 
         free(ws_url);
 
+        transport_prepare_display_for_ws_start();
+
         if (!transport_has_ws_start_headroom()) {
             log_heap_state("ws_start_deferred");
             transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
@@ -697,7 +842,6 @@ static void transport_handle_discovery_results(bool ble_connected) {
         }
 
         log_heap_state("before_ws_start");
-        transport_quiet_display_motion();
         if (ws_client_start() != 0) {
             transport_stop_ws("ws start failed");
             transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
@@ -714,6 +858,7 @@ static void transport_handle_discovery_results(bool ble_connected) {
 static void transport_suspend_for_ble(void) {
     ESP_LOGI(TAG, "BLE connected, pausing WiFi/WS background activity");
     s_wifi_failed_since_last_success = false;
+    transport_reset_low_memory_recovery("ble connected");
     transport_cancel_discovery("ble connected");
     transport_stop_ws("ble connected");
     wifi_suspend_for_ble();
@@ -749,6 +894,7 @@ static void transport_coordinator_tick(void) {
         }
 
         ESP_LOGI(TAG, "BLE disconnected, allowing WiFi/WS recovery");
+        transport_schedule_retry(0);
         transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED, "ble disconnected");
     }
 
@@ -759,6 +905,7 @@ static void transport_coordinator_tick(void) {
 
     if (wifi_has_credentials() != 1) {
         s_waiting_for_wifi_provision = true;
+        transport_reset_low_memory_recovery("credentials cleared");
         transport_stop_ws("credentials cleared");
         transport_set_state(TRANSPORT_BLE_IDLE_NO_CREDENTIALS, "no credentials");
         return;
@@ -776,6 +923,7 @@ static void transport_coordinator_tick(void) {
     }
 
     s_waiting_for_wifi_provision = false;
+    transport_reset_low_memory_recovery("wifi restored");
 
     if (!s_discovery_initialized) {
         if (discovery_init() == 0) {

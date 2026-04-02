@@ -8,6 +8,7 @@
 #include "behavior_state_service.h"
 #include "camera_service.h"
 #include "cJSON.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -32,9 +33,9 @@
 #define WS_NETWORK_TIMEOUT_MS 30000
 #define WS_URL_MAX_LEN 128
 /* The protocol already handles fragmented frames, so a small client buffer is enough and keeps heap pressure down. */
-#define WS_BUFFER_SIZE 4096
+#define WS_BUFFER_SIZE 2048
 /* Local ws:// transport does not need a large client task stack; oversized stacks starve internal heap for LCD DMA. */
-#define WS_TASK_STACK 6144
+#define WS_TASK_STACK 4096
 #define WS_TASK_PRIO 8
 #define WS_SEND_TIMEOUT_MS 5000
 #define WS_RESPONSE_TIMEOUT_MS 30000
@@ -46,6 +47,7 @@
 #define WS_AUDIO_WORKER_STACK 4096
 #define WS_AUDIO_WORKER_PRIO 6
 #define WS_AUDIO_WORKER_WAIT_MS 20
+#define WS_AUDIO_WORKER_EXIT_WAIT_MS 300
 #define WS_HELLO_UI_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
 #define WS_HELLO_UI_MIN_INTERNAL_LARGEST_BYTES (12U * 1024U)
 
@@ -71,7 +73,9 @@ typedef struct {
     uint64_t enqueued_us;
 } ws_audio_frame_slot_t;
 
-static ws_audio_frame_slot_t s_audio_frame_pool[WS_AUDIO_QUEUE_DEPTH];
+/* Audio queue payloads do not need DMA-capable internal RAM; keep them in PSRAM
+ * so LCD/SPI and websocket runtime retain more internal headroom. */
+EXT_RAM_BSS_ATTR static ws_audio_frame_slot_t s_audio_frame_pool[WS_AUDIO_QUEUE_DEPTH];
 static QueueHandle_t s_audio_free_slots = NULL;
 static QueueHandle_t s_audio_pending_slots = NULL;
 static SemaphoreHandle_t s_audio_slot_lock = NULL;
@@ -123,6 +127,8 @@ static esp_err_t ws_audio_queue_init(void);
 static void ws_audio_queue_reset_locked(void);
 static void ws_audio_update_stats_locked(void);
 static void ws_audio_worker_task(void *arg);
+static bool ws_wait_for_audio_worker_exit(uint32_t timeout_ms);
+static void ws_audio_runtime_deinit(void);
 static int ws_send_binary_packet(ws_frame_type_t frame_type, uint8_t flags, const uint8_t *payload, size_t len);
 static int ws_send_audio_packet(const uint8_t *data, size_t len, uint8_t flags);
 static bool ws_audio_session_ready(void);
@@ -427,6 +433,63 @@ static void ws_audio_worker_task(void *arg) {
     s_audio_worker_task = NULL;
     s_audio_worker_running = false;
     vTaskDelete(NULL);
+}
+
+static bool ws_wait_for_audio_worker_exit(uint32_t timeout_ms) {
+    uint32_t waited_ms = 0;
+
+    while (s_audio_worker_task != NULL && waited_ms < timeout_ms) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited_ms += 10;
+    }
+
+    return s_audio_worker_task == NULL;
+}
+
+static void ws_audio_runtime_deinit(void) {
+    if (s_audio_worker_task != NULL) {
+        s_audio_worker_running = false;
+        if (!ws_wait_for_audio_worker_exit(WS_AUDIO_WORKER_EXIT_WAIT_MS)) {
+            ESP_LOGW(TAG,
+                     "audio worker did not exit within %u ms; keeping audio runtime allocated",
+                     (unsigned)WS_AUDIO_WORKER_EXIT_WAIT_MS);
+            return;
+        }
+    }
+
+    if (s_audio_state_lock != NULL && s_audio_free_slots != NULL && s_audio_pending_slots != NULL) {
+        if (xSemaphoreTake(s_audio_state_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
+            ws_audio_queue_reset_locked();
+            xSemaphoreGive(s_audio_state_lock);
+        }
+    }
+
+    if (s_audio_free_slots != NULL) {
+        vQueueDelete(s_audio_free_slots);
+        s_audio_free_slots = NULL;
+    }
+    if (s_audio_pending_slots != NULL) {
+        vQueueDelete(s_audio_pending_slots);
+        s_audio_pending_slots = NULL;
+    }
+    if (s_audio_slot_lock != NULL) {
+        vSemaphoreDelete(s_audio_slot_lock);
+        s_audio_slot_lock = NULL;
+    }
+    if (s_audio_state_lock != NULL) {
+        vSemaphoreDelete(s_audio_state_lock);
+        s_audio_state_lock = NULL;
+    }
+
+    s_audio_worker_running = false;
+    s_audio_inflight_active = false;
+    s_audio_inflight_slot = 0;
+    s_audio_session_open = false;
+    s_audio_first_frame_pending = false;
+    s_audio_end_pending = false;
+    s_audio_upload_active = false;
+    s_audio_last_queue_delay_us = 0;
+    memset(&s_last_audio_queue_stats, 0, sizeof(s_last_audio_queue_stats));
 }
 
 static void ws_write_u32_le(uint8_t *dst, uint32_t value) {
@@ -1144,17 +1207,10 @@ int ws_client_init(void) {
     if (s_ws_send_lock == NULL) {
         s_ws_send_lock = xSemaphoreCreateMutex();
         if (s_ws_send_lock == NULL) {
-            esp_websocket_client_destroy(s_ws_client);
-            s_ws_client = NULL;
             ESP_LOGE(TAG, "failed to create WebSocket send lock");
+            ws_client_deinit();
             return -1;
         }
-    }
-
-    if (ws_audio_queue_init() != ESP_OK) {
-        esp_websocket_client_destroy(s_ws_client);
-        s_ws_client = NULL;
-        return -1;
     }
 
     ws_reset_session_state();
@@ -1209,6 +1265,8 @@ int ws_client_start(void) {
 }
 
 void ws_client_stop(void) {
+    bool worker_stopped = true;
+
     if (s_ws_client == NULL) {
         ws_reset_session_state();
         s_ws_started = false;
@@ -1222,16 +1280,6 @@ void ws_client_stop(void) {
     ws_abort_tts_playback();
 
     s_audio_worker_running = false;
-    if (s_audio_worker_task != NULL) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-
-    if (s_audio_state_lock != NULL && s_audio_free_slots != NULL && s_audio_pending_slots != NULL) {
-        if (xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
-            ws_audio_queue_reset_locked();
-            xSemaphoreGive(s_audio_state_lock);
-        }
-    }
 
     if (s_ws_started) {
         esp_err_t err = esp_websocket_client_stop(s_ws_client);
@@ -1240,20 +1288,56 @@ void ws_client_stop(void) {
         }
     }
 
+    if (s_audio_worker_task != NULL && !ws_wait_for_audio_worker_exit(WS_AUDIO_WORKER_EXIT_WAIT_MS)) {
+        worker_stopped = false;
+        ESP_LOGW(TAG, "audio worker did not exit within %u ms", (unsigned)WS_AUDIO_WORKER_EXIT_WAIT_MS);
+    }
+
+    if (worker_stopped &&
+        s_audio_state_lock != NULL &&
+        s_audio_free_slots != NULL &&
+        s_audio_pending_slots != NULL) {
+        if (xSemaphoreTake(s_audio_state_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
+            ws_audio_queue_reset_locked();
+            xSemaphoreGive(s_audio_state_lock);
+        }
+    }
+
     s_ws_started = false;
-    ws_reset_session_state();
+    if (worker_stopped) {
+        ws_reset_session_state();
+    } else {
+        s_socket_connected = false;
+        s_hello_acknowledged = false;
+        s_waiting_for_response = false;
+        s_timeout_display_count = 0;
+        s_response_wait_start_time = 0;
+        ws_reset_rx_fragment_states();
+    }
 }
 
 void ws_client_deinit(void) {
-    if (s_ws_client == NULL) {
+    ws_client_stop();
+    ws_audio_runtime_deinit();
+
+    if (s_audio_worker_task != NULL) {
         s_ws_started = false;
-        ws_reset_session_state();
+        ESP_LOGW(TAG, "audio runtime still active; postponing WebSocket handle destroy");
         return;
     }
 
-    ws_client_stop();
-    esp_websocket_client_destroy(s_ws_client);
-    s_ws_client = NULL;
+    if (s_ws_client != NULL) {
+        esp_websocket_client_destroy(s_ws_client);
+        s_ws_client = NULL;
+    }
+
+    if (s_ws_send_lock != NULL) {
+        vSemaphoreDelete(s_ws_send_lock);
+        s_ws_send_lock = NULL;
+    }
+
+    s_ws_started = false;
+    ws_reset_session_state();
 }
 
 int ws_client_send_binary(const uint8_t *data, int len) {

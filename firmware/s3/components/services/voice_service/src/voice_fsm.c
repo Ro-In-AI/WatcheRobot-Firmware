@@ -14,6 +14,10 @@
 #include <string.h>
 
 #define TAG "VOICE"
+#define LISTENING_UI_MIN_INTERNAL_FREE_BYTES (28U * 1024U)
+#define LISTENING_UI_MIN_INTERNAL_LARGEST_BYTES (16U * 1024U)
+#define LISTENING_UI_TEXT_ONLY_MIN_INTERNAL_FREE_BYTES (24U * 1024U)
+#define LISTENING_UI_TEXT_ONLY_MIN_INTERNAL_LARGEST_BYTES (14U * 1024U)
 
 /* ------------------------------------------------------------------ */
 /* Private: Wake word context                                         */
@@ -57,6 +61,40 @@ static void log_internal_heap_state(const char *stage) {
              (unsigned)(largest_internal / 1024U));
 }
 
+static bool has_listening_ui_headroom(size_t *free_internal_out, size_t *largest_internal_out) {
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (free_internal_out != NULL) {
+        *free_internal_out = free_internal;
+    }
+    if (largest_internal_out != NULL) {
+        *largest_internal_out = largest_internal;
+    }
+
+    return free_internal >= LISTENING_UI_MIN_INTERNAL_FREE_BYTES &&
+           largest_internal >= LISTENING_UI_MIN_INTERNAL_LARGEST_BYTES;
+}
+
+static bool has_text_only_listening_ui_headroom(size_t *free_internal_out, size_t *largest_internal_out) {
+    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+    if (free_internal_out != NULL) {
+        *free_internal_out = free_internal;
+    }
+    if (largest_internal_out != NULL) {
+        *largest_internal_out = largest_internal;
+    }
+
+    return free_internal >= LISTENING_UI_TEXT_ONLY_MIN_INTERNAL_FREE_BYTES &&
+           largest_internal >= LISTENING_UI_TEXT_ONLY_MIN_INTERNAL_LARGEST_BYTES;
+}
+
+static bool can_freeze_animation_for_recording(size_t *free_internal_out, size_t *largest_internal_out) {
+    return has_text_only_listening_ui_headroom(free_internal_out, largest_internal_out);
+}
+
 static void freeze_current_animation(void) {
     lvgl_port_lock(0);
     emoji_anim_stop();
@@ -64,8 +102,37 @@ static void freeze_current_animation(void) {
 }
 
 static void show_listening_ui(void) {
-    behavior_state_set_with_text("listening", "Listening...", 0);
-    freeze_current_animation();
+    size_t free_internal = 0;
+    size_t largest_internal = 0;
+    bool can_freeze = can_freeze_animation_for_recording(&free_internal, &largest_internal);
+
+    if (can_freeze) {
+        freeze_current_animation();
+    } else {
+        ESP_LOGW(TAG,
+                 "Low internal heap, keeping current frame to avoid animation stop flush: free=%u KB largest=%u KB",
+                 (unsigned)(free_internal / 1024U),
+                 (unsigned)(largest_internal / 1024U));
+    }
+
+    if (has_listening_ui_headroom(&free_internal, &largest_internal)) {
+        behavior_state_set_with_text("listening", "Listening...", 0);
+        return;
+    }
+
+    if (has_text_only_listening_ui_headroom(&free_internal, &largest_internal)) {
+        ESP_LOGW(TAG,
+                 "Low internal heap, using text-only listening UI: free=%u KB largest=%u KB",
+                 (unsigned)(free_internal / 1024U),
+                 (unsigned)(largest_internal / 1024U));
+        behavior_state_set_text_style("Listening...", 24, false);
+        return;
+    }
+
+    ESP_LOGW(TAG,
+             "Very low internal heap, skipping listening UI refresh: free=%u KB largest=%u KB",
+             (unsigned)(free_internal / 1024U),
+             (unsigned)(largest_internal / 1024U));
 }
 
 /* ------------------------------------------------------------------ */
@@ -197,7 +264,16 @@ static int start_recording(void) {
     }
 
     log_internal_heap_state("before_recording");
-    freeze_current_animation();
+    size_t free_internal = 0;
+    size_t largest_internal = 0;
+    if (can_freeze_animation_for_recording(&free_internal, &largest_internal)) {
+        freeze_current_animation();
+    } else {
+        ESP_LOGW(TAG,
+                 "Low internal heap, skipping animation freeze before recording: free=%u KB largest=%u KB",
+                 (unsigned)(free_internal / 1024U),
+                 (unsigned)(largest_internal / 1024U));
+    }
 
     ESP_LOGI(TAG, "start_recording: calling hal_audio_start()");
     if (hal_audio_start() != 0) {
@@ -471,6 +547,18 @@ static volatile bool g_task_running = false;
 
 /* Tick interval: 60ms for Opus frame size */
 #define TICK_INTERVAL_MS 60
+#define VOICE_TASK_EXIT_WAIT_MS 300
+
+static bool voice_wait_for_task_exit(uint32_t timeout_ms) {
+    uint32_t waited_ms = 0;
+
+    while (g_voice_task_handle != NULL && waited_ms < timeout_ms) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited_ms += 10;
+    }
+
+    return g_voice_task_handle == NULL;
+}
 
 static void voice_recorder_task(void *arg) {
     ESP_LOGI(TAG, "Voice recorder task started");
@@ -542,6 +630,16 @@ static void wake_word_cleanup(void) {
 int voice_recorder_start(void) {
     bool button_ready = hal_button_io_ready();
 
+    if (g_task_running && g_voice_task_handle != NULL) {
+        ESP_LOGI(TAG, "Voice recorder already running");
+        return 0;
+    }
+
+    if (g_voice_task_handle != NULL && !voice_wait_for_task_exit(VOICE_TASK_EXIT_WAIT_MS)) {
+        ESP_LOGW(TAG, "Voice recorder task is still stopping");
+        return -1;
+    }
+
 #ifdef CONFIG_ENABLE_WAKE_WORD
     /* Avoid reserving audio DMA at boot. On S3 this can starve UI/WS/camera
      * of internal heap and lead to resets before the user even starts
@@ -577,10 +675,12 @@ int voice_recorder_start(void) {
 /* ------------------------------------------------------------------ */
 
 void voice_recorder_stop(void) {
+    bool had_runtime = g_task_running || g_voice_task_handle != NULL;
+
     g_task_running = false;
 
-    if (g_voice_task_handle) {
-        vTaskDelay(pdMS_TO_TICKS(100)); /* Wait for task to exit */
+    if (g_voice_task_handle != NULL && !voice_wait_for_task_exit(VOICE_TASK_EXIT_WAIT_MS)) {
+        ESP_LOGW(TAG, "Voice recorder task did not exit within %u ms", (unsigned)VOICE_TASK_EXIT_WAIT_MS);
     }
 
 #ifdef CONFIG_ENABLE_WAKE_WORD
@@ -589,7 +689,11 @@ void voice_recorder_stop(void) {
 #endif
 
     hal_button_deinit();
-    ESP_LOGI(TAG, "Voice recorder stopped");
+    if (had_runtime) {
+        ESP_LOGI(TAG, "Voice recorder stopped");
+    } else {
+        ESP_LOGI(TAG, "Voice recorder already stopped");
+    }
 }
 
 /* ------------------------------------------------------------------ */
