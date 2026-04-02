@@ -48,7 +48,7 @@
 
 /* Smooth move task configuration */
 #define SERVO_TASK_STACK_SIZE 4096
-#define SERVO_TASK_PRIORITY 5
+#define SERVO_TASK_PRIORITY 6
 #define SERVO_CMD_QUEUE_SIZE 100
 
 /** Synchronized dual-axis move command */
