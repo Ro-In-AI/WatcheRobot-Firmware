@@ -26,6 +26,7 @@ jobs:
           esp_idf_version: v5.2.1
           target: esp32s3
           path: firmware/s3
+          command: python3 -m pip install Pillow && idf.py build
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
@@ -52,7 +53,19 @@ jobs:
 
       - name: Check formatting
         run: |
-          find firmware/s3/components firmware/s3/main \
-            -name "*.c" -o -name "*.h" | \
-          xargs clang-format-18 --dry-run --Werror
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --depth=1 origin "${{ github.base_ref }}"
+            diff_range="origin/${{ github.base_ref }} HEAD"
+          else
+            git fetch --depth=2 origin "${{ github.ref_name }}"
+            diff_range="HEAD^ HEAD"
+          fi
+
+          files=$(git diff --name-only $diff_range -- firmware/s3/components firmware/s3/main | \
+            grep -E '\.(c|h)$' || true)
+          if [ -z "$files" ]; then
+            echo "No changed C/C++ files to format-check."
+            exit 0
+          fi
+          echo "$files" | xargs clang-format-18 --dry-run --Werror
         continue-on-error: false

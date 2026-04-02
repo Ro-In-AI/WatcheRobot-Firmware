@@ -51,6 +51,10 @@
 #define SERVO_TASK_PRIORITY 6
 #define SERVO_CMD_QUEUE_SIZE 100
 
+/* Default startup angles */
+#define SERVO_X_DEFAULT_DEG 90
+#define SERVO_Y_DEFAULT_DEG 90
+
 /** Synchronized dual-axis move command */
 typedef struct {
     int x_deg;
@@ -79,7 +83,7 @@ typedef struct {
 } servo_cmd_msg_t;
 
 /* State variables */
-static int s_angle[2] = {90, 90}; /* X default center, Y default 120° */
+static int s_angle[2] = {SERVO_X_DEFAULT_DEG, SERVO_Y_DEFAULT_DEG};
 static bool s_initialized = false;
 static QueueHandle_t s_cmd_queue = NULL;
 static TaskHandle_t s_servo_task = NULL;
@@ -550,8 +554,9 @@ esp_err_t hal_servo_init(void) {
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG, "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, Y limits=[%d,%d]deg", CONFIG_WATCHER_SERVO_X_GPIO,
-             CONFIG_WATCHER_SERVO_Y_GPIO, CONFIG_WATCHER_SERVO_Y_MIN_DEG, CONFIG_WATCHER_SERVO_Y_MAX_DEG);
+    ESP_LOGI(TAG, "Servo HAL initialized: X=GPIO%d, Y=GPIO%d, startup=[%d,%d]deg, Y limits=[%d,%d]deg",
+             CONFIG_WATCHER_SERVO_X_GPIO, CONFIG_WATCHER_SERVO_Y_GPIO, SERVO_X_DEFAULT_DEG, SERVO_Y_DEFAULT_DEG,
+             CONFIG_WATCHER_SERVO_Y_MIN_DEG, CONFIG_WATCHER_SERVO_Y_MAX_DEG);
 
     return ESP_OK;
 }

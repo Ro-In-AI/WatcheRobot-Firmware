@@ -1,4 +1,3 @@
-#include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -7,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 
 #include "anim_player.h"
 #include "anim_storage.h"
@@ -135,11 +135,8 @@ static void transport_set_state(transport_state_t state, const char *reason) {
         return;
     }
 
-    ESP_LOGI(TAG,
-             "Transport state: %s -> %s (%s)",
-             transport_state_to_string(s_transport_state),
-             transport_state_to_string(state),
-             reason ? reason : "no reason");
+    ESP_LOGI(TAG, "Transport state: %s -> %s (%s)", transport_state_to_string(s_transport_state),
+             transport_state_to_string(state), reason ? reason : "no reason");
     s_transport_state = state;
 }
 
@@ -161,41 +158,29 @@ static void transport_enter_low_memory_recovery(const char *reason);
 static void transport_reset_low_memory_recovery(const char *reason);
 static void wait_for_behavior_idle(uint32_t timeout_ms);
 
-static bool transport_has_wifi_resume_headroom(void)
-{
+static bool transport_has_wifi_resume_headroom(void) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    size_t min_largest_internal = s_low_memory_recovery_active
-                                      ? WIFI_RESUME_RECOVERY_MIN_INTERNAL_LARGEST_BYTES
-                                      : WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES;
+    size_t min_largest_internal = s_low_memory_recovery_active ? WIFI_RESUME_RECOVERY_MIN_INTERNAL_LARGEST_BYTES
+                                                               : WIFI_RESUME_MIN_INTERNAL_LARGEST_BYTES;
 
-    if (free_internal < WIFI_RESUME_MIN_INTERNAL_FREE_BYTES ||
-        largest_internal < min_largest_internal) {
-        ESP_LOGW(TAG,
-                 "Deferring WiFi resume due to low internal heap: free=%u largest=%u (need >=%u / >=%u)%s",
-                 (unsigned)free_internal,
-                 (unsigned)largest_internal,
-                 (unsigned)WIFI_RESUME_MIN_INTERNAL_FREE_BYTES,
-                 (unsigned)min_largest_internal,
-                 s_low_memory_recovery_active ? " [low-memory recovery]" : "");
+    if (free_internal < WIFI_RESUME_MIN_INTERNAL_FREE_BYTES || largest_internal < min_largest_internal) {
+        ESP_LOGW(TAG, "Deferring WiFi resume due to low internal heap: free=%u largest=%u (need >=%u / >=%u)%s",
+                 (unsigned)free_internal, (unsigned)largest_internal, (unsigned)WIFI_RESUME_MIN_INTERNAL_FREE_BYTES,
+                 (unsigned)min_largest_internal, s_low_memory_recovery_active ? " [low-memory recovery]" : "");
         return false;
     }
 
     return true;
 }
 
-static bool transport_has_ws_start_headroom(void)
-{
+static bool transport_has_ws_start_headroom(void) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-    if (free_internal < WS_START_MIN_INTERNAL_FREE_BYTES ||
-        largest_internal < WS_START_MIN_INTERNAL_LARGEST_BYTES) {
-        ESP_LOGW(TAG,
-                 "Deferring WebSocket start due to low internal heap: free=%u largest=%u (need >=%u / >=%u)",
-                 (unsigned)free_internal,
-                 (unsigned)largest_internal,
-                 (unsigned)WS_START_MIN_INTERNAL_FREE_BYTES,
+    if (free_internal < WS_START_MIN_INTERNAL_FREE_BYTES || largest_internal < WS_START_MIN_INTERNAL_LARGEST_BYTES) {
+        ESP_LOGW(TAG, "Deferring WebSocket start due to low internal heap: free=%u largest=%u (need >=%u / >=%u)",
+                 (unsigned)free_internal, (unsigned)largest_internal, (unsigned)WS_START_MIN_INTERNAL_FREE_BYTES,
                  (unsigned)WS_START_MIN_INTERNAL_LARGEST_BYTES);
         return false;
     }
@@ -203,18 +188,14 @@ static bool transport_has_ws_start_headroom(void)
     return true;
 }
 
-static bool transport_has_cloud_runtime_headroom(void)
-{
+static bool transport_has_cloud_runtime_headroom(void) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
     if (free_internal < CLOUD_RUNTIME_MIN_INTERNAL_FREE_BYTES ||
         largest_internal < CLOUD_RUNTIME_MIN_INTERNAL_LARGEST_BYTES) {
-        ESP_LOGW(TAG,
-                 "Deferring cloud runtime due to low internal heap: free=%u largest=%u (need >=%u / >=%u)",
-                 (unsigned)free_internal,
-                 (unsigned)largest_internal,
-                 (unsigned)CLOUD_RUNTIME_MIN_INTERNAL_FREE_BYTES,
+        ESP_LOGW(TAG, "Deferring cloud runtime due to low internal heap: free=%u largest=%u (need >=%u / >=%u)",
+                 (unsigned)free_internal, (unsigned)largest_internal, (unsigned)CLOUD_RUNTIME_MIN_INTERNAL_FREE_BYTES,
                  (unsigned)CLOUD_RUNTIME_MIN_INTERNAL_LARGEST_BYTES);
         return false;
     }
@@ -222,8 +203,7 @@ static bool transport_has_cloud_runtime_headroom(void)
     return true;
 }
 
-static void transport_quiet_display_motion(void)
-{
+static void transport_quiet_display_motion(void) {
     if (lvgl_port_lock(0)) {
         emoji_anim_stop();
         lvgl_port_unlock();
@@ -231,15 +211,13 @@ static void transport_quiet_display_motion(void)
     }
 }
 
-static void transport_prepare_display_for_ws_start(void)
-{
+static void transport_prepare_display_for_ws_start(void) {
     transport_quiet_display_motion();
     wait_for_behavior_idle(WS_START_DISPLAY_SETTLE_MS);
     vTaskDelay(pdMS_TO_TICKS(WS_START_DISPLAY_SETTLE_MS));
 }
 
-static void transport_sync_boot_state(void)
-{
+static void transport_sync_boot_state(void) {
     s_last_ble_connected = ble_service_is_connected();
 
     if (s_last_ble_connected) {
@@ -263,8 +241,7 @@ static bool has_internal_heap_headroom(size_t min_free_bytes, size_t min_largest
 static void on_wifi_status_changed(wifi_status_t status, const char *ssid, const char *ip_addr) {
     switch (status) {
     case WIFI_STATUS_CONNECTED:
-        ESP_LOGI(TAG, "WiFi connected: ssid=%s ip=%s", ssid ? ssid : "<unknown>",
-                 ip_addr ? ip_addr : "<no-ip>");
+        ESP_LOGI(TAG, "WiFi connected: ssid=%s ip=%s", ssid ? ssid : "<unknown>", ip_addr ? ip_addr : "<no-ip>");
         s_wifi_failed_since_last_success = false;
         transport_reset_low_memory_recovery("wifi connected");
         if (!s_boot_completed && s_waiting_for_wifi_provision) {
@@ -335,14 +312,11 @@ static void run_camera_boot_diag(void) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-    if (!has_internal_heap_headroom(CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES,
-                                    CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES)) {
+    if (!has_internal_heap_headroom(CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES, CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES)) {
         ESP_LOGW(TAG,
                  "Skipping camera boot diagnostic due to low internal heap: free=%u largest=%u "
                  "(need >=%u / >=%u)",
-                 (unsigned)free_internal,
-                 (unsigned)largest_internal,
-                 (unsigned)CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES,
+                 (unsigned)free_internal, (unsigned)largest_internal, (unsigned)CAMERA_DIAG_MIN_INTERNAL_FREE_BYTES,
                  (unsigned)CAMERA_DIAG_MIN_INTERNAL_LARGEST_BYTES);
         return;
     }
@@ -372,15 +346,9 @@ static void log_heap_state(const char *stage) {
     size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     size_t largest_spiram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
 
-    ESP_LOGI(TAG,
-             "Heap @ %s: 8bit=%u KB (largest %u KB), internal=%u KB (largest %u KB), psram=%u KB (largest %u KB)",
-             stage,
-             (unsigned)(free_8bit / 1024U),
-             (unsigned)(largest_8bit / 1024U),
-             (unsigned)(free_internal / 1024U),
-             (unsigned)(largest_internal / 1024U),
-             (unsigned)(free_spiram / 1024U),
-             (unsigned)(largest_spiram / 1024U));
+    ESP_LOGI(TAG, "Heap @ %s: 8bit=%u KB (largest %u KB), internal=%u KB (largest %u KB), psram=%u KB (largest %u KB)",
+             stage, (unsigned)(free_8bit / 1024U), (unsigned)(largest_8bit / 1024U), (unsigned)(free_internal / 1024U),
+             (unsigned)(largest_internal / 1024U), (unsigned)(free_spiram / 1024U), (unsigned)(largest_spiram / 1024U));
 }
 
 static void transport_set_ble_recovery_advertising_paused(bool paused, const char *reason) {
@@ -401,9 +369,7 @@ static void transport_set_ble_recovery_advertising_paused(bool paused, const cha
             s_ble_advertising_paused_for_recovery = true;
             ESP_LOGI(TAG, "Paused BLE advertising for low-memory recovery (%s)", reason ? reason : "no reason");
         } else if (err != ESP_ERR_NOT_SUPPORTED) {
-            ESP_LOGW(TAG,
-                     "Failed to pause BLE advertising for low-memory recovery: %s",
-                     esp_err_to_name(err));
+            ESP_LOGW(TAG, "Failed to pause BLE advertising for low-memory recovery: %s", esp_err_to_name(err));
         }
         return;
     }
@@ -417,9 +383,7 @@ static void transport_set_ble_recovery_advertising_paused(bool paused, const cha
         s_ble_advertising_paused_for_recovery = false;
         ESP_LOGI(TAG, "Resumed BLE advertising after low-memory recovery (%s)", reason ? reason : "no reason");
     } else if (err != ESP_ERR_NOT_SUPPORTED) {
-        ESP_LOGW(TAG,
-                 "Failed to resume BLE advertising after low-memory recovery: %s",
-                 esp_err_to_name(err));
+        ESP_LOGW(TAG, "Failed to resume BLE advertising after low-memory recovery: %s", esp_err_to_name(err));
     }
 }
 
@@ -447,10 +411,8 @@ static void transport_enter_low_memory_recovery(const char *reason) {
 
     s_low_memory_recovery_active = true;
     s_wifi_recovery_started_us = esp_timer_get_time();
-    ESP_LOGW(TAG,
-             "Entering low-memory WiFi recovery after %u deferred resume attempts (%s)",
-             (unsigned)s_consecutive_wifi_resume_defers,
-             reason ? reason : "no reason");
+    ESP_LOGW(TAG, "Entering low-memory WiFi recovery after %u deferred resume attempts (%s)",
+             (unsigned)s_consecutive_wifi_resume_defers, reason ? reason : "no reason");
 
     transport_set_ble_recovery_advertising_paused(true, reason);
     transport_suspend_cloud_runtime_for_low_memory(reason);
@@ -475,9 +437,7 @@ static void transport_reset_low_memory_recovery(const char *reason) {
     }
 
     if (had_active_recovery) {
-        ESP_LOGI(TAG,
-                 "Exiting low-memory WiFi recovery after %lld ms (%s)",
-                 duration_ms,
+        ESP_LOGI(TAG, "Exiting low-memory WiFi recovery after %lld ms (%s)", duration_ms,
                  reason ? reason : "no reason");
     }
 }
@@ -540,27 +500,26 @@ static idle_hint_mode_t get_idle_hint_mode(void) {
     }
 }
 
-static idle_hint_view_t get_idle_hint_view(idle_hint_mode_t mode)
-{
+static idle_hint_view_t get_idle_hint_view(idle_hint_mode_t mode) {
     switch (mode) {
     case IDLE_HINT_BLE_CONNECTED:
-        return (idle_hint_view_t){ .text = "BLE connected", .font_size = 0, .alert = false };
+        return (idle_hint_view_t){.text = "BLE connected", .font_size = 0, .alert = false};
 
     case IDLE_HINT_WIFI_SETUP_REQUIRED:
-        return (idle_hint_view_t){ .text = "Reconnect BLE to set Wi-Fi", .font_size = 20, .alert = true };
+        return (idle_hint_view_t){.text = "Reconnect BLE to set Wi-Fi", .font_size = 20, .alert = true};
 
     case IDLE_HINT_WIFI_RECOVERING:
-        return (idle_hint_view_t){ .text = "Reconnecting Wi-Fi...", .font_size = 22, .alert = false };
+        return (idle_hint_view_t){.text = "Reconnecting Wi-Fi...", .font_size = 22, .alert = false};
 
     case IDLE_HINT_WIFI_FAILED:
-        return (idle_hint_view_t){ .text = "Wi-Fi failed. Reconnect BLE.", .font_size = 20, .alert = true };
+        return (idle_hint_view_t){.text = "Wi-Fi failed. Reconnect BLE.", .font_size = 20, .alert = true};
 
     case IDLE_HINT_CLOUD_CONNECTING:
-        return (idle_hint_view_t){ .text = "Connecting cloud...", .font_size = 22, .alert = false };
+        return (idle_hint_view_t){.text = "Connecting cloud...", .font_size = 22, .alert = false};
 
     case IDLE_HINT_READY:
     default:
-        return (idle_hint_view_t){ .text = "Ready!", .font_size = 0, .alert = false };
+        return (idle_hint_view_t){.text = "Ready!", .font_size = 0, .alert = false};
     }
 }
 
@@ -650,12 +609,7 @@ static int transport_launch_discovery(void) {
     *generation = s_discovery_generation;
     s_discovery_inflight = true;
 
-    task_ret = xTaskCreate(transport_discovery_task,
-                           "cloud_discovery",
-                           4096,
-                           generation,
-                           5,
-                           NULL);
+    task_ret = xTaskCreate(transport_discovery_task, "cloud_discovery", 4096, generation, 5, NULL);
     if (task_ret != pdPASS) {
         s_discovery_inflight = false;
         free(generation);
@@ -731,10 +685,8 @@ static void transport_begin_wifi_resume(const char *reason) {
     }
 
     if (wifi_is_connect_requested() == 1) {
-        transport_set_state(wifi_sta_is_started() == 1
-                                ? TRANSPORT_BLE_IDLE_WIFI_CONNECTING
-                                : TRANSPORT_BLE_IDLE_WIFI_STARTING,
-                            reason);
+        transport_set_state(
+            wifi_sta_is_started() == 1 ? TRANSPORT_BLE_IDLE_WIFI_CONNECTING : TRANSPORT_BLE_IDLE_WIFI_STARTING, reason);
         return;
     }
 
@@ -747,9 +699,9 @@ static void transport_begin_wifi_resume(const char *reason) {
 
         if (!transport_has_wifi_resume_headroom()) {
             transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
-            transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED,
-                                s_low_memory_recovery_active ? "low-memory recovery waiting heap headroom"
-                                                             : "waiting heap headroom");
+            transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED, s_low_memory_recovery_active
+                                                                        ? "low-memory recovery waiting heap headroom"
+                                                                        : "waiting heap headroom");
             return;
         }
     }
@@ -757,10 +709,8 @@ static void transport_begin_wifi_resume(const char *reason) {
     s_consecutive_wifi_resume_defers = 0;
 
     if (wifi_resume_background() == 0) {
-        transport_set_state(wifi_sta_is_started() == 1
-                                ? TRANSPORT_BLE_IDLE_WIFI_CONNECTING
-                                : TRANSPORT_BLE_IDLE_WIFI_STARTING,
-                            reason);
+        transport_set_state(
+            wifi_sta_is_started() == 1 ? TRANSPORT_BLE_IDLE_WIFI_CONNECTING : TRANSPORT_BLE_IDLE_WIFI_STARTING, reason);
         return;
     }
 
@@ -779,10 +729,8 @@ static void transport_handle_discovery_results(bool ble_connected) {
         char *ws_url = NULL;
 
         if (result.generation != s_discovery_generation) {
-            ESP_LOGI(TAG,
-                     "Ignoring stale discovery result generation %lu (current %lu)",
-                     (unsigned long)result.generation,
-                     (unsigned long)s_discovery_generation);
+            ESP_LOGI(TAG, "Ignoring stale discovery result generation %lu (current %lu)",
+                     (unsigned long)result.generation, (unsigned long)s_discovery_generation);
             continue;
         }
 
@@ -800,8 +748,7 @@ static void transport_handle_discovery_results(bool ble_connected) {
 
         if (result.info.protocol_version[0] == '\0' ||
             strcmp(result.info.protocol_version, WATCHER_PROTOCOL_VERSION) != 0) {
-            ESP_LOGE(TAG,
-                     "Protocol mismatch: server=%s expected=%s",
+            ESP_LOGE(TAG, "Protocol mismatch: server=%s expected=%s",
                      result.info.protocol_version[0] != '\0' ? result.info.protocol_version : "<missing>",
                      WATCHER_PROTOCOL_VERSION);
             transport_schedule_retry(CLOUD_PROTOCOL_RETRY_DELAY_MS);
@@ -809,10 +756,7 @@ static void transport_handle_discovery_results(bool ble_connected) {
             continue;
         }
 
-        ESP_LOGI(TAG,
-                 "Discovery ready: %s:%u protocol=%s",
-                 result.info.ip,
-                 result.info.port,
+        ESP_LOGI(TAG, "Discovery ready: %s:%u protocol=%s", result.info.ip, result.info.port,
                  result.info.protocol_version);
 
         ws_url = discovery_get_ws_url(&result.info);
@@ -866,8 +810,7 @@ static void transport_suspend_for_ble(void) {
     transport_set_state(TRANSPORT_BLE_ACTIVE, "ble connected");
 }
 
-static void on_ble_connection_changed(bool connected)
-{
+static void on_ble_connection_changed(bool connected) {
     s_last_ble_connected = connected;
 
     if (connected) {
@@ -1057,8 +1000,7 @@ void app_main(void) {
     log_heap_state("after_camera_diag");
     s_boot_completed = true;
     transport_sync_boot_state();
-    ESP_LOGI(TAG, "WatcheRobot ready (transport=%s, ble=%s)",
-             transport_state_to_string(s_transport_state),
+    ESP_LOGI(TAG, "WatcheRobot ready (transport=%s, ble=%s)", transport_state_to_string(s_transport_state),
              ble_service_is_connected() ? "connected" : "advertising");
 
     /* 10. Mark OTA partition valid (prevent rollback after successful boot) */
