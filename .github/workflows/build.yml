@@ -53,8 +53,15 @@ jobs:
 
       - name: Check formatting
         run: |
-          git fetch --depth=1 origin "${{ github.base_ref }}"
-          files=$(git diff --name-only "origin/${{ github.base_ref }}" HEAD -- firmware/s3/components firmware/s3/main | \
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --depth=1 origin "${{ github.base_ref }}"
+            diff_range="origin/${{ github.base_ref }} HEAD"
+          else
+            git fetch --depth=2 origin "${{ github.ref_name }}"
+            diff_range="HEAD^ HEAD"
+          fi
+
+          files=$(git diff --name-only $diff_range -- firmware/s3/components firmware/s3/main | \
             grep -E '\.(c|h)$' || true)
           if [ -z "$files" ]; then
             echo "No changed C/C++ files to format-check."
