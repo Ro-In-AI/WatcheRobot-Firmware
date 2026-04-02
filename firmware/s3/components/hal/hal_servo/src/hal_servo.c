@@ -76,7 +76,7 @@ typedef struct {
 } servo_cmd_msg_t;
 
 /* State variables */
-static int s_angle[2] = {90, 120}; /* X default center, Y default 120° */
+static int s_angle[2] = {90, 90}; /* X default center, Y default 120° */
 static bool s_initialized = false;
 static QueueHandle_t s_cmd_queue = NULL;
 static TaskHandle_t s_servo_task = NULL;
