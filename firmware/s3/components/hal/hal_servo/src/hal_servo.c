@@ -382,6 +382,7 @@ static void servo_task(void *arg) {
             servo_axis_t axis = cmd.single.axis;
             int target_deg = cmd.single.angle_deg;
             int duration_ms = cmd.single.duration_ms;
+            TickType_t last_wake_tick = xTaskGetTickCount();
 
             /* Clamp Y-axis to mechanical limits */
             if (axis == SERVO_AXIS_Y) {
@@ -441,7 +442,7 @@ static void servo_task(void *arg) {
                     xSemaphoreGive(s_angle_mutex);
                 }
 
-                vTaskDelay(step_interval);
+                (void)xTaskDelayUntil(&last_wake_tick, step_interval);
             }
 
         } else if (cmd.type == CMD_TYPE_SYNC) {
@@ -449,6 +450,7 @@ static void servo_task(void *arg) {
             int target_x = cmd.sync.x_deg;
             int target_y = cmd.sync.y_deg;
             int duration_ms = cmd.sync.duration_ms;
+            TickType_t last_wake_tick = xTaskGetTickCount();
 
             /* Clamp Y-axis to mechanical limits */
             if (target_y < CONFIG_WATCHER_SERVO_Y_MIN_DEG) {
@@ -503,7 +505,7 @@ static void servo_task(void *arg) {
                     xSemaphoreGive(s_angle_mutex);
                 }
 
-                vTaskDelay(step_interval);
+                (void)xTaskDelayUntil(&last_wake_tick, step_interval);
             }
         }
 
