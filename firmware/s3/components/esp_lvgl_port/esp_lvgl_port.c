@@ -38,6 +38,11 @@ LV_IMG_DECLARE(img_cursor)
 
 static const char *TAG = "LVGL";
 
+#ifdef ESP_LVGL_PORT_TOUCH_COMPONENT
+#define LVGL_TOUCH_READ_FAIL_BACKOFF_THRESHOLD 3
+#define LVGL_TOUCH_READ_FAIL_BACKOFF_MS 5000
+#endif
+
 /*******************************************************************************
 * Types definitions
 *******************************************************************************/
@@ -91,6 +96,8 @@ typedef struct {
     esp_lcd_touch_handle_t handle; /* LCD touch IO handle */
     lv_indev_drv_t indev_drv;      /* LVGL input device driver */
     int16_t sensitivity;           /* Touch sensitivity (0 - 255) */
+    uint8_t consecutive_failures;  /* Consecutive touch read failures */
+    TickType_t suppress_until;     /* Backoff window for repeated I2C failures */
 } lvgl_port_touch_ctx_t;
 #endif
 
@@ -835,9 +842,29 @@ static void lvgl_port_touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *
     uint16_t touchpad_y[1] = {0};
     uint16_t touchpad_strength[1] = {0};
     uint8_t touchpad_cnt = 0;
+    TickType_t now = xTaskGetTickCount();
+
+    if (touch_ctx->suppress_until != 0 && now < touch_ctx->suppress_until) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
 
     /* Read data from touch controller into memory */
-    esp_lcd_touch_read_data(touch_ctx->handle);
+    esp_err_t ret = esp_lcd_touch_read_data(touch_ctx->handle);
+    if (ret != ESP_OK) {
+        touch_ctx->consecutive_failures++;
+        if (touch_ctx->consecutive_failures >= LVGL_TOUCH_READ_FAIL_BACKOFF_THRESHOLD) {
+            touch_ctx->consecutive_failures = 0;
+            touch_ctx->suppress_until = now + pdMS_TO_TICKS(LVGL_TOUCH_READ_FAIL_BACKOFF_MS);
+            ESP_LOGW(TAG,
+                     "Touch read failed repeatedly, backing off polling for %d ms",
+                     LVGL_TOUCH_READ_FAIL_BACKOFF_MS);
+        }
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+    touch_ctx->consecutive_failures = 0;
+    touch_ctx->suppress_until = 0;
 
     /* Read data from touch controller */
     bool touchpad_pressed =
