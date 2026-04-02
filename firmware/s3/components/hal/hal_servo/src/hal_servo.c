@@ -253,30 +253,6 @@ static UBaseType_t servo_queue_depth(void) {
     return s_cmd_queue != NULL ? uxQueueMessagesWaiting(s_cmd_queue) : 0;
 }
 
-int hal_servo_drop_pending(void) {
-    int dropped_count = 0;
-    UBaseType_t depth_before;
-    servo_cmd_msg_t dropped;
-
-    if (!s_initialized || s_cmd_queue == NULL) {
-        return 0;
-    }
-
-    depth_before = servo_queue_depth();
-    while (xQueueReceive(s_cmd_queue, &dropped, 0) == pdTRUE) {
-        dropped_count++;
-    }
-
-    if (dropped_count > 0) {
-        ESP_LOGW(TAG,
-                 "Dropped %d pending servo cmd(s) before enqueueing newer motion (depth_before=%lu)",
-                 dropped_count,
-                 (unsigned long)depth_before);
-    }
-
-    return dropped_count;
-}
-
 static void servo_log_enqueue(const servo_cmd_msg_t *cmd) {
     if (cmd == NULL) {
         return;
