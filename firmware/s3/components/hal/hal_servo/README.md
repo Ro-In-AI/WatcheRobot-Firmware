@@ -2,6 +2,9 @@
 
 Servo HAL for LEDC PWM direct drive on GPIO 19 (X-axis) and GPIO 20 (Y-axis).
 
+On startup, the HAL applies the default angles `X=90°` and `Y=120°`, then keeps
+Y clamped to the configured soft limits.
+
 ## Overview
 
 This component provides the hardware abstraction layer for dual-axis servo control on the WatcheRobot ESP32-S3 platform. It replaces the UART-to-MCU servo bridge used in v1.x with direct LEDC PWM control.
@@ -20,7 +23,7 @@ This component provides the hardware abstraction layer for dual-axis servo contr
 | Axis | GPIO | LEDC Channel | Range |
 |------|------|--------------|-------|
 | X (pan) | 19 | LEDC_TIMER_0, CH0 | 0-180° |
-| Y (tilt) | 20 | LEDC_TIMER_0, CH1 | 90-150° (configurable) |
+| Y (tilt) | 20 | LEDC_TIMER_0, CH1 | 90-150° soft limit, default startup 120° |
 
 ## API Reference
 
@@ -30,7 +33,19 @@ This component provides the hardware abstraction layer for dual-axis servo contr
 esp_err_t hal_servo_init(void);
 ```
 
-Initialize LEDC timer/channels and start the smooth-move background task. Must be called before any other servo functions.
+Initialize LEDC timer/channels, apply the default startup angles, and start the
+smooth-move background task. Must be called before any other servo functions.
+
+### Startup Position
+
+Immediately after `hal_servo_init()`, the current angles are:
+
+- `SERVO_AXIS_X`: `90°`
+- `SERVO_AXIS_Y`: `120°`
+
+Those values are also what the PWM outputs are configured to at boot, so
+`hal_servo_get_angle()` returns the expected current position right after
+initialization.
 
 ### Immediate Movement
 
@@ -117,12 +132,8 @@ Get current servo angle.
 
 void app_main(void)
 {
-    // Initialize servo HAL
+    // Initialize servo HAL; the current position starts at X=90, Y=120
     ESP_ERROR_CHECK(hal_servo_init());
-
-    // Immediate move to center
-    hal_servo_set_angle(SERVO_AXIS_X, 90);
-    hal_servo_set_angle(SERVO_AXIS_Y, 120);
 
     // Smooth pan over 1 second
     hal_servo_move_smooth(SERVO_AXIS_X, 45, 1000);
@@ -151,7 +162,9 @@ void app_main(void)
 
 ## Mechanical Limits
 
-The Y-axis has mechanical limits (default 90-150°) to prevent hardware damage. These are enforced automatically:
+The Y-axis has mechanical limits (default 90-150°) to prevent hardware damage.
+The startup angle is 120°, which is inside the soft limit range. These are
+enforced automatically:
 
 - `hal_servo_set_angle()`: Clamps Y-axis to limits
 - `hal_servo_move_smooth()`: Clamps Y-axis target
