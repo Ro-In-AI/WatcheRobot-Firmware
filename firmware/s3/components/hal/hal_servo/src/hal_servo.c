@@ -21,6 +21,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
 #include <ctype.h>
 #include <string.h>
 
@@ -69,6 +70,8 @@ typedef enum { CMD_TYPE_SINGLE, CMD_TYPE_SYNC } cmd_type_t;
 
 typedef struct {
     cmd_type_t type;
+    uint32_t seq_no;
+    uint32_t enqueued_ms;
     union {
         servo_move_cmd_t single;
         servo_sync_cmd_t sync;
@@ -81,6 +84,8 @@ static bool s_initialized = false;
 static QueueHandle_t s_cmd_queue = NULL;
 static TaskHandle_t s_servo_task = NULL;
 static SemaphoreHandle_t s_angle_mutex = NULL;
+static portMUX_TYPE s_cmd_seq_lock = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_cmd_seq = 0;
 
 /* Forward declarations */
 static void servo_task(void *arg);
@@ -90,6 +95,13 @@ static int angle_to_duty_mapped(servo_axis_t axis, int logical_angle_deg);
 static esp_err_t set_duty(servo_axis_t axis, int duty);
 static esp_err_t configure_ledc(void);
 static void move_to_angle_immediate(servo_axis_t axis, int angle_deg);
+static uint32_t servo_now_ms(void);
+static uint32_t servo_next_seq(void);
+static UBaseType_t servo_queue_depth(void);
+static void servo_log_enqueue(const servo_cmd_msg_t *cmd);
+static void servo_log_drop(const servo_cmd_msg_t *cmd, const char *reason);
+static void servo_log_execute_start(const servo_cmd_msg_t *cmd);
+static void servo_log_execute_done(const servo_cmd_msg_t *cmd, uint32_t exec_ms);
 
 /**
  * @brief Convert angle in degrees to LEDC duty cycle value.
@@ -222,6 +234,122 @@ static void move_to_angle_immediate(servo_axis_t axis, int angle_deg) {
     }
 }
 
+static uint32_t servo_now_ms(void) {
+    return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
+static uint32_t servo_next_seq(void) {
+    uint32_t seq_no;
+
+    portENTER_CRITICAL(&s_cmd_seq_lock);
+    s_cmd_seq++;
+    seq_no = s_cmd_seq;
+    portEXIT_CRITICAL(&s_cmd_seq_lock);
+
+    return seq_no;
+}
+
+static UBaseType_t servo_queue_depth(void) {
+    return s_cmd_queue != NULL ? uxQueueMessagesWaiting(s_cmd_queue) : 0;
+}
+
+static void servo_log_enqueue(const servo_cmd_msg_t *cmd) {
+    if (cmd == NULL) {
+        return;
+    }
+
+    if (cmd->type == CMD_TYPE_SINGLE) {
+        ESP_LOGI(TAG,
+                 "Queue servo cmd seq=%lu type=single axis=%s target=%d duration_ms=%d q_depth=%lu",
+                 (unsigned long)cmd->seq_no,
+                 cmd->single.axis == SERVO_AXIS_X ? "X" : "Y",
+                 cmd->single.angle_deg,
+                 cmd->single.duration_ms,
+                 (unsigned long)servo_queue_depth());
+    } else {
+        ESP_LOGI(TAG,
+                 "Queue servo cmd seq=%lu type=sync x=%d y=%d duration_ms=%d q_depth=%lu",
+                 (unsigned long)cmd->seq_no,
+                 cmd->sync.x_deg,
+                 cmd->sync.y_deg,
+                 cmd->sync.duration_ms,
+                 (unsigned long)servo_queue_depth());
+    }
+}
+
+static void servo_log_drop(const servo_cmd_msg_t *cmd, const char *reason) {
+    if (cmd == NULL) {
+        return;
+    }
+
+    if (cmd->type == CMD_TYPE_SINGLE) {
+        ESP_LOGW(TAG,
+                 "Drop servo cmd seq=%lu reason=%s axis=%s target=%d duration_ms=%d q_depth=%lu",
+                 (unsigned long)cmd->seq_no,
+                 reason != NULL ? reason : "unknown",
+                 cmd->single.axis == SERVO_AXIS_X ? "X" : "Y",
+                 cmd->single.angle_deg,
+                 cmd->single.duration_ms,
+                 (unsigned long)servo_queue_depth());
+    } else {
+        ESP_LOGW(TAG,
+                 "Drop servo cmd seq=%lu reason=%s x=%d y=%d duration_ms=%d q_depth=%lu",
+                 (unsigned long)cmd->seq_no,
+                 reason != NULL ? reason : "unknown",
+                 cmd->sync.x_deg,
+                 cmd->sync.y_deg,
+                 cmd->sync.duration_ms,
+                 (unsigned long)servo_queue_depth());
+    }
+}
+
+static void servo_log_execute_start(const servo_cmd_msg_t *cmd) {
+    uint32_t waited_ms;
+
+    if (cmd == NULL) {
+        return;
+    }
+
+    waited_ms = servo_now_ms() - cmd->enqueued_ms;
+    if (cmd->type == CMD_TYPE_SINGLE) {
+        ESP_LOGI(TAG,
+                 "Start servo cmd seq=%lu type=single axis=%s target=%d duration_ms=%d queued_ms=%lu q_remaining=%lu",
+                 (unsigned long)cmd->seq_no,
+                 cmd->single.axis == SERVO_AXIS_X ? "X" : "Y",
+                 cmd->single.angle_deg,
+                 cmd->single.duration_ms,
+                 (unsigned long)waited_ms,
+                 (unsigned long)servo_queue_depth());
+    } else {
+        ESP_LOGI(TAG,
+                 "Start servo cmd seq=%lu type=sync x=%d y=%d duration_ms=%d queued_ms=%lu q_remaining=%lu",
+                 (unsigned long)cmd->seq_no,
+                 cmd->sync.x_deg,
+                 cmd->sync.y_deg,
+                 cmd->sync.duration_ms,
+                 (unsigned long)waited_ms,
+                 (unsigned long)servo_queue_depth());
+    }
+}
+
+static void servo_log_execute_done(const servo_cmd_msg_t *cmd, uint32_t exec_ms) {
+    int current_x = hal_servo_get_angle(SERVO_AXIS_X);
+    int current_y = hal_servo_get_angle(SERVO_AXIS_Y);
+
+    if (cmd == NULL) {
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "Done servo cmd seq=%lu type=%s exec_ms=%lu final={x=%d y=%d} q_depth=%lu",
+             (unsigned long)cmd->seq_no,
+             cmd->type == CMD_TYPE_SINGLE ? "single" : "sync",
+             (unsigned long)exec_ms,
+             current_x,
+             current_y,
+             (unsigned long)servo_queue_depth());
+}
+
 /**
  * @brief Background task for smooth servo movement.
  *
@@ -241,6 +369,9 @@ static void servo_task(void *arg) {
             /* No command, continue waiting */
             continue;
         }
+
+        servo_log_execute_start(&cmd);
+        uint32_t exec_started_ms = servo_now_ms();
 
         if (cmd.type == CMD_TYPE_SINGLE) {
             /* Single-axis smooth move */
@@ -269,6 +400,12 @@ static void servo_task(void *arg) {
 
             /* Skip if already at target */
             if (start_deg == target_deg) {
+                ESP_LOGI(TAG,
+                         "Skip servo cmd seq=%lu axis=%s already at target=%d",
+                         (unsigned long)cmd.seq_no,
+                         axis == SERVO_AXIS_X ? "X" : "Y",
+                         target_deg);
+                servo_log_execute_done(&cmd, servo_now_ms() - exec_started_ms);
                 continue;
             }
 
@@ -365,6 +502,8 @@ static void servo_task(void *arg) {
                 vTaskDelay(step_interval);
             }
         }
+
+        servo_log_execute_done(&cmd, servo_now_ms() - exec_started_ms);
     }
 }
 
@@ -465,18 +604,25 @@ esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_m
 
     /* For zero duration, use immediate move */
     if (duration_ms <= 0) {
+        ESP_LOGI(TAG,
+                 "Immediate servo cmd type=single axis=%s target=%d duration_ms=%d",
+                 axis == SERVO_AXIS_X ? "X" : "Y",
+                 angle_deg,
+                 duration_ms);
         return hal_servo_set_angle(axis, angle_deg);
     }
 
     /* Enqueue smooth move command */
     servo_cmd_msg_t cmd = {.type = CMD_TYPE_SINGLE,
+                           .seq_no = servo_next_seq(),
+                           .enqueued_ms = servo_now_ms(),
                            .single = {.axis = axis, .angle_deg = angle_deg, .duration_ms = duration_ms}};
 
     /* Try to send, if queue full - drop oldest command and retry */
     if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
         servo_cmd_msg_t dropped;
         if (xQueueReceive(s_cmd_queue, &dropped, 0) == pdTRUE) {
-            ESP_LOGD(TAG, "Dropped old command to make room");
+            servo_log_drop(&dropped, "queue_full_make_room");
         }
         if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
             ESP_LOGW(TAG, "Command queue full even after drop");
@@ -484,8 +630,7 @@ esp_err_t hal_servo_move_smooth(servo_axis_t axis, int angle_deg, int duration_m
         }
     }
 
-    ESP_LOGD(TAG, "Smooth move queued: axis=%s, angle=%d, duration=%dms", axis == SERVO_AXIS_X ? "X" : "Y", angle_deg,
-             duration_ms);
+    servo_log_enqueue(&cmd);
 
     return ESP_OK;
 }
@@ -503,19 +648,23 @@ esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms) {
 
     /* For zero duration, use immediate moves */
     if (duration_ms <= 0) {
+        ESP_LOGI(TAG, "Immediate servo cmd type=sync x=%d y=%d duration_ms=%d", x_deg, y_deg, duration_ms);
         esp_err_t ret_x = hal_servo_set_angle(SERVO_AXIS_X, x_deg);
         esp_err_t ret_y = hal_servo_set_angle(SERVO_AXIS_Y, y_deg);
         return (ret_x != ESP_OK) ? ret_x : ret_y;
     }
 
     /* Enqueue synchronized move command */
-    servo_cmd_msg_t cmd = {.type = CMD_TYPE_SYNC, .sync = {.x_deg = x_deg, .y_deg = y_deg, .duration_ms = duration_ms}};
+    servo_cmd_msg_t cmd = {.type = CMD_TYPE_SYNC,
+                           .seq_no = servo_next_seq(),
+                           .enqueued_ms = servo_now_ms(),
+                           .sync = {.x_deg = x_deg, .y_deg = y_deg, .duration_ms = duration_ms}};
 
     /* Try to send, if queue full - drop oldest command and retry */
     if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
         servo_cmd_msg_t dropped;
         if (xQueueReceive(s_cmd_queue, &dropped, 0) == pdTRUE) {
-            ESP_LOGD(TAG, "Dropped old command to make room for sync move");
+            servo_log_drop(&dropped, "queue_full_make_room");
         }
         if (xQueueSend(s_cmd_queue, &cmd, 0) != pdTRUE) {
             ESP_LOGW(TAG, "Command queue full even after drop");
@@ -523,7 +672,7 @@ esp_err_t hal_servo_move_sync(int x_deg, int y_deg, int duration_ms) {
         }
     }
 
-    ESP_LOGD(TAG, "Sync move queued: X=%d, Y=%d, duration=%dms", x_deg, y_deg, duration_ms);
+    servo_log_enqueue(&cmd);
 
     return ESP_OK;
 }
