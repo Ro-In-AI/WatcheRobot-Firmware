@@ -567,6 +567,40 @@ static void ws_resume_wake_word_after_tts(void) {
 #endif
 }
 
+static bool ws_prepare_tts_playback(bool recovering_existing_stream) {
+    if (recovering_existing_stream) {
+        ESP_LOGW(TAG,
+                 "TTS audio path lost mid-stream, recovering playback (running=%d playback=%d)",
+                 hal_audio_is_running(),
+                 hal_audio_is_playback_mode());
+    } else {
+        ESP_LOGI(TAG, "TTS started, preparing playback");
+    }
+
+    s_waiting_for_response = false;
+    sfx_service_set_cloud_audio_busy(true);
+
+#ifdef CONFIG_ENABLE_WAKE_WORD
+    voice_recorder_pause_wake_word();
+#endif
+
+    hal_audio_set_playback_mode(true);
+    hal_audio_set_sample_rate(24000);
+    if (hal_audio_start() != 0) {
+        ESP_LOGW(TAG, "Failed to start playback for TTS");
+        sfx_service_set_cloud_audio_busy(false);
+        ws_resume_wake_word_after_tts();
+        return false;
+    }
+
+    if (!s_tts_playing) {
+        s_tts_playing = true;
+        behavior_state_set("speaking");
+    }
+
+    return true;
+}
+
 static void ws_abort_tts_playback(void) {
     s_waiting_for_response = false;
 
@@ -1725,28 +1759,19 @@ void ws_handle_tts_binary(const uint8_t *data, int len) {
         return;
     }
 
-    if (!s_tts_playing) {
-        ESP_LOGI(TAG, "TTS started, first chunk: %d bytes", len);
-        s_waiting_for_response = false;
-        sfx_service_set_cloud_audio_busy(true);
-
-#ifdef CONFIG_ENABLE_WAKE_WORD
-        voice_recorder_pause_wake_word();
-#endif
-
-        hal_audio_set_playback_mode(true);
-        hal_audio_set_sample_rate(24000);
-        if (hal_audio_start() != 0) {
-            ESP_LOGW(TAG, "Failed to start playback for TTS");
-            sfx_service_set_cloud_audio_busy(false);
-            ws_resume_wake_word_after_tts();
+    if (!s_tts_playing || !hal_audio_is_running() || !hal_audio_is_playback_mode()) {
+        if (!ws_prepare_tts_playback(s_tts_playing)) {
             return;
         }
-        s_tts_playing = true;
-        behavior_state_set("speaking");
     }
 
     written = hal_audio_write(data, len);
+    if (written < 0 && (!hal_audio_is_running() || !hal_audio_is_playback_mode())) {
+        if (ws_prepare_tts_playback(true)) {
+            written = hal_audio_write(data, len);
+        }
+    }
+
     if (written != len) {
         ESP_LOGW(TAG, "TTS playback incomplete: %d/%d", written, len);
     }

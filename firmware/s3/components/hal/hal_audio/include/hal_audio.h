@@ -48,4 +48,14 @@ void hal_audio_set_sample_rate(uint32_t sample_rate);
  */
 void hal_audio_set_playback_mode(bool enable);
 
+/**
+ * Query whether the shared audio path is currently marked running.
+ */
+bool hal_audio_is_running(void);
+
+/**
+ * Query whether the shared audio path is currently configured for playback.
+ */
+bool hal_audio_is_playback_mode(void);
+
 #endif /* HAL_AUDIO_H */
