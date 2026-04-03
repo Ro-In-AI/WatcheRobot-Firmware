@@ -6,8 +6,8 @@
 #include "ws_client.h"
 
 #include "behavior_state_service.h"
-#include "camera_service.h"
 #include "cJSON.h"
+#include "camera_service.h"
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -154,12 +154,7 @@ static void ws_log_send_blocked(bool binary, int len, bool allow_before_session)
 
     ESP_LOGW(TAG,
              "send blocked: binary=%d len=%d ws_client=%p socket_connected=%d hello_ack=%d allow_before_session=%d",
-             binary,
-             len,
-             (void *)s_ws_client,
-             s_socket_connected,
-             s_hello_acknowledged,
-             allow_before_session);
+             binary, len, (void *)s_ws_client, s_socket_connected, s_hello_acknowledged, allow_before_session);
 }
 
 static bool ws_audio_session_ready(void) {
@@ -184,9 +179,8 @@ static void ws_audio_update_stats_locked(void) {
     s_last_audio_queue_stats.queued_frames = s_audio_queued_frames;
     s_last_audio_queue_stats.sent_frames = s_audio_sent_frames;
     s_last_audio_queue_stats.dropped_frames = s_audio_dropped_frames;
-    s_last_audio_queue_stats.pending_frames = s_audio_pending_slots != NULL
-                                                 ? (uint32_t)uxQueueMessagesWaiting(s_audio_pending_slots)
-                                                 : 0U;
+    s_last_audio_queue_stats.pending_frames =
+        s_audio_pending_slots != NULL ? (uint32_t)uxQueueMessagesWaiting(s_audio_pending_slots) : 0U;
     s_last_audio_queue_stats.high_watermark = s_audio_high_watermark;
     s_last_audio_queue_stats.last_queue_delay_us = s_audio_last_queue_delay_us;
     s_last_audio_queue_stats.session_open = s_audio_session_open;
@@ -260,12 +254,8 @@ static esp_err_t ws_audio_queue_init(void) {
 
     if (s_audio_worker_task == NULL) {
         s_audio_worker_running = true;
-        BaseType_t task_ret = xTaskCreate(ws_audio_worker_task,
-                                          "ws_audio_send",
-                                          WS_AUDIO_WORKER_STACK,
-                                          NULL,
-                                          WS_AUDIO_WORKER_PRIO,
-                                          &s_audio_worker_task);
+        BaseType_t task_ret = xTaskCreate(ws_audio_worker_task, "ws_audio_send", WS_AUDIO_WORKER_STACK, NULL,
+                                          WS_AUDIO_WORKER_PRIO, &s_audio_worker_task);
         if (task_ret != pdPASS) {
             s_audio_worker_running = false;
             ESP_LOGE(TAG, "failed to create audio worker task");
@@ -299,7 +289,8 @@ static void ws_audio_worker_task(void *arg) {
     while (s_audio_worker_running) {
         bool have_slot = false;
 
-        if (s_audio_slot_lock == NULL || xSemaphoreTake(s_audio_slot_lock, pdMS_TO_TICKS(WS_AUDIO_WORKER_WAIT_MS)) != pdTRUE) {
+        if (s_audio_slot_lock == NULL ||
+            xSemaphoreTake(s_audio_slot_lock, pdMS_TO_TICKS(WS_AUDIO_WORKER_WAIT_MS)) != pdTRUE) {
             continue;
         }
 
@@ -342,14 +333,12 @@ static void ws_audio_worker_task(void *arg) {
                     if (send_ret == 0) {
                         s_audio_sent_frames++;
                         s_audio_first_frame_pending = false;
-                        s_audio_last_queue_delay_us = (uint32_t)((now_us > (int64_t)enqueued_us)
-                                                                     ? (now_us - (int64_t)enqueued_us)
-                                                                     : 0);
+                        s_audio_last_queue_delay_us =
+                            (uint32_t)((now_us > (int64_t)enqueued_us) ? (now_us - (int64_t)enqueued_us) : 0);
                     } else {
                         s_audio_dropped_frames++;
-                        s_audio_last_queue_delay_us = (uint32_t)((now_us > (int64_t)enqueued_us)
-                                                                     ? (now_us - (int64_t)enqueued_us)
-                                                                     : 0);
+                        s_audio_last_queue_delay_us =
+                            (uint32_t)((now_us > (int64_t)enqueued_us) ? (now_us - (int64_t)enqueued_us) : 0);
                     }
                     ws_audio_update_stats_locked();
                     xSemaphoreGive(s_audio_state_lock);
@@ -361,18 +350,13 @@ static void ws_audio_worker_task(void *arg) {
                     ESP_LOGI(TAG,
                              "audio send latest_us{queue=%lu total=%lu lock=%lu send=%lu payload=%u packet=%u} "
                              "queue{pending=%u high=%u queued=%lu sent=%lu dropped=%lu delay=%lu}",
-                             (unsigned long)s_audio_last_queue_delay_us,
-                             (unsigned long)send_stats.total_us,
-                             (unsigned long)send_stats.lock_wait_us,
-                             (unsigned long)send_stats.send_us,
-                             (unsigned int)send_stats.payload_len,
-                             (unsigned int)send_stats.packet_len,
+                             (unsigned long)s_audio_last_queue_delay_us, (unsigned long)send_stats.total_us,
+                             (unsigned long)send_stats.lock_wait_us, (unsigned long)send_stats.send_us,
+                             (unsigned int)send_stats.payload_len, (unsigned int)send_stats.packet_len,
                              (unsigned int)s_last_audio_queue_stats.pending_frames,
                              (unsigned int)s_last_audio_queue_stats.high_watermark,
-                             (unsigned long)s_audio_queued_frames,
-                             (unsigned long)s_audio_sent_frames,
-                             (unsigned long)s_audio_dropped_frames,
-                             (unsigned long)s_audio_last_queue_delay_us);
+                             (unsigned long)s_audio_queued_frames, (unsigned long)s_audio_sent_frames,
+                             (unsigned long)s_audio_dropped_frames, (unsigned long)s_audio_last_queue_delay_us);
                 }
             } else if (s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
                 s_audio_dropped_frames++;
@@ -409,7 +393,8 @@ static void ws_audio_worker_task(void *arg) {
                 }
 
                 send_ret = ws_send_audio_packet(NULL, 0, flags);
-                if (send_ret == 0 && s_audio_state_lock != NULL && xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
+                if (send_ret == 0 && s_audio_state_lock != NULL &&
+                    xSemaphoreTake(s_audio_state_lock, portMAX_DELAY) == pdTRUE) {
                     s_audio_session_open = false;
                     s_audio_first_frame_pending = false;
                     s_audio_end_pending = false;
@@ -450,8 +435,7 @@ static void ws_audio_runtime_deinit(void) {
     if (s_audio_worker_task != NULL) {
         s_audio_worker_running = false;
         if (!ws_wait_for_audio_worker_exit(WS_AUDIO_WORKER_EXIT_WAIT_MS)) {
-            ESP_LOGW(TAG,
-                     "audio worker did not exit within %u ms; keeping audio runtime allocated",
+            ESP_LOGW(TAG, "audio worker did not exit within %u ms; keeping audio runtime allocated",
                      (unsigned)WS_AUDIO_WORKER_EXIT_WAIT_MS);
             return;
         }
@@ -569,10 +553,8 @@ static void ws_resume_wake_word_after_tts(void) {
 
 static bool ws_prepare_tts_playback(bool recovering_existing_stream) {
     if (recovering_existing_stream) {
-        ESP_LOGW(TAG,
-                 "TTS audio path lost mid-stream, recovering playback (running=%d playback=%d)",
-                 hal_audio_is_running(),
-                 hal_audio_is_playback_mode());
+        ESP_LOGW(TAG, "TTS audio path lost mid-stream, recovering playback (running=%d playback=%d)",
+                 hal_audio_is_running(), hal_audio_is_playback_mode());
     } else {
         ESP_LOGI(TAG, "TTS started, preparing playback");
     }
@@ -796,15 +778,7 @@ static void ws_get_mac_string(char *out, size_t out_size) {
         return;
     }
 
-    snprintf(out,
-             out_size,
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0],
-             mac[1],
-             mac[2],
-             mac[3],
-             mac[4],
-             mac[5]);
+    snprintf(out, out_size, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 static int ws_send_client_hello(void) {
@@ -878,21 +852,16 @@ static void ws_handle_text_frame(const esp_websocket_event_data_t *data) {
             s_text_fragment_state.active = true;
             s_text_fragment_state.total_len = total_len;
         } else if (!s_text_fragment_state.active || s_text_fragment_state.total_len != total_len) {
-            ESP_LOGW(TAG,
-                     "fragmented text frame state mismatch: offset=%d chunk=%d total=%d",
-                     data->payload_offset,
-                     data->data_len,
-                     data->payload_len);
+            ESP_LOGW(TAG, "fragmented text frame state mismatch: offset=%d chunk=%d total=%d", data->payload_offset,
+                     data->data_len, data->payload_len);
             ws_reset_text_fragment_state();
             return;
         }
 
-        if ((size_t)data->payload_offset != s_text_fragment_state.received_len || chunk_end > s_text_fragment_state.total_len) {
-            ESP_LOGW(TAG,
-                     "fragmented text frame out of order: offset=%d chunk=%d total=%d received=%u",
-                     data->payload_offset,
-                     data->data_len,
-                     data->payload_len,
+        if ((size_t)data->payload_offset != s_text_fragment_state.received_len ||
+            chunk_end > s_text_fragment_state.total_len) {
+            ESP_LOGW(TAG, "fragmented text frame out of order: offset=%d chunk=%d total=%d received=%u",
+                     data->payload_offset, data->data_len, data->payload_len,
                      (unsigned int)s_text_fragment_state.received_len);
             ws_reset_text_fragment_state();
             return;
@@ -922,10 +891,7 @@ static void ws_handle_text_frame(const esp_websocket_event_data_t *data) {
     free(msg);
 }
 
-static bool ws_parse_binary_header(const uint8_t *frame,
-                                   size_t frame_len,
-                                   uint8_t *frame_type,
-                                   uint8_t *flags,
+static bool ws_parse_binary_header(const uint8_t *frame, size_t frame_len, uint8_t *frame_type, uint8_t *flags,
                                    size_t *payload_len) {
     if (frame == NULL || frame_type == NULL || flags == NULL || payload_len == NULL) {
         return false;
@@ -946,12 +912,8 @@ static bool ws_parse_binary_header(const uint8_t *frame,
     return true;
 }
 
-static bool ws_parse_binary_frame(const uint8_t *frame,
-                                  size_t frame_len,
-                                  uint8_t *frame_type,
-                                  uint8_t *flags,
-                                  const uint8_t **payload,
-                                  size_t *payload_len) {
+static bool ws_parse_binary_frame(const uint8_t *frame, size_t frame_len, uint8_t *frame_type, uint8_t *flags,
+                                  const uint8_t **payload, size_t *payload_len) {
     if (payload == NULL) {
         return false;
     }
@@ -1017,22 +979,16 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
             s_binary_fragment_state.active = true;
             s_binary_fragment_state.total_len = total_len;
         } else if (!s_binary_fragment_state.active || s_binary_fragment_state.total_len != total_len) {
-            ESP_LOGW(TAG,
-                     "fragmented binary frame state mismatch: offset=%d chunk=%d total=%d",
-                     data->payload_offset,
-                     data->data_len,
-                     data->payload_len);
+            ESP_LOGW(TAG, "fragmented binary frame state mismatch: offset=%d chunk=%d total=%d", data->payload_offset,
+                     data->data_len, data->payload_len);
             ws_reset_binary_fragment_state();
             return;
         }
 
         if ((size_t)data->payload_offset != s_binary_fragment_state.received_total ||
             chunk_end > s_binary_fragment_state.total_len) {
-            ESP_LOGW(TAG,
-                     "fragmented binary frame out of order: offset=%d chunk=%d total=%d received=%u",
-                     data->payload_offset,
-                     data->data_len,
-                     data->payload_len,
+            ESP_LOGW(TAG, "fragmented binary frame out of order: offset=%d chunk=%d total=%d received=%u",
+                     data->payload_offset, data->data_len, data->payload_len,
                      (unsigned int)s_binary_fragment_state.received_total);
             ws_reset_binary_fragment_state();
             return;
@@ -1050,18 +1006,15 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
             chunk_len -= header_copy;
 
             if (s_binary_fragment_state.header_len == WS_BINARY_HEADER_LEN) {
-                if (!ws_parse_binary_header(s_binary_fragment_state.header,
-                                            WS_BINARY_HEADER_LEN,
-                                            &s_binary_fragment_state.frame_type,
-                                            &s_binary_fragment_state.flags,
+                if (!ws_parse_binary_header(s_binary_fragment_state.header, WS_BINARY_HEADER_LEN,
+                                            &s_binary_fragment_state.frame_type, &s_binary_fragment_state.flags,
                                             &s_binary_fragment_state.payload_len)) {
                     ws_reset_binary_fragment_state();
                     return;
                 }
 
                 if (s_binary_fragment_state.payload_len + WS_BINARY_HEADER_LEN != s_binary_fragment_state.total_len) {
-                    ESP_LOGW(TAG,
-                             "fragmented binary total mismatch: payload=%u total=%u",
+                    ESP_LOGW(TAG, "fragmented binary total mismatch: payload=%u total=%u",
                              (unsigned int)s_binary_fragment_state.payload_len,
                              (unsigned int)s_binary_fragment_state.total_len);
                     ws_reset_binary_fragment_state();
@@ -1070,19 +1023,15 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
 
                 s_binary_fragment_state.header_parsed = true;
                 if (s_binary_fragment_state.frame_type == WS_FRAME_TYPE_AUDIO) {
-                    ESP_LOGI(TAG,
-                             "streaming fragmented audio frame: payload=%u total=%u flags=0x%02x",
+                    ESP_LOGI(TAG, "streaming fragmented audio frame: payload=%u total=%u flags=0x%02x",
                              (unsigned int)s_binary_fragment_state.payload_len,
-                             (unsigned int)s_binary_fragment_state.total_len,
-                             s_binary_fragment_state.flags);
+                             (unsigned int)s_binary_fragment_state.total_len, s_binary_fragment_state.flags);
                     ws_client_mark_server_response();
                 } else if (s_binary_fragment_state.payload_len > 0U) {
                     s_binary_fragment_state.payload_buffer = (uint8_t *)malloc(s_binary_fragment_state.payload_len);
                     if (s_binary_fragment_state.payload_buffer == NULL) {
-                        ESP_LOGE(TAG,
-                                 "fragmented binary payload alloc failed: type=%u len=%u",
-                                 s_binary_fragment_state.frame_type,
-                                 (unsigned int)s_binary_fragment_state.payload_len);
+                        ESP_LOGE(TAG, "fragmented binary payload alloc failed: type=%u len=%u",
+                                 s_binary_fragment_state.frame_type, (unsigned int)s_binary_fragment_state.payload_len);
                         ws_reset_binary_fragment_state();
                         return;
                     }
@@ -1096,12 +1045,9 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
 
         if (chunk_len > 0U) {
             if (s_binary_fragment_state.payload_received + chunk_len > s_binary_fragment_state.payload_len) {
-                ESP_LOGW(TAG,
-                         "fragmented binary payload overflow: type=%u received=%u chunk=%u payload=%u",
-                         s_binary_fragment_state.frame_type,
-                         (unsigned int)s_binary_fragment_state.payload_received,
-                         (unsigned int)chunk_len,
-                         (unsigned int)s_binary_fragment_state.payload_len);
+                ESP_LOGW(TAG, "fragmented binary payload overflow: type=%u received=%u chunk=%u payload=%u",
+                         s_binary_fragment_state.frame_type, (unsigned int)s_binary_fragment_state.payload_received,
+                         (unsigned int)chunk_len, (unsigned int)s_binary_fragment_state.payload_len);
                 ws_reset_binary_fragment_state();
                 return;
             }
@@ -1109,7 +1055,8 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
             if (s_binary_fragment_state.frame_type == WS_FRAME_TYPE_AUDIO) {
                 ws_handle_tts_binary(chunk, (int)chunk_len);
             } else if (s_binary_fragment_state.payload_buffer != NULL) {
-                memcpy(s_binary_fragment_state.payload_buffer + s_binary_fragment_state.payload_received, chunk, chunk_len);
+                memcpy(s_binary_fragment_state.payload_buffer + s_binary_fragment_state.payload_received, chunk,
+                       chunk_len);
             }
 
             s_binary_fragment_state.payload_received += chunk_len;
@@ -1120,10 +1067,8 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
         }
 
         if (s_binary_fragment_state.payload_received != s_binary_fragment_state.payload_len) {
-            ESP_LOGW(TAG,
-                     "fragmented binary payload incomplete: type=%u received=%u payload=%u",
-                     s_binary_fragment_state.frame_type,
-                     (unsigned int)s_binary_fragment_state.payload_received,
+            ESP_LOGW(TAG, "fragmented binary payload incomplete: type=%u received=%u payload=%u",
+                     s_binary_fragment_state.frame_type, (unsigned int)s_binary_fragment_state.payload_received,
                      (unsigned int)s_binary_fragment_state.payload_len);
             ws_reset_binary_fragment_state();
             return;
@@ -1134,10 +1079,8 @@ static void ws_handle_binary_frame(const esp_websocket_event_data_t *data) {
                 ws_tts_complete();
             }
         } else {
-            ws_dispatch_binary_frame(s_binary_fragment_state.frame_type,
-                                     s_binary_fragment_state.flags,
-                                     s_binary_fragment_state.payload_buffer,
-                                     s_binary_fragment_state.payload_received);
+            ws_dispatch_binary_frame(s_binary_fragment_state.frame_type, s_binary_fragment_state.flags,
+                                     s_binary_fragment_state.payload_buffer, s_binary_fragment_state.payload_received);
         }
 
         ws_reset_binary_fragment_state();
@@ -1198,12 +1141,9 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
 
     case WEBSOCKET_EVENT_ERROR:
         if (data != NULL) {
-            ESP_LOGE(TAG,
-                     "WebSocket error: type=%d esp_err=%s tls_code=%d tls_flags=%d sock_errno=%d",
-                     data->error_handle.error_type,
-                     esp_err_to_name(data->error_handle.esp_tls_last_esp_err),
-                     data->error_handle.esp_tls_stack_err,
-                     data->error_handle.esp_tls_cert_verify_flags,
+            ESP_LOGE(TAG, "WebSocket error: type=%d esp_err=%s tls_code=%d tls_flags=%d sock_errno=%d",
+                     data->error_handle.error_type, esp_err_to_name(data->error_handle.esp_tls_last_esp_err),
+                     data->error_handle.esp_tls_stack_err, data->error_handle.esp_tls_cert_verify_flags,
                      data->error_handle.esp_transport_sock_errno);
         } else {
             ESP_LOGE(TAG, "WebSocket error");
@@ -1327,10 +1267,7 @@ void ws_client_stop(void) {
         ESP_LOGW(TAG, "audio worker did not exit within %u ms", (unsigned)WS_AUDIO_WORKER_EXIT_WAIT_MS);
     }
 
-    if (worker_stopped &&
-        s_audio_state_lock != NULL &&
-        s_audio_free_slots != NULL &&
-        s_audio_pending_slots != NULL) {
+    if (worker_stopped && s_audio_state_lock != NULL && s_audio_free_slots != NULL && s_audio_pending_slots != NULL) {
         if (xSemaphoreTake(s_audio_state_lock, pdMS_TO_TICKS(50)) == pdTRUE) {
             ws_audio_queue_reset_locked();
             xSemaphoreGive(s_audio_state_lock);
@@ -1413,10 +1350,8 @@ void ws_client_mark_hello_acked(void) {
     } else {
         size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        ESP_LOGW(TAG,
-                 "Skipping hello-ack happy state due to low internal heap: free=%u largest=%u",
-                 (unsigned)free_internal,
-                 (unsigned)largest_internal);
+        ESP_LOGW(TAG, "Skipping hello-ack happy state due to low internal heap: free=%u largest=%u",
+                 (unsigned)free_internal, (unsigned)largest_internal);
     }
     if (ws_send_device_firmware() < 0) {
         ESP_LOGW(TAG, "failed to send evt.device.firmware");
@@ -1588,10 +1523,8 @@ int ws_send_image_frame(const uint8_t *jpeg, size_t len) {
         return -1;
     }
 
-    return ws_send_binary_packet(WS_FRAME_TYPE_IMAGE,
-                                 WS_FRAME_FLAG_FIRST | WS_FRAME_FLAG_LAST | WS_FRAME_FLAG_KEYFRAME,
-                                 jpeg,
-                                 len);
+    return ws_send_binary_packet(WS_FRAME_TYPE_IMAGE, WS_FRAME_FLAG_FIRST | WS_FRAME_FLAG_LAST | WS_FRAME_FLAG_KEYFRAME,
+                                 jpeg, len);
 }
 
 void ws_client_get_media_send_stats(ws_client_media_send_stats_t *stats) {
@@ -1647,8 +1580,7 @@ int ws_send_audio(const uint8_t *data, int len) {
                 ws_audio_update_stats_locked();
                 xSemaphoreGive(s_audio_state_lock);
                 if (s_audio_dropped_frames % 10U == 1U) {
-                    ESP_LOGW(TAG,
-                             "audio enqueue dropped: queue full and no reclaimable slot (pending=%u dropped=%lu)",
+                    ESP_LOGW(TAG, "audio enqueue dropped: queue full and no reclaimable slot (pending=%u dropped=%lu)",
                              (unsigned int)uxQueueMessagesWaiting(s_audio_pending_slots),
                              (unsigned long)s_audio_dropped_frames);
                 }
@@ -1685,10 +1617,8 @@ int ws_send_audio(const uint8_t *data, int len) {
         }
 
         if (reclaimed_oldest && s_audio_dropped_frames % 10U == 1U) {
-            ESP_LOGW(TAG,
-                     "audio enqueue pressure: evicted oldest frame (pending_before=%u age_us=%llu dropped=%lu)",
-                     (unsigned int)pending_before,
-                     (unsigned long long)evicted_age_us,
+            ESP_LOGW(TAG, "audio enqueue pressure: evicted oldest frame (pending_before=%u age_us=%llu dropped=%lu)",
+                     (unsigned int)pending_before, (unsigned long long)evicted_age_us,
                      (unsigned long)s_audio_dropped_frames);
         }
 
