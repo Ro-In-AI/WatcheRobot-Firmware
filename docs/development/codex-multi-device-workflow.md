@@ -119,6 +119,10 @@ powershell -ExecutionPolicy Bypass -File .\firmware\s3\tools\flash-monitor.ps1 -
 
 If multiple serial ports are visible and no port or alias is provided, the script now fails fast instead of silently picking one. Use `-AutoSelectHighestPort` only as a temporary single-user escape hatch.
 
+Environment note:
+
+- `firmware/s3/tools/flash-monitor.ps1` now prefers the ESP-IDF `export.ps1` bootstrap on Windows so build, flash, and monitor all resolve through the same Python environment.
+
 ---
 
 ## Camera / Discovery Test Limitation
