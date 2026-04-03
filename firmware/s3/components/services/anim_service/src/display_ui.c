@@ -101,6 +101,10 @@ emoji_type_t display_emoji_from_string(const char *emoji_str) {
         return EMOJI_ERROR;
     }
 
+    if (strcasecmp_local(emoji_str, "bluetooth") == 0) {
+        return EMOJI_BLUETOOTH;
+    }
+
     if (strcasecmp_local(emoji_str, "custom1") == 0) {
         return EMOJI_CUSTOM_1;
     }

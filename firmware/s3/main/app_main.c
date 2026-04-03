@@ -97,11 +97,13 @@ typedef struct {
 
 static bool s_waiting_for_wifi_provision = false;
 static bool s_boot_completed = false;
+static bool s_ui_ready = false;
 static bool s_cloud_runtime_started = false;
 static bool s_ws_router_ready = false;
 static bool s_ws_stack_ready = false;
 static bool s_discovery_initialized = false;
 static bool s_last_ble_connected = false;
+static volatile bool s_ble_connected_feedback_pending = false;
 static bool s_wifi_failed_since_last_success = false;
 static bool s_low_memory_recovery_active = false;
 static bool s_ble_advertising_paused_for_recovery = false;
@@ -183,6 +185,7 @@ static void transport_reset_low_memory_recovery(const char *reason);
 static int transport_prepare_ws_client(const char *ws_url);
 static void transport_reset_cached_ws_resume_state(void);
 static void wait_for_behavior_idle(uint32_t timeout_ms);
+static void maybe_play_ble_connected_feedback(void);
 
 #if CONFIG_WATCHER_LOG_HEAP_DIAGNOSTICS
 #define LOG_HEAP_STATE(stage) log_heap_state(stage)
@@ -286,6 +289,7 @@ static void transport_reset_cached_ws_resume_state(void) {
 
 static void transport_sync_boot_state(void) {
     s_last_ble_connected = ble_service_is_connected();
+    s_ble_connected_feedback_pending = s_last_ble_connected;
 
     if (s_last_ble_connected) {
         s_transport_state = TRANSPORT_BLE_ACTIVE;
@@ -707,6 +711,51 @@ static void apply_idle_hint_if_needed(void) {
     s_hint_initialized = true;
 }
 
+static bool should_defer_ble_connected_feedback_for_state(const char *state_id) {
+    if (state_id == NULL || state_id[0] == '\0') {
+        return false;
+    }
+
+    return strcmp(state_id, "listening") == 0 || strcmp(state_id, "thinking") == 0 ||
+           strcmp(state_id, "processing") == 0 || strcmp(state_id, "speaking") == 0;
+}
+
+static void maybe_play_ble_connected_feedback(void) {
+    const char *current_state = NULL;
+    esp_err_t ret;
+
+    if (!s_ui_ready || !s_ble_connected_feedback_pending) {
+        return;
+    }
+
+    if (!ble_service_is_connected()) {
+        s_ble_connected_feedback_pending = false;
+        return;
+    }
+
+    if (behavior_state_is_action_active()) {
+        return;
+    }
+
+    current_state = behavior_state_get_current();
+    if (current_state != NULL && strcmp(current_state, "bluetooth") == 0) {
+        s_ble_connected_feedback_pending = false;
+        return;
+    }
+
+    if (should_defer_ble_connected_feedback_for_state(current_state)) {
+        return;
+    }
+
+    ret = behavior_state_set_with_text_style("bluetooth", "BLE connected", 0, false);
+    if (ret == ESP_OK) {
+        s_ble_connected_feedback_pending = false;
+        ESP_LOGI(TAG, "Triggered BLE connected feedback state");
+    } else {
+        ESP_LOGW(TAG, "Failed to trigger BLE connected feedback state: %s", esp_err_to_name(ret));
+    }
+}
+
 static void ensure_cloud_runtime_started(void) {
     if (!s_boot_completed || s_cloud_runtime_started) {
         return;
@@ -958,6 +1007,7 @@ static void transport_suspend_for_ble(void) {
 
 static void on_ble_connection_changed(bool connected) {
     s_last_ble_connected = connected;
+    s_ble_connected_feedback_pending = connected;
 
     if (connected) {
         transport_suspend_for_ble();
@@ -1168,10 +1218,12 @@ void app_main(void) {
 
     LOG_HEAP_STATE("before_ui_init");
     hal_display_ui_init();
+    s_ui_ready = true;
     init_runtime_inputs_and_restart_path();
     behavior_state_set("boot");
     wait_for_behavior_idle(STARTUP_BEHAVIOR_TIMEOUT_MS);
     behavior_state_set_text_style("BLE Ready", 0, false);
+    maybe_play_ble_connected_feedback();
     apply_idle_hint_if_needed();
     LOG_HEAP_STATE("after_ui_init");
 
@@ -1190,6 +1242,7 @@ void app_main(void) {
     while (1) {
         esp_task_wdt_reset();
         transport_coordinator_tick();
+        maybe_play_ble_connected_feedback();
         apply_idle_hint_if_needed();
         ws_tts_timeout_check();
         vTaskDelay(pdMS_TO_TICKS(100));

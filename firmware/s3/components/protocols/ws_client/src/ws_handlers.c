@@ -579,6 +579,12 @@ void ws_handlers_init(void) {
 }
 
 const char *ws_ai_status_to_emoji(const char *status, const char *message) {
+    if (ws_contains_nocase(status, "bluetooth") || ws_contains_nocase(message, "bluetooth") ||
+        ws_contains_nocase(status, "blue tooth") || ws_contains_nocase(message, "blue tooth") ||
+        ws_contains_nocase(status, "pairing") || ws_contains_nocase(message, "pairing") ||
+        ws_contains_nocase(status, "paired") || ws_contains_nocase(message, "paired")) {
+        return "bluetooth";
+    }
     if (ws_contains_nocase(status, "observing") || ws_contains_nocase(message, "observing")) {
         return "custom3";
     }

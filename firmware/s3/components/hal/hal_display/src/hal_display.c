@@ -252,10 +252,12 @@ static const char *hal_display_emoji_name(int emoji_id) {
     case 6:
         return "error";
     case 7:
-        return "custom1";
+        return "bluetooth";
     case 8:
-        return "custom2";
+        return "custom1";
     case 9:
+        return "custom2";
+    case 10:
         return "custom3";
     default:
         return "unknown";
@@ -278,6 +280,8 @@ static int hal_display_anim_type_to_emoji_id(emoji_anim_type_t type) {
         return EMOJI_SPEAKING;
     case EMOJI_ANIM_ERROR:
         return EMOJI_ERROR;
+    case EMOJI_ANIM_BLUETOOTH:
+        return EMOJI_BLUETOOTH;
     case EMOJI_ANIM_CUSTOM_1:
         return EMOJI_CUSTOM_1;
     case EMOJI_ANIM_CUSTOM_2:
@@ -306,12 +310,14 @@ static emoji_anim_type_t map_emoji_type(int ui_emoji_id) {
         return EMOJI_ANIM_SPEAKING;  /* speaking */
     case 6:                          /* EMOJI_ERROR */
         return EMOJI_ANIM_ERROR;     /* error */
-    case 7:                          /* EMOJI_CUSTOM_1 */
-        return EMOJI_ANIM_CUSTOM_1;  /* custom1 */
-    case 8:                          /* EMOJI_CUSTOM_2 */
-        return EMOJI_ANIM_CUSTOM_2;  /* custom2 */
-    case 9:                          /* EMOJI_CUSTOM_3 */
-        return EMOJI_ANIM_CUSTOM_3;  /* custom3 */
+    case 7:                           /* EMOJI_BLUETOOTH */
+        return EMOJI_ANIM_BLUETOOTH;  /* bluetooth */
+    case 8:                           /* EMOJI_CUSTOM_1 */
+        return EMOJI_ANIM_CUSTOM_1;   /* custom1 */
+    case 9:                           /* EMOJI_CUSTOM_2 */
+        return EMOJI_ANIM_CUSTOM_2;   /* custom2 */
+    case 10:                          /* EMOJI_CUSTOM_3 */
+        return EMOJI_ANIM_CUSTOM_3;   /* custom3 */
     default:
         return EMOJI_ANIM_STANDBY;
     }

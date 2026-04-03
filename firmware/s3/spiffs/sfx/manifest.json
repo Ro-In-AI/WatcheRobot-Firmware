@@ -1,10 +1,11 @@
-﻿{
-    "version":  "1.0",
-    "sounds":  {
-                   "boot":  "boot.pcm",
-                   "error":  "error.pcm",
-                   "happy":  "happy.pcm",
-                   "standby":  "standby.pcm",
-                   "thinking":  "thinking.pcm"
-               }
+{
+  "version": "1.0",
+  "sounds": {
+    "boot": "boot.pcm",
+    "bluetooth": "bluetooth.pcm",
+    "error": "error.pcm",
+    "happy": "happy.pcm",
+    "standby": "standby.pcm",
+    "thinking": "thinking.pcm"
+  }
 }
