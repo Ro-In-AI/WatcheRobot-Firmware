@@ -13,6 +13,9 @@
 #include "lvgl.h"
 
 #define TAG "BOOT_ANIM"
+#define BOOT_ANIM_SOURCE_FRAME_SIZE 206
+#define BOOT_ANIM_SOURCE_FRAME_PIVOT (BOOT_ANIM_SOURCE_FRAME_SIZE / 2)
+#define BOOT_ANIM_DISPLAY_ZOOM_2X (LV_IMG_ZOOM_NONE * 2)
 
 /* Private objects */
 static lv_obj_t *boot_screen = NULL;
@@ -35,6 +38,33 @@ static int intro_frame_count = 0;
 static void boot_anim_countdown_task(void *param);
 static void boot_anim_intro_timer_cb(lv_timer_t *timer);
 static void boot_anim_stop_intro_locked(void);
+static void boot_anim_configure_image(lv_obj_t *img_obj);
+static void boot_anim_raise_text_layers_locked(void);
+
+static void boot_anim_configure_image(lv_obj_t *img_obj) {
+    if (img_obj == NULL) {
+        return;
+    }
+
+    /* Set the expected frame box before aligning so later lv_img_set_src()
+     * does not move the visual center downward when intrinsic size appears. */
+    lv_obj_set_size(img_obj, BOOT_ANIM_SOURCE_FRAME_SIZE, BOOT_ANIM_SOURCE_FRAME_SIZE);
+    lv_img_set_pivot(img_obj, BOOT_ANIM_SOURCE_FRAME_PIVOT, BOOT_ANIM_SOURCE_FRAME_PIVOT);
+    lv_img_set_zoom(img_obj, BOOT_ANIM_DISPLAY_ZOOM_2X);
+    lv_img_set_antialias(img_obj, false);
+}
+
+static void boot_anim_raise_text_layers_locked(void) {
+    if (status_label != NULL) {
+        lv_obj_move_foreground(status_label);
+    }
+    if (percent_label != NULL) {
+        lv_obj_move_foreground(percent_label);
+    }
+    if (countdown_label != NULL) {
+        lv_obj_move_foreground(countdown_label);
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* Public: Initialize boot animation                                   */
@@ -70,6 +100,7 @@ void boot_anim_init(void) {
 
     /* Boot intro image (inside the arc) */
     intro_img = lv_img_create(boot_screen);
+    boot_anim_configure_image(intro_img);
     lv_obj_align(intro_img, LV_ALIGN_CENTER, 0, 0);
 
     /* Status label (top center) */
@@ -88,6 +119,7 @@ void boot_anim_init(void) {
 
     /* Error image (hidden initially) */
     error_img = lv_img_create(boot_screen);
+    boot_anim_configure_image(error_img);
     lv_obj_add_flag(error_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(error_img, LV_ALIGN_CENTER, 0, 0);
 
@@ -97,6 +129,7 @@ void boot_anim_init(void) {
     lv_obj_set_style_text_color(countdown_label, lv_color_hex(0xFF5555), 0);
     lv_obj_set_style_text_align(countdown_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(countdown_label, LV_ALIGN_CENTER, 0, 140);
+    boot_anim_raise_text_layers_locked();
 
     /* Load boot screen */
     lv_disp_load_scr(boot_screen);
@@ -222,6 +255,7 @@ void boot_anim_show_error(const char *error_msg) {
         lv_label_set_text(countdown_label, "Reboot in 10s");
         lv_obj_clear_flag(countdown_label, LV_OBJ_FLAG_HIDDEN);
     }
+    boot_anim_raise_text_layers_locked();
     lvgl_port_unlock();
 
     /* Start countdown task */

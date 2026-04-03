@@ -317,6 +317,12 @@ static emoji_anim_type_t map_emoji_type(int ui_emoji_id) {
     }
 }
 
+static void hal_display_raise_text_overlay_locked(void) {
+    if (label_text != NULL) {
+        lv_obj_move_foreground(label_text);
+    }
+}
+
 static size_t hal_display_max_transfer_bytes(void) {
     size_t max_transfer =
         DRV_LCD_H_RES * DRV_LCD_V_RES * DRV_LCD_BITS_PER_PIXEL / 8 / CONFIG_BSP_LCD_SPI_DMA_SIZE_DIV;
@@ -677,7 +683,7 @@ int hal_display_init(void) {
 
     /* 6. Create emoji image FIRST (centered) - so it's in background */
     img_emoji = lv_img_create(scr);
-    lv_obj_align(img_emoji, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_align(img_emoji, LV_ALIGN_CENTER, 0, 0);
 
     /* 7. Create text label AFTER emoji - so it's in foreground */
     label_text = lv_label_create(scr);
@@ -701,6 +707,7 @@ int hal_display_init(void) {
         /* Start with happy animation */
         lvgl_port_lock(0);
         emoji_anim_start(EMOJI_ANIM_HAPPY);
+        hal_display_raise_text_overlay_locked();
         lvgl_port_unlock();
     }
 
@@ -741,7 +748,7 @@ int hal_display_ui_init(void) {
 
     /* 4. Create emoji image FIRST (centered) - so it's in background */
     img_emoji = lv_img_create(scr);
-    lv_obj_align(img_emoji, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_align(img_emoji, LV_ALIGN_CENTER, 0, 0);
 
     /* 5. Create text label AFTER emoji - so it's in foreground */
     label_text = lv_label_create(scr);
@@ -780,6 +787,7 @@ int hal_display_ui_init(void) {
         ESP_LOGI(TAG, "Starting happy animation...");
         lvgl_port_lock(0);
         emoji_anim_start(EMOJI_ANIM_HAPPY);
+        hal_display_raise_text_overlay_locked();
         lvgl_port_unlock();
         ESP_LOGI(TAG, "Happy animation started");
     } else {
