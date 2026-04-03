@@ -118,15 +118,15 @@ function Resolve-IdfBootstrapScript {
         [string]$ResolvedIdfPath
     )
 
+    $exportScript = Join-Path $ResolvedIdfPath "export.ps1"
+    if (Test-Path $exportScript) {
+        return $exportScript
+    }
+
     $installRoot = Split-Path -Parent (Split-Path -Parent $ResolvedIdfPath)
     $initializeScript = Join-Path $installRoot "Initialize-Idf.ps1"
     if (Test-Path $initializeScript) {
         return $initializeScript
-    }
-
-    $exportScript = Join-Path $ResolvedIdfPath "export.ps1"
-    if (Test-Path $exportScript) {
-        return $exportScript
     }
 
     throw "未找到 ESP-IDF 引导脚本。已检查: $initializeScript, $exportScript"

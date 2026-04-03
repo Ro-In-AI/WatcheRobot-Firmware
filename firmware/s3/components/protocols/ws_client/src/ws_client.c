@@ -1184,6 +1184,7 @@ static void ws_event_handler(void *handler_args, esp_event_base_t base, int32_t 
 int ws_client_init(void) {
     esp_websocket_client_config_t cfg = {
         .uri = s_ws_server_url,
+        .disable_auto_reconnect = true,
         .network_timeout_ms = WS_NETWORK_TIMEOUT_MS,
         .task_prio = WS_TASK_PRIO,
         .buffer_size = WS_BUFFER_SIZE,
