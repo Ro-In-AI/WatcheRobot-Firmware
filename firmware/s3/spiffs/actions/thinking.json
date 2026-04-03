@@ -1,7 +1,7 @@
-{
+ {
   "scene_name": "Scene",
-  "frame_start": 0,
-  "frame_end": 60,
+  "frame_start": 1,
+  "frame_end": 61,
   "fps": 10,
   "animated_objects": [
     {
@@ -17,57 +17,22 @@
         {
           "frame_number": 5,
           "active_axis": "z",
-          "rotation_angle": 60.0
-        },
-        {
-          "frame_number": 10,
-          "active_axis": "z",
-          "rotation_angle": 90.0
-        },
-        {
-          "frame_number": 15,
-          "active_axis": "z",
-          "rotation_angle": 120.0
+          "rotation_angle": 112.0
         },
         {
           "frame_number": 20,
           "active_axis": "z",
-          "rotation_angle": 90.0
-        },
-        {
-          "frame_number": 25,
-          "active_axis": "z",
-          "rotation_angle": 60.0
-        },
-        {
-          "frame_number": 30,
-          "active_axis": "z",
-          "rotation_angle": 90.0
+          "rotation_angle": 74.0
         },
         {
           "frame_number": 35,
           "active_axis": "z",
-          "rotation_angle": 120.0
-        },
-        {
-          "frame_number": 40,
-          "active_axis": "z",
-          "rotation_angle": 90.0
-        },
-        {
-          "frame_number": 45,
-          "active_axis": "z",
-          "rotation_angle": 60.0
+          "rotation_angle": 112.0
         },
         {
           "frame_number": 50,
           "active_axis": "z",
-          "rotation_angle": 90.0
-        },
-        {
-          "frame_number": 55,
-          "active_axis": "z",
-          "rotation_angle": 120.0
+          "rotation_angle": 74.0
         },
         {
           "frame_number": 60,
@@ -89,57 +54,37 @@
         {
           "frame_number": 5,
           "active_axis": "x",
-          "rotation_angle": 125.0
+          "rotation_angle": 135.0
         },
         {
-          "frame_number": 10,
+          "frame_number": 13,
           "active_axis": "x",
-          "rotation_angle": 140.0
-        },
-        {
-          "frame_number": 15,
-          "active_axis": "x",
-          "rotation_angle": 125.0
+          "rotation_angle": 117.0
         },
         {
           "frame_number": 20,
           "active_axis": "x",
-          "rotation_angle": 110.0
+          "rotation_angle": 135.0
         },
         {
-          "frame_number": 25,
+          "frame_number": 28,
           "active_axis": "x",
-          "rotation_angle": 125.0
-        },
-        {
-          "frame_number": 30,
-          "active_axis": "x",
-          "rotation_angle": 140.0
+          "rotation_angle": 117.0
         },
         {
           "frame_number": 35,
           "active_axis": "x",
-          "rotation_angle": 125.0
+          "rotation_angle": 135.0
         },
         {
-          "frame_number": 40,
+          "frame_number": 43,
           "active_axis": "x",
-          "rotation_angle": 110.0
-        },
-        {
-          "frame_number": 45,
-          "active_axis": "x",
-          "rotation_angle": 125.0
+          "rotation_angle": 117.0
         },
         {
           "frame_number": 50,
           "active_axis": "x",
-          "rotation_angle": 140.0
-        },
-        {
-          "frame_number": 55,
-          "active_axis": "x",
-          "rotation_angle": 125.0
+          "rotation_angle": 135.0
         },
         {
           "frame_number": 60,

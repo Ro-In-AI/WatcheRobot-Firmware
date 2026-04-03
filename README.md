@@ -22,18 +22,15 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current release target: `v0.1.5`
-- `v0.1.5` is the recommended baseline for validating the repaired animation system and SPIFFS action playback on the current ESP32-S3 mainline:
-  - Emoji layers are aligned more consistently with the main expression layer
-  - The main animation is centered more reliably during expression playback
-  - SPIFFS behavior actions recover more safely when an action clip is missing and must fall back
-  - Startup state handoff is less likely to desync animation and action playback during bring-up
-  - The branch also includes the latest servo interpolation and runtime stability fixes already merged on `main`
-- Current `main` now also includes a post-`v0.1.5` transport recovery improvement:
+- Current release target: `v0.1.6`
+- `v0.1.6` is the recommended baseline for validating the current animation, action, Bluetooth feedback, and cloud-audio recovery flow on the ESP32-S3 mainline:
+  - A dedicated Bluetooth feedback state is now available with its own animation pack and local Bluetooth sound
+  - TTS playback recovers more reliably after audio-path drops or temporary handoff failures
   - After BLE disconnect, the device now tries the last known good WebSocket endpoint before starting a new UDP discovery round
   - If the cached endpoint cannot reconnect in time, the firmware falls back to the normal discovery path automatically
-- This release is suitable for repeated validation of expression playback, startup transitions, action triggering, and mixed local/cloud behavior handoff
-- BLE / Wi-Fi and cloud voice paths remain available on the same mainline, but `v0.1.5` should be treated first as the clean animation/action validation baseline
+  - Speaking and thinking SPIFFS action curves are updated for smoother motion during expression playback
+- This release is suitable for repeated validation of Bluetooth state feedback, TTS recovery, startup transitions, action triggering, and mixed local/cloud behavior handoff
+- BLE / Wi-Fi, cloud voice, and local expression playback remain integrated on the same mainline, and `v0.1.6` should be treated as the current release package for joint regression and feature validation
 
 ---
 

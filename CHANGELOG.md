@@ -9,13 +9,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [0.1.6] - 2026-04-03
+
+### Added
+- Dedicated Bluetooth feedback state with a matching animation pack and local Bluetooth SFX asset
+
 ### Fixed
+- TTS playback recovery is more reliable after the audio path drops or switches away unexpectedly
 - BLE-disconnect recovery now tries the last successful WebSocket endpoint before falling back to UDP discovery
 - WebSocket reconnect recovery is less likely to stall on a fresh discovery cycle when the previous server endpoint is still valid
+- Speaking and thinking SPIFFS action timing is refined for smoother motion during expression playback
 
 ### Changed
+- Firmware version is now tracked as `v0.1.6`
 - WebSocket client auto reconnect is disabled so the transport coordinator owns reconnect policy explicitly
 - The flashing helper now prefers `export.ps1` so build and flash steps use the same ESP-IDF Python environment on Windows
+- Current release packaging now reflects the latest animation, action, Bluetooth feedback, and audio recovery baseline on `main`
+
+### Notes
+- Release focus: Bluetooth feedback state integration, stronger TTS recovery, cached WebSocket resume, and cleaned-up speaking/thinking action curves
+- `v0.1.6` is the recommended package for validating Bluetooth state feedback, TTS recovery, startup transitions, and action playback together
 
 ---
 
