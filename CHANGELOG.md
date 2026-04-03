@@ -11,6 +11,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.5] - 2026-04-03
+
+### Fixed
+- Animation layering is more stable, with emoji overlays aligned correctly and the main animation recentered on the display
+- SPIFFS-driven behavior actions are more resilient when an action clip is missing or a fallback path is needed
+- Startup expression handoff is less likely to desync animation and action playback during bring-up
+
+### Changed
+- Firmware version is now tracked as `v0.1.5`
+- Current release packaging and documentation are aligned around the repaired animation system and action system baseline
+- This release also carries the latest servo interpolation and runtime stability fixes already merged on `main`
+
+### Notes
+- Release focus: animation system fixes, behavior action fallback hardening, and a clean test baseline for current mainline integration
+- `v0.1.5` is the recommended package for validating expression playback, action triggering, and startup state transitions together
+
+---
+
 ## [0.1.3] - 2026-04-02
 
 ### Added

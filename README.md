@@ -22,16 +22,15 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
 
 ### Current Release Track
 
-- Current release target: `v0.1.3`
-- `v0.1.3` is the recommended baseline for stable **BLE** and **Wi-Fi** testing on the current ESP32-S3 mainline:
-  - BLE provisioning is stable enough for first-time Wi-Fi setup and credential recovery validation
-  - BLE disconnect to Wi-Fi reconnect handoff is hardened for repeated local test cycles
-  - Low-memory BLE-to-Wi-Fi recovery now pauses optional cloud runtime work before retrying Wi-Fi
-  - Recording-time UI updates are guarded under low internal heap to reduce LCD flush failures during connectivity testing
-  - WebSocket runtime memory usage is reduced so BLE / Wi-Fi bring-up is less likely to be blocked by internal heap pressure
-  - Runtime input initialization still happens right after boot UI setup, and physical restart remains available with 3 short presses
-- This release is suitable for repeated BLE pairing, Wi-Fi provisioning, disconnect/reconnect, and local multi-device regression testing
-- Cloud voice throughput and end-to-end server-side interaction remain under active tuning, but BLE and Wi-Fi validation should use `v0.1.3` as the primary test baseline
+- Current release target: `v0.1.5`
+- `v0.1.5` is the recommended baseline for validating the repaired animation system and SPIFFS action playback on the current ESP32-S3 mainline:
+  - Emoji layers are aligned more consistently with the main expression layer
+  - The main animation is centered more reliably during expression playback
+  - SPIFFS behavior actions recover more safely when an action clip is missing and must fall back
+  - Startup state handoff is less likely to desync animation and action playback during bring-up
+  - The branch also includes the latest servo interpolation and runtime stability fixes already merged on `main`
+- This release is suitable for repeated validation of expression playback, startup transitions, action triggering, and mixed local/cloud behavior handoff
+- BLE / Wi-Fi and cloud voice paths remain available on the same mainline, but `v0.1.5` should be treated first as the clean animation/action validation baseline
 
 ---
 
