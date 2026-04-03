@@ -100,6 +100,14 @@ void hal_audio_set_playback_mode(bool enable) {
     ESP_LOGI(TAG, "Audio mode: %s", enable ? "playback" : "recording");
 }
 
+bool hal_audio_is_running(void) {
+    return is_running;
+}
+
+bool hal_audio_is_playback_mode(void) {
+    return is_playback_mode;
+}
+
 int hal_audio_start(void) {
     if (is_running) {
         return 0;
