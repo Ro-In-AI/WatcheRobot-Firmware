@@ -58,16 +58,19 @@ emoji_anim_prefetch_type(EMOJI_ANIM_LISTENING);
 
 | Type | Description | File Prefix |
 |------|-------------|-------------|
-| `EMOJI_ANIM_HAPPY` | Positive / ready feedback | `happy*.png` |
-| `EMOJI_ANIM_ERROR` | Error / failure feedback | `error*.png` |
-| `EMOJI_ANIM_SPEAKING` | TTS playback | `speaking*.png` |
-| `EMOJI_ANIM_LISTENING` | Voice recording | `listening*.png` |
-| `EMOJI_ANIM_PROCESSING` | AI/task processing | `processing*.png` |
-| `EMOJI_ANIM_STANDBY` | Idle state | `standby*.png` |
-| `EMOJI_ANIM_THINKING` | Transitional thinking state | `thinking*.png` |
-| `EMOJI_ANIM_CUSTOM_1` | Reserved custom state | `custom1*.png` |
-| `EMOJI_ANIM_CUSTOM_2` | Reserved custom state | `custom2*.png` |
-| `EMOJI_ANIM_CUSTOM_3` | Reserved custom state | `custom3*.png` |
+| `EMOJI_ANIM_HAPPY` | Positive / ready feedback | `happy1.png` |
+| `EMOJI_ANIM_ERROR` | Error / failure feedback | `error1.png` |
+| `EMOJI_ANIM_BLUETOOTH` | Bluetooth connected / pairing state | `bluetooth_001.png` |
+| `EMOJI_ANIM_SPEAKING` | TTS playback | `speaking1.png` |
+| `EMOJI_ANIM_LISTENING` | Voice recording | `listening1.png` |
+| `EMOJI_ANIM_PROCESSING` | AI/task processing | `processing1.png` |
+| `EMOJI_ANIM_STANDBY` | Idle state | `standby1.png` |
+| `EMOJI_ANIM_THINKING` | Transitional thinking state | `thinking1.png` |
+| `EMOJI_ANIM_CUSTOM_1` | Reserved custom state | `custom1_001.png` |
+| `EMOJI_ANIM_CUSTOM_2` | Reserved custom state | `custom2_001.png` |
+| `EMOJI_ANIM_CUSTOM_3` | Reserved custom state | `custom3_001.png` |
+
+Legacy flat names like `custom31.png` are still supported for compatibility, but new custom resources should use the separated form.
 
 ## Configuration
 

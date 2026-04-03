@@ -90,6 +90,18 @@
       ],
       "sound": []
     },
+    "bluetooth": {
+      "loop": false,
+      "motion": [
+        { "at_ms": 0, "x_deg": 90, "y_deg": 120, "duration_ms": 300 }
+      ],
+      "expression": [
+        { "at_ms": 0, "anim": "bluetooth", "text": "", "font_size": 24 }
+      ],
+      "sound": [
+        { "at_ms": 0, "sound_id": "bluetooth" }
+      ]
+    },
     "custom2": {
       "loop": true,
       "motion": [

@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- BLE-disconnect recovery now tries the last successful WebSocket endpoint before falling back to UDP discovery
+- WebSocket reconnect recovery is less likely to stall on a fresh discovery cycle when the previous server endpoint is still valid
+
+### Changed
+- WebSocket client auto reconnect is disabled so the transport coordinator owns reconnect policy explicitly
+- The flashing helper now prefers `export.ps1` so build and flash steps use the same ESP-IDF Python environment on Windows
+
 ---
 
 ## [0.1.5] - 2026-04-03

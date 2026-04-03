@@ -50,6 +50,7 @@ typedef enum {
     EMOJI_ANIM_BOOT = 0, /* Boot animation (first play) */
     EMOJI_ANIM_HAPPY,
     EMOJI_ANIM_ERROR,
+    EMOJI_ANIM_BLUETOOTH,
     EMOJI_ANIM_SPEAKING,
     EMOJI_ANIM_LISTENING,
     EMOJI_ANIM_PROCESSING,
@@ -92,17 +93,20 @@ int emoji_spiffs_init(void);
 /**
  * @brief Load all emoji images from SPIFFS (PNG format)
  *
- * Scans /spiffs directory for PNG files with specific prefixes:
- * - happy*.png
- * - error*.png
- * - speaking*.png
- * - listening*.png
- * - processing*.png
- * - standby*.png
- * - thinking*.png
- * - custom1*.png
- * - custom2*.png
- * - custom3*.png
+ * Scans /spiffs/anim and /spiffs for PNG files using supported type + frame naming:
+ * - happy1.png
+ * - error1.png
+ * - bluetooth_001.png
+ * - speaking1.png
+ * - listening1.png
+ * - processing1.png
+ * - standby1.png
+ * - thinking1.png
+ * - custom1_001.png
+ * - custom2_001.png
+ * - custom3_001.png
+ *
+ * Legacy custom names without a separator (for example custom31.png) are still accepted.
  *
  * @return 0 on success, -1 on error
  */

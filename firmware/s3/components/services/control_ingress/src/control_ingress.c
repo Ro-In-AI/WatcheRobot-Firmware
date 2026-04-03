@@ -114,6 +114,12 @@ static bool control_append_state_candidate(const char **candidates,
 }
 
 static const char *control_ai_status_to_fallback(const char *status, const char *message) {
+    if (control_contains_nocase(status, "bluetooth") || control_contains_nocase(message, "bluetooth") ||
+        control_contains_nocase(status, "blue tooth") || control_contains_nocase(message, "blue tooth") ||
+        control_contains_nocase(status, "pairing") || control_contains_nocase(message, "pairing") ||
+        control_contains_nocase(status, "paired") || control_contains_nocase(message, "paired")) {
+        return "bluetooth";
+    }
     if (control_contains_nocase(status, "observing") || control_contains_nocase(message, "observing")) {
         return "custom3";
     }

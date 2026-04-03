@@ -29,6 +29,9 @@ WatcheRobot is an open-source AI assistant robot built on the **SenseCAP Watcher
   - SPIFFS behavior actions recover more safely when an action clip is missing and must fall back
   - Startup state handoff is less likely to desync animation and action playback during bring-up
   - The branch also includes the latest servo interpolation and runtime stability fixes already merged on `main`
+- Current `main` now also includes a post-`v0.1.5` transport recovery improvement:
+  - After BLE disconnect, the device now tries the last known good WebSocket endpoint before starting a new UDP discovery round
+  - If the cached endpoint cannot reconnect in time, the firmware falls back to the normal discovery path automatically
 - This release is suitable for repeated validation of expression playback, startup transitions, action triggering, and mixed local/cloud behavior handoff
 - BLE / Wi-Fi and cloud voice paths remain available on the same mainline, but `v0.1.5` should be treated first as the clean animation/action validation baseline
 

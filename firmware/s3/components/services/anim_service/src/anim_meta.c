@@ -33,6 +33,7 @@ static const char *anim_type_names[EMOJI_ANIM_COUNT] = {
     "boot",
     "happy",
     "error",
+    "bluetooth",
     "speaking",
     "listening",
     "processing",

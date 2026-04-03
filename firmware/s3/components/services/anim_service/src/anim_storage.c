@@ -15,6 +15,7 @@
 
 #include <dirent.h>
 #include <inttypes.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -79,6 +80,7 @@ static const char *emoji_names[EMOJI_ANIM_COUNT] = {
     "boot",
     "happy",
     "error",
+    "bluetooth",
     "speaking",
     "listening",
     "processing",
@@ -363,15 +365,36 @@ int emoji_spiffs_init(void) {
     return 0;
 }
 
-static int extract_index(const char *filename) {
-    const char *p = filename;
-    while (*p != '\0') {
-        if (*p >= '0' && *p <= '9') {
-            return atoi(p);
-        }
-        ++p;
+static int parse_frame_index_for_type(const char *filename, const char *prefix) {
+    if (filename == NULL || prefix == NULL) {
+        return -1;
     }
-    return 0;
+
+    const size_t prefix_len = strlen(prefix);
+    if (strncmp(filename, prefix, prefix_len) != 0) {
+        return -1;
+    }
+
+    const char *cursor = filename + prefix_len;
+    if (*cursor == '_' || *cursor == '-') {
+        ++cursor;
+    }
+
+    if (*cursor < '0' || *cursor > '9') {
+        return -1;
+    }
+
+    char *end = NULL;
+    long frame_index = strtol(cursor, &end, 10);
+    if (end == cursor || frame_index <= 0 || frame_index > INT32_MAX) {
+        return -1;
+    }
+
+    if (end == NULL || strcmp(end, ".png") != 0) {
+        return -1;
+    }
+
+    return (int)frame_index;
 }
 
 static void sort_files_by_index(sorted_file_t *files, int count) {
@@ -388,7 +411,6 @@ static void sort_files_by_index(sorted_file_t *files, int count) {
 
 static int find_animation_files(const char *prefix, sorted_file_t *files, int max_files) {
     const char *dirs[] = {ANIM_DIR, SPIFFS_MOUNT_POINT};
-    const int prefix_len = (int)strlen(prefix);
     int file_count = 0;
 
     for (int d = 0; d < 2 && file_count == 0; ++d) {
@@ -399,12 +421,8 @@ static int find_animation_files(const char *prefix, sorted_file_t *files, int ma
 
         struct dirent *ent = NULL;
         while ((ent = readdir(dir)) != NULL && file_count < max_files) {
-            if (strncmp(ent->d_name, prefix, prefix_len) != 0) {
-                continue;
-            }
-
-            size_t len = strlen(ent->d_name);
-            if (len <= 4 || strcmp(ent->d_name + len - 4, ".png") != 0) {
+            int frame_index = parse_frame_index_for_type(ent->d_name, prefix);
+            if (frame_index < 0) {
                 continue;
             }
 
@@ -417,7 +435,7 @@ static int find_animation_files(const char *prefix, sorted_file_t *files, int ma
             memcpy(files[file_count].name, dirs[d], dir_len);
             files[file_count].name[dir_len] = '/';
             memcpy(files[file_count].name + dir_len + 1, ent->d_name, name_len + 1);
-            files[file_count].index = extract_index(ent->d_name);
+            files[file_count].index = frame_index;
             ++file_count;
         }
 

@@ -13,6 +13,7 @@ typedef enum {
     EMOJI_PROCESSING,  /* processing - AI/task execution */
     EMOJI_SPEAKING,    /* speaking - TTS playback */
     EMOJI_ERROR,       /* error - failure/interruption */
+    EMOJI_BLUETOOTH,   /* bluetooth - paired/connecting state */
     EMOJI_CUSTOM_1,    /* reserved custom state */
     EMOJI_CUSTOM_2,    /* reserved custom state */
     EMOJI_CUSTOM_3,    /* reserved custom state */

@@ -25,6 +25,7 @@ ANIM_TYPES = [
     "boot",
     "happy",
     "error",
+    "bluetooth",
     "speaking",
     "listening",
     "processing",
@@ -44,13 +45,23 @@ IMPORT_MAP = {
     "watcher-boot": "boot",
     "watcher-error": "error",
     "watcher-happy": "happy",
+    "watcher-bluetooth": "bluetooth",
     "watcher-listening": "listening",
     "watcher-processing": "processing",
+    "watcher-custom1": "custom1",
+    "watcher-custom2": "custom2",
+    "watcher-custom3": "custom3",
     "watcher-processing2": "custom3",
     "watcher-speaking": "speaking",
     "watcher-standby": "standby",
     "watcher-thinking": "thinking",
 }
+
+
+def frame_filename(prefix: str, index: int) -> str:
+    if prefix == "bluetooth" or prefix.startswith("custom"):
+        return f"{prefix}_{index:03d}.png"
+    return f"{prefix}{index}.png"
 
 
 def encode_c_string(value: str, size: int) -> bytes:
@@ -80,25 +91,44 @@ def extract_frame_index(stem: str) -> int:
     return int(matches[-1])
 
 
-def discover_frames(spiffs_dir: Path, prefix: str) -> list[Path]:
-    matches = []
-    for path in spiffs_dir.glob(f"{prefix}*.png"):
-        matches.append((extract_frame_index(path.stem), path))
+def parse_frame_index(name: str, prefix: str) -> int | None:
+    match = re.fullmatch(rf"{re.escape(prefix)}(?:[_-]?)(\d+)\.png", name, re.IGNORECASE)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def iter_frame_paths(spiffs_dir: Path, prefix: str) -> list[Path]:
+    matches: list[tuple[int, Path]] = []
+    for path in spiffs_dir.glob("*.png"):
+        frame_index = parse_frame_index(path.name, prefix)
+        if frame_index is None:
+            continue
+        matches.append((frame_index, path))
     matches.sort(key=lambda item: item[0])
-    return [path for _, path in matches[:MAX_FRAMES]]
+    return [path for _, path in matches]
+
+
+def discover_frames(spiffs_dir: Path, prefix: str) -> list[Path]:
+    return iter_frame_paths(spiffs_dir, prefix)[:MAX_FRAMES]
 
 
 def import_external_assets(source_dir: Path, spiffs_dir: Path) -> dict[str, int]:
     imported: dict[str, int] = {}
 
     for source_name, target_name in IMPORT_MAP.items():
+        if target_name in imported:
+            continue
+
         source_anim_dir = source_dir / source_name
         if not source_anim_dir.is_dir():
-            raise SystemExit(f"Missing source animation directory: {source_anim_dir}")
+            print(f"Skipping missing source animation directory: {source_anim_dir}", file=sys.stderr)
+            continue
 
         source_frames = sorted(source_anim_dir.glob("*.png"), key=lambda path: extract_frame_index(path.stem))
         if not source_frames:
-            raise SystemExit(f"No PNG frames found under: {source_anim_dir}")
+            print(f"Skipping empty source animation directory: {source_anim_dir}", file=sys.stderr)
+            continue
 
         if len(source_frames) > MAX_FRAMES:
             print(
@@ -107,11 +137,11 @@ def import_external_assets(source_dir: Path, spiffs_dir: Path) -> dict[str, int]
             )
             source_frames = source_frames[:MAX_FRAMES]
 
-        for stale_frame in spiffs_dir.glob(f"{target_name}*.png"):
+        for stale_frame in iter_frame_paths(spiffs_dir, target_name):
             stale_frame.unlink()
 
         for index, frame in enumerate(source_frames, start=1):
-            target_path = spiffs_dir / f"{target_name}{index}.png"
+            target_path = spiffs_dir / frame_filename(target_name, index)
             shutil.copy2(frame, target_path)
 
         imported[target_name] = len(source_frames)
@@ -190,7 +220,7 @@ def main() -> int:
             raise SystemExit(f"Import directory does not exist: {import_dir}")
         imported = import_external_assets(import_dir, spiffs_dir)
         print(f"Imported animation assets from {import_dir}")
-        for name in IMPORT_MAP.values():
+        for name in dict.fromkeys(IMPORT_MAP.values()):
             if name in imported:
                 print(f"  {name}: {imported[name]} frame(s) imported")
 
