@@ -1,0 +1,24 @@
+menu "Watcher Logging"
+
+    config WATCHER_LOG_HEAP_DIAGNOSTICS
+        bool "Enable heap diagnostic logs"
+        default n
+        help
+            Compile in detailed internal/PSRAM heap snapshot logs used while
+            investigating startup and low-memory recovery behavior.
+
+    config WATCHER_CAMERA_VERBOSE_LOGS
+        bool "Enable verbose camera diagnostics logs"
+        default n
+        help
+            Compile in HX6538 info/model/catalog diagnostic logging. Disabling
+            this removes large format strings and skips extra diagnostic queries.
+
+    config WATCHER_WIFI_REASON_NAME_LOGS
+        bool "Enable WiFi disconnect reason name strings"
+        default n
+        help
+            Include human-readable WiFi disconnect reason names in warning logs.
+            Disable this to keep only numeric reason codes and save flash/rodata.
+
+endmenu

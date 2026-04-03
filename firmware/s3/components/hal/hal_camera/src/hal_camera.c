@@ -26,6 +26,12 @@
 #define HAL_CAMERA_DEFAULT_SENSOR_ID 1
 #define HAL_CAMERA_DEFAULT_QUALITY 80
 
+#if CONFIG_WATCHER_CAMERA_VERBOSE_LOGS
+#define HAL_CAMERA_VERBOSE_LOGS_ENABLED 1
+#else
+#define HAL_CAMERA_VERBOSE_LOGS_ENABLED 0
+#endif
+
 typedef struct {
     uint32_t invoke_call_us;
     uint32_t wait_image_us;
@@ -204,6 +210,7 @@ static esp_err_t hal_camera_refresh_sensor_catalog(bool log_catalog) {
         }
 
         if (log_catalog) {
+#if CONFIG_WATCHER_CAMERA_VERBOSE_LOGS
             char *json = cJSON_PrintUnformatted(reply.payload);
             if (json != NULL) {
                 ESP_LOGI(TAG, "HX6538 sensors catalog: %s", json);
@@ -211,13 +218,24 @@ static esp_err_t hal_camera_refresh_sensor_catalog(bool log_catalog) {
             } else {
                 ESP_LOGW(TAG, "HX6538 sensors catalog print failed");
             }
+#else
+            (void)log_catalog;
+#endif
         }
     } else if (reply.data != NULL && reply.len > 0) {
         if (log_catalog) {
+#if CONFIG_WATCHER_CAMERA_VERBOSE_LOGS
             ESP_LOGI(TAG, "HX6538 sensors catalog raw: %.*s", (int)reply.len, reply.data);
+#else
+            (void)log_catalog;
+#endif
         }
     } else if (log_catalog) {
+#if CONFIG_WATCHER_CAMERA_VERBOSE_LOGS
         ESP_LOGW(TAG, "HX6538 sensors catalog reply empty");
+#else
+        (void)log_catalog;
+#endif
     }
 
     sscma_client_reply_clear(&reply);
@@ -327,11 +345,16 @@ static void hal_camera_drain_semaphore(SemaphoreHandle_t sem) {
     }
 }
 
+#if CONFIG_WATCHER_CAMERA_VERBOSE_LOGS
 static void hal_camera_log_sensor_catalog(void) {
-    (void)hal_camera_refresh_sensor_catalog(true);
+    (void)hal_camera_refresh_sensor_catalog(HAL_CAMERA_VERBOSE_LOGS_ENABLED != 0);
 }
+#endif
 
 static esp_err_t hal_camera_log_device_info(void) {
+#if !CONFIG_WATCHER_CAMERA_VERBOSE_LOGS
+    return ESP_OK;
+#else
     sscma_client_info_t *info = NULL;
     sscma_client_model_t *model = NULL;
     sscma_client_sensor_t sensor = {0};
@@ -377,6 +400,7 @@ static esp_err_t hal_camera_log_device_info(void) {
     hal_camera_log_sensor_catalog();
 
     return ESP_OK;
+#endif
 }
 
 static const char *hal_camera_trim_image_string(const char *image, size_t *len) {
@@ -887,7 +911,7 @@ esp_err_t hal_camera_configure(int width, int height, int quality, int *applied_
         xSemaphoreGive(s_ctx.lock);
     }
 
-    (void)hal_camera_refresh_sensor_catalog(true);
+    (void)hal_camera_refresh_sensor_catalog(HAL_CAMERA_VERBOSE_LOGS_ENABLED != 0);
     ESP_LOGI(TAG, "camera sensor profile applied: sensor=%d opt_id=%d detail=%s quality_hint=%d",
              sensor_id,
              option->opt_id,

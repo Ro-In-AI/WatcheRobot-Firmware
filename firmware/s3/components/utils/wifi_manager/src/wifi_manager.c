@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "sdkconfig.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -31,8 +32,8 @@ static wifi_status_t s_status = WIFI_STATUS_UNCONFIGURED;
 static char s_saved_ssid[33] = {0};
 static char s_ip_addr[16] = {0};
 
-static const char *wifi_disconnect_reason_name(uint8_t reason)
-{
+#if CONFIG_WATCHER_WIFI_REASON_NAME_LOGS
+static const char *wifi_disconnect_reason_name(uint8_t reason) {
     switch (reason) {
     case WIFI_REASON_UNSPECIFIED:
         return "UNSPECIFIED";
@@ -110,6 +111,7 @@ static const char *wifi_disconnect_reason_name(uint8_t reason)
         return "UNKNOWN";
     }
 }
+#endif
 
 static void wifi_apply_sta_defaults(wifi_sta_config_t *sta_cfg,
                                     const char *ssid, size_t ssid_len,
@@ -264,12 +266,20 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
         if (s_credentials_present) {
             uint8_t reason = event ? event->reason : 0;
+#if CONFIG_WATCHER_WIFI_REASON_NAME_LOGS
             ESP_LOGW(TAG,
                      "Disconnected from AP (reason=%u:%s, connect_requested=%d, sta_started=%d), retrying...",
                      (unsigned)reason,
                      wifi_disconnect_reason_name(reason),
                      s_connect_requested ? 1 : 0,
                      s_wifi_started ? 1 : 0);
+#else
+            ESP_LOGW(TAG,
+                     "Disconnected from AP (reason=%u, connect_requested=%d, sta_started=%d), retrying...",
+                     (unsigned)reason,
+                     s_connect_requested ? 1 : 0,
+                     s_wifi_started ? 1 : 0);
+#endif
             wifi_set_status(WIFI_STATUS_DISCONNECTED);
             if (s_connect_requested) {
                 if (wifi_request_connect("sta_disconnected") == 0) {

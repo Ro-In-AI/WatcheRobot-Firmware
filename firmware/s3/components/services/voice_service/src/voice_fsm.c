@@ -47,6 +47,13 @@ static bool g_recording_triggered_by_wake_word = false;
 
 static uint8_t g_pcm_buf[PCM_FRAME_SIZE];
 
+#if CONFIG_WATCHER_LOG_HEAP_DIAGNOSTICS
+#define LOG_INTERNAL_HEAP_STATE(stage) log_internal_heap_state(stage)
+static void log_internal_heap_state(const char *stage);
+#else
+#define LOG_INTERNAL_HEAP_STATE(stage) ((void)0)
+#endif
+
 static void show_cloud_not_ready_state(void) {
     bool connected = ws_client_is_connected() != 0;
     behavior_state_set_with_text(connected ? "processing" : "error",
@@ -54,12 +61,14 @@ static void show_cloud_not_ready_state(void) {
                                  0);
 }
 
+#if CONFIG_WATCHER_LOG_HEAP_DIAGNOSTICS
 static void log_internal_heap_state(const char *stage) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     size_t largest_internal = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ESP_LOGI(TAG, "Internal heap @ %s: free=%u KB, largest=%u KB", stage, (unsigned)(free_internal / 1024U),
              (unsigned)(largest_internal / 1024U));
 }
+#endif
 
 static bool has_listening_ui_headroom(size_t *free_internal_out, size_t *largest_internal_out) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -263,7 +272,7 @@ static int start_recording(void) {
         return -1;
     }
 
-    log_internal_heap_state("before_recording");
+    LOG_INTERNAL_HEAP_STATE("before_recording");
     size_t free_internal = 0;
     size_t largest_internal = 0;
     if (can_freeze_animation_for_recording(&free_internal, &largest_internal)) {
@@ -299,7 +308,7 @@ static int start_recording(void) {
 #endif
 
     g_state = VOICE_STATE_RECORDING;
-    log_internal_heap_state("after_recording");
+    LOG_INTERNAL_HEAP_STATE("after_recording");
     ESP_LOGI(TAG, "start_recording: state -> RECORDING");
     return 0;
 }

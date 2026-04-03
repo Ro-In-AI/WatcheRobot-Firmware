@@ -25,6 +25,7 @@
 
 #include "control_ingress.h"
 #include "esp_bt.h"
+#include "esp_mac.h"
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gatt_common_api.h"
@@ -134,11 +135,44 @@ static void ble_gatts_profile_event_handler(esp_gatts_cb_event_t event,
                                             esp_ble_gatts_cb_param_t *param);
 static void ble_send_text_notification(const char *text);
 static void ble_send_current_wifi_status_notification(void);
+static void ble_log_local_identity(void);
 
 static void ble_notify_connection_changed(bool connected)
 {
     if (s_connection_cb != NULL) {
         s_connection_cb(connected);
+    }
+}
+
+esp_err_t ble_service_get_local_mac(char *buffer, size_t buffer_len)
+{
+    uint8_t mac[6] = {0};
+    int written;
+    esp_err_t ret;
+
+    if (buffer == NULL || buffer_len < 18) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ret = esp_read_mac(mac, ESP_MAC_BT);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    written = snprintf(buffer, buffer_len, "%02X:%02X:%02X:%02X:%02X:%02X",
+                       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return (written > 0 && (size_t)written < buffer_len) ? ESP_OK : ESP_ERR_INVALID_SIZE;
+}
+
+static void ble_log_local_identity(void)
+{
+    char mac_str[18] = {0};
+    esp_err_t ret = ble_service_get_local_mac(mac_str, sizeof(mac_str));
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "BLE local identity: name=%s mac=%s", CONFIG_WATCHER_BLE_DEVICE_NAME, mac_str);
+    } else {
+        ESP_LOGW(TAG, "BLE local identity unavailable: %s", esp_err_to_name(ret));
     }
 }
 
@@ -1322,6 +1356,7 @@ esp_err_t ble_service_init(void)
 
     wifi_register_status_callback(ble_wifi_status_callback);
     s_stack_ready = true;
+    ble_log_local_identity();
     ESP_LOGI(TAG, "BLE motion service initialized (name=%s)", CONFIG_WATCHER_BLE_DEVICE_NAME);
     return ESP_OK;
 }
@@ -1383,6 +1418,13 @@ esp_err_t ble_service_stop_advertising(void)
 bool ble_service_is_connected(void)
 {
     return false;
+}
+
+esp_err_t ble_service_get_local_mac(char *buffer, size_t buffer_len)
+{
+    (void)buffer;
+    (void)buffer_len;
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 void ble_service_register_connection_callback(ble_service_connection_callback_t cb)

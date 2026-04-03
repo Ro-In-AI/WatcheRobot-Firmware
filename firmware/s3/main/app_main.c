@@ -1,4 +1,5 @@
 #include "esp_err.h"
+#include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -148,8 +149,22 @@ static bool transport_retry_due(void) {
     return s_next_cloud_attempt_us == 0 || esp_timer_get_time() >= s_next_cloud_attempt_us;
 }
 
+static void log_firmware_version(void) {
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    if (app_desc == NULL) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Firmware version: project=%s version=%s idf=%s",
+             app_desc->project_name,
+             app_desc->version,
+             app_desc->idf_ver);
+}
+
 static void on_ble_connection_changed(bool connected);
+#if CONFIG_WATCHER_LOG_HEAP_DIAGNOSTICS
 static void log_heap_state(const char *stage);
+#endif
 static void transport_cancel_discovery(const char *reason);
 static void transport_stop_ws(const char *reason);
 static void transport_set_ble_recovery_advertising_paused(bool paused, const char *reason);
@@ -157,6 +172,12 @@ static void transport_suspend_cloud_runtime_for_low_memory(const char *reason);
 static void transport_enter_low_memory_recovery(const char *reason);
 static void transport_reset_low_memory_recovery(const char *reason);
 static void wait_for_behavior_idle(uint32_t timeout_ms);
+
+#if CONFIG_WATCHER_LOG_HEAP_DIAGNOSTICS
+#define LOG_HEAP_STATE(stage) log_heap_state(stage)
+#else
+#define LOG_HEAP_STATE(stage) ((void)0)
+#endif
 
 static bool transport_has_wifi_resume_headroom(void) {
     size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -338,6 +359,7 @@ static void run_camera_boot_diag(void) {
 #endif
 }
 
+#if CONFIG_WATCHER_LOG_HEAP_DIAGNOSTICS
 static void log_heap_state(const char *stage) {
     size_t free_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     size_t largest_8bit = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
@@ -350,6 +372,7 @@ static void log_heap_state(const char *stage) {
              stage, (unsigned)(free_8bit / 1024U), (unsigned)(largest_8bit / 1024U), (unsigned)(free_internal / 1024U),
              (unsigned)(largest_internal / 1024U), (unsigned)(free_spiram / 1024U), (unsigned)(largest_spiram / 1024U));
 }
+#endif
 
 static void transport_set_ble_recovery_advertising_paused(bool paused, const char *reason) {
     esp_err_t err;
@@ -389,19 +412,19 @@ static void transport_set_ble_recovery_advertising_paused(bool paused, const cha
 
 static void transport_suspend_cloud_runtime_for_low_memory(const char *reason) {
     ESP_LOGW(TAG, "Suspending cloud runtime for low-memory recovery (%s)", reason ? reason : "no reason");
-    log_heap_state("lowmem_recovery_before_reclaim");
+    LOG_HEAP_STATE("lowmem_recovery_before_reclaim");
     transport_cancel_discovery("low memory recovery");
 
     transport_stop_ws("low memory recovery");
-    log_heap_state("lowmem_recovery_after_ws_stop");
+    LOG_HEAP_STATE("lowmem_recovery_after_ws_stop");
 
     ws_client_deinit();
     s_ws_stack_ready = false;
-    log_heap_state("lowmem_recovery_after_ws_deinit");
+    LOG_HEAP_STATE("lowmem_recovery_after_ws_deinit");
 
     voice_recorder_stop();
     s_cloud_runtime_started = false;
-    log_heap_state("lowmem_recovery_after_voice_stop");
+    LOG_HEAP_STATE("lowmem_recovery_after_voice_stop");
 }
 
 static void transport_enter_low_memory_recovery(const char *reason) {
@@ -779,13 +802,13 @@ static void transport_handle_discovery_results(bool ble_connected) {
         transport_prepare_display_for_ws_start();
 
         if (!transport_has_ws_start_headroom()) {
-            log_heap_state("ws_start_deferred");
+            LOG_HEAP_STATE("ws_start_deferred");
             transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
             transport_set_state(TRANSPORT_BLE_IDLE_CLOUD_SUSPENDED, "waiting ws heap headroom");
             continue;
         }
 
-        log_heap_state("before_ws_start");
+        LOG_HEAP_STATE("before_ws_start");
         if (ws_client_start() != 0) {
             transport_stop_ws("ws start failed");
             transport_schedule_retry(CLOUD_RETRY_DELAY_MS);
@@ -794,7 +817,7 @@ static void transport_handle_discovery_results(bool ble_connected) {
         }
 
         transport_schedule_retry(0);
-        log_heap_state("after_ws_start");
+        LOG_HEAP_STATE("after_ws_start");
         transport_set_state(TRANSPORT_BLE_IDLE_WS_CONNECTING, "ws start requested");
     }
 }
@@ -908,6 +931,7 @@ static void transport_coordinator_tick(void) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "WatcheRobot S3 v2.0 starting");
+    log_firmware_version();
 
     /* 1. Minimal display init for boot animation */
     if (hal_display_minimal_init() != 0) {
@@ -962,7 +986,7 @@ void app_main(void) {
             ESP_LOGW(TAG, "BLE init failed: %s", esp_err_to_name(ble_ret));
         }
     }
-    log_heap_state("after_ble_init");
+    LOG_HEAP_STATE("after_ble_init");
 
     /* 6. WiFi manager only; cloud link is coordinated after boot. */
     boot_anim_set_progress(40);
@@ -979,7 +1003,7 @@ void app_main(void) {
         ESP_LOGI(TAG, "BLE local control is ready without immediate cloud bring-up");
     }
     boot_anim_set_progress(55);
-    log_heap_state("after_wifi_ready");
+    LOG_HEAP_STATE("after_wifi_ready");
 
     /* 7. Ready for UI; cloud transport is resumed by the coordinator loop. */
     boot_anim_set_progress(100);
@@ -987,17 +1011,17 @@ void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(500));
     boot_anim_finish();
 
-    log_heap_state("before_ui_init");
+    LOG_HEAP_STATE("before_ui_init");
     hal_display_ui_init();
     init_runtime_inputs_and_restart_path();
     behavior_state_set("boot");
     wait_for_behavior_idle(STARTUP_BEHAVIOR_TIMEOUT_MS);
     behavior_state_set_text_style("BLE Ready", 0, false);
     apply_idle_hint_if_needed();
-    log_heap_state("after_ui_init");
+    LOG_HEAP_STATE("after_ui_init");
 
     run_camera_boot_diag();
-    log_heap_state("after_camera_diag");
+    LOG_HEAP_STATE("after_camera_diag");
     s_boot_completed = true;
     transport_sync_boot_state();
     ESP_LOGI(TAG, "WatcheRobot ready (transport=%s, ble=%s)", transport_state_to_string(s_transport_state),
